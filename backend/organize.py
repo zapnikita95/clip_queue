@@ -32,6 +32,12 @@ _STOP = {
     "выпуск",
     "сериал",
     "фильм",
+    "private",
+    "deleted",
+    "shorts",
+    "short",
+    "hippie",
+    "topic",
 }
 
 
@@ -144,6 +150,7 @@ def heuristic_propose(user_id: int) -> dict[str, Any]:
     music: list[str] = []
 
     music_ids: set[str] = set()
+    shortform_ids: set[str] = set()
     for r in rows:
         ch = (r.get("channel_title") or "Без канала").strip() or "Без канала"
         vid = r["video_id"]
@@ -153,19 +160,26 @@ def heuristic_propose(user_id: int) -> dict[str, Any]:
             r.get("duration_sec"),
             None,
         )
+        if yt.is_unavailable_video(r.get("title")):
+            continue
         # Music never enters planning folders / unsorted draft.
         if bucket == "music":
             music.append(vid)
             music_ids.add(vid)
             continue
+        # Shorts / ≤6 min — archive from queue; never themes / channel folders
+        if bucket in ("shorts", "shortform") or (
+            isinstance(r.get("duration_sec"), int)
+            and 0 < int(r.get("duration_sec")) <= yt.SHORTFORM_MAX_SEC
+        ):
+            shortform.append(vid)
+            shortform_ids.add(vid)
+            continue
         by_status[r.get("status") or "queue"].append(vid)
         by_channel[ch].append(vid)
         dur = r.get("duration_sec")
-        if isinstance(dur, int):
-            if dur <= yt.SHORTFORM_MAX_SEC:
-                shortform.append(vid)
-            elif dur >= 40 * 60:
-                longform.append(vid)
+        if isinstance(dur, int) and dur >= 40 * 60:
+            longform.append(vid)
 
     folders: list[dict] = []
     queue = by_status.get("queue") or []
@@ -177,7 +191,9 @@ def heuristic_propose(user_id: int) -> dict[str, Any]:
     themed_ids: set[str] = set()
     for r in rows:
         vid = r["video_id"]
-        if vid in music_ids:
+        if vid in music_ids or vid in shortform_ids:
+            continue
+        if yt.is_unavailable_video(r.get("title")):
             continue
         primary = themes.primary_theme(r.get("title"), r.get("channel_title"))
         if not primary:
@@ -242,17 +258,7 @@ def heuristic_propose(user_id: int) -> dict[str, Any]:
             break
     folders.extend(personal)
 
-    if shortform:
-        folders.append(
-            _folder(
-                "Короткие (до 6 мин)",
-                "Шлак для планирования — не основная очередь",
-                shortform[:80],
-                rule={"type": "duration_lte", "value": str(yt.SHORTFORM_MAX_SEC)},
-                rows_by_id=rows_by_id,
-                persist=True,
-            )
-        )
+    # Shorts/≤6min: purged from queue above; do NOT create a planning list/rule.
     if longform:
         folders.append(
             _folder(
@@ -326,20 +332,21 @@ def heuristic_propose(user_id: int) -> dict[str, Any]:
     return {
         "engine": "heuristic",
         "summary": (
-            f"В выборке {len(rows)} · общих тем: {len(theme_folders)} · "
-            f"личных тем: {len(personal)} · без темы: {len(unthemed_queue)} · "
-            f"музыка скрыта: {len(music_ids)}. "
-            "Папки под тебя: у другого человека набор будет другим. "
-            "Перетащи ролик или добавь в ещё одну тему, потом «ОК»."
+            f"В выборке {len(rows)} · тем: {len(theme_folders)} · "
+            f"личных: {len(personal)} · без темы: {len(unthemed_queue)} · "
+            f"музыка: {len(music_ids)} · короткие ≤6м: {len(shortform_ids)}. "
+            "Темы и каналы — только нормальные видео 6м–10ч. "
+            "«ОК» сохранит правила для новых ссылок."
         ),
         "folders": folders[:22],
         "music_hidden": len(music_ids),
+        "shortform_hidden": len(shortform_ids),
         "music_ids": list(music_ids)[:500],
         "personalized": True,
         "limitations": [
-            "Общие ярлыки (новости, английский…) + личные темы из твоих названий",
-            "Музыка скрыта",
-            "Watch Later Google API не отдаёт",
+            "Темы + каналы только для видео длиннее 6 минут",
+            "Музыка и короткие убраны из плана",
+            "Watch Later (WL) Google API не отдаёт — только лайки и обычные плейлисты",
         ],
     }
 
@@ -404,14 +411,18 @@ def llm_propose(user_id: int) -> dict[str, Any] | None:
 
 def propose_structure(user_id: int, *, use_llm: bool = False) -> dict[str, Any]:
     ensure_classify_tables()
-    # Kick music out of planning queue immediately — don't wait for ОК.
+    # Kick music + broken stubs out of planning immediately.
+    broken = purge_unavailable(user_id)
     purged = purge_music_from_queue(user_id)
+    short_purged = purge_shortform_from_queue(user_id)
     proposal = None
     if use_llm:
         proposal = llm_propose(user_id)
     if not proposal:
         proposal = heuristic_propose(user_id)
     proposal["music_purged"] = purged
+    proposal["broken_purged"] = broken
+    proposal["shortform_purged"] = short_purged
     db.execute(
         "INSERT INTO organize_proposals (user_id, proposal_json) VALUES (?, ?)",
         (user_id, json.dumps({k: v for k, v in proposal.items() if k != "music_ids"}, ensure_ascii=False)),
@@ -459,6 +470,41 @@ def _add_list_item(list_id: int, video_id: str, position: int = 0) -> None:
     )
 
 
+def purge_unavailable(user_id: int) -> int:
+    """Remove private/deleted stubs from planning library."""
+    rows = db.fetchall(
+        """
+        SELECT li.video_id
+        FROM library_items li
+        JOIN videos v ON v.video_id = li.video_id
+        WHERE li.user_id = ?
+        """,
+        (user_id,),
+    )
+    n = 0
+    for r in rows:
+        vid = r["video_id"]
+        title_row = db.fetchone("SELECT title FROM videos WHERE video_id = ?", (vid,))
+        title = (title_row or {}).get("title")
+        if not yt.is_unavailable_video(title):
+            continue
+        db.execute(
+            "DELETE FROM list_items WHERE video_id = ? AND list_id IN "
+            "(SELECT id FROM lists WHERE user_id = ?)",
+            (vid, user_id),
+        )
+        db.execute(
+            "DELETE FROM item_tags WHERE user_id = ? AND video_id = ?",
+            (user_id, vid),
+        )
+        db.execute(
+            "DELETE FROM library_items WHERE user_id = ? AND video_id = ?",
+            (user_id, vid),
+        )
+        n += 1
+    return n
+
+
 def purge_music_from_queue(user_id: int, video_ids: list[str] | None = None) -> int:
     """Kick music/clips out of planning queue → archived."""
     if video_ids is None:
@@ -481,6 +527,30 @@ def purge_music_from_queue(user_id: int, video_ids: list[str] | None = None) -> 
             "UPDATE library_items SET status = 'archived' "
             "WHERE user_id = ? AND video_id = ? AND status IN ('queue', 'in_progress')",
             (user_id, vid),
+        )
+        n += 1
+    return n
+
+
+def purge_shortform_from_queue(user_id: int) -> int:
+    """≤6 min / shorts leave the planning queue (still in library as archived)."""
+    rows = _library_snapshot(user_id, limit=2000)
+    n = 0
+    for r in rows:
+        if (r.get("status") or "") not in ("queue", "in_progress"):
+            continue
+        bucket = yt.content_bucket(
+            r.get("title"),
+            r.get("channel_title"),
+            r.get("duration_sec"),
+            None,
+        )
+        if bucket not in ("shorts", "shortform"):
+            continue
+        db.execute(
+            "UPDATE library_items SET status = 'archived' "
+            "WHERE user_id = ? AND video_id = ? AND status IN ('queue', 'in_progress')",
+            (user_id, r["video_id"]),
         )
         n += 1
     return n

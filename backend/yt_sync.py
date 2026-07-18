@@ -351,15 +351,29 @@ def iter_sync_youtube_library(user_id: int) -> Generator[dict[str, Any], None, N
             sn = it.get("snippet") or {}
             ch_title = (sn.get("title") or "").strip()
             ch_id = ((sn.get("resourceId") or {}).get("channelId") or "").strip()
+            thumbs = sn.get("thumbnails") or {}
+            thumb = (
+                ((thumbs.get("medium") or {}).get("url"))
+                or ((thumbs.get("default") or {}).get("url"))
+                or ((thumbs.get("high") or {}).get("url"))
+                or ""
+            )
             if ch_id:
                 db.execute(
-                    "INSERT INTO subscriptions (user_id, channel_id, channel_title) VALUES (?, ?, ?) "
+                    "INSERT INTO subscriptions (user_id, channel_id, channel_title, thumb_url) "
+                    "VALUES (?, ?, ?, ?) "
                     + (
-                        "ON CONFLICT (user_id, channel_id) DO UPDATE SET channel_title = EXCLUDED.channel_title"
+                        "ON CONFLICT (user_id, channel_id) DO UPDATE SET "
+                        "channel_title = EXCLUDED.channel_title, "
+                        "thumb_url = CASE WHEN EXCLUDED.thumb_url != '' THEN EXCLUDED.thumb_url "
+                        "ELSE subscriptions.thumb_url END"
                         if db.is_postgres()
-                        else "ON CONFLICT(user_id, channel_id) DO UPDATE SET channel_title = excluded.channel_title"
+                        else "ON CONFLICT(user_id, channel_id) DO UPDATE SET "
+                        "channel_title = excluded.channel_title, "
+                        "thumb_url = CASE WHEN excluded.thumb_url != '' THEN excluded.thumb_url "
+                        "ELSE subscriptions.thumb_url END"
                     ),
-                    (user_id, ch_id, ch_title),
+                    (user_id, ch_id, ch_title, thumb),
                 )
                 subs += 1
         page = data.get("nextPageToken")

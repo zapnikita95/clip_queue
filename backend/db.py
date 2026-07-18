@@ -324,6 +324,7 @@ CREATE TABLE IF NOT EXISTS subscriptions (
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   channel_id TEXT NOT NULL,
   channel_title TEXT NOT NULL DEFAULT '',
+  thumb_url TEXT NOT NULL DEFAULT '',
   PRIMARY KEY (user_id, channel_id)
 );
 CREATE TABLE IF NOT EXISTS sync_runs (
@@ -360,6 +361,7 @@ CREATE TABLE IF NOT EXISTS subscriptions (
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   channel_id TEXT NOT NULL,
   channel_title TEXT NOT NULL DEFAULT '',
+  thumb_url TEXT NOT NULL DEFAULT '',
   PRIMARY KEY (user_id, channel_id)
 );
 CREATE TABLE IF NOT EXISTS sync_runs (
@@ -383,6 +385,7 @@ CREATE TABLE IF NOT EXISTS organize_proposals (
 def _migrate_columns() -> None:
     alters = [
         "ALTER TABLE users ADD COLUMN google_sub TEXT",
+        "ALTER TABLE subscriptions ADD COLUMN thumb_url TEXT NOT NULL DEFAULT ''",
     ]
     for stmt in alters:
         try:

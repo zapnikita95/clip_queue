@@ -635,37 +635,72 @@ def create_app() -> Flask:
             """
             SELECT COALESCE(v.channel_id, '') AS channel_id,
                    COALESCE(v.channel_title, '') AS channel_title,
-                   COUNT(*) AS c
+                   v.title AS sample_title,
+                   v.duration_sec AS sample_duration,
+                   v.thumb_url AS sample_thumb,
+                   v.video_id AS sample_video_id
             FROM library_items li
             JOIN videos v ON v.video_id = li.video_id
             WHERE li.user_id = ? AND li.status = ?
-            GROUP BY COALESCE(v.channel_id, ''), COALESCE(v.channel_title, '')
-            ORDER BY c DESC
+            ORDER BY li.saved_at DESC
             """,
             (uid, status),
         )
-        out = []
+        sub_by_id: dict[str, str] = {}
+        sub_by_title: dict[str, str] = {}
+        try:
+            for s in db.fetchall(
+                "SELECT channel_id, channel_title, thumb_url FROM subscriptions WHERE user_id = ?",
+                (uid,),
+            ):
+                if s.get("thumb_url"):
+                    if s.get("channel_id"):
+                        sub_by_id[str(s["channel_id"])] = s["thumb_url"]
+                    if s.get("channel_title"):
+                        sub_by_title[str(s["channel_title"]).strip()] = s["thumb_url"]
+        except Exception:
+            pass
+
+        buckets: dict[str, dict] = {}
         for r in rows:
-            title = r.get("channel_title") or "Без канала"
-            if yt.is_unavailable_video(title):
+            title = (r.get("channel_title") or "Без канала").strip() or "Без канала"
+            if yt.is_unavailable_video(r.get("sample_title")) or yt.is_unavailable_video(title):
                 continue
-            is_music = yt.is_music_channel(title)
-            if kind == "video" and is_music:
+            bucket = yt.content_bucket(
+                r.get("sample_title"),
+                title,
+                r.get("sample_duration"),
+                None,
+            )
+            if kind == "video" and bucket != "video":
                 continue
-            if kind == "music" and not is_music:
+            if kind == "music" and bucket != "music":
                 continue
-            # shorts: keep all non-music channels (short clips live under video channels too)
-            if kind == "shorts" and is_music:
+            if kind in ("shorts", "shortform") and bucket not in ("shorts", "shortform"):
                 continue
-            out.append(
-                {
+            if kind == "marathon" and bucket != "marathon":
+                continue
+            key = f"{r.get('channel_id') or ''}|{title}"
+            slot = buckets.get(key)
+            if not slot:
+                ch_id = (r.get("channel_id") or "").strip()
+                thumb = (
+                    sub_by_id.get(ch_id)
+                    or sub_by_title.get(title)
+                    or r.get("sample_thumb")
+                    or yt.thumb_url(r.get("sample_video_id") or "")
+                )
+                slot = {
                     "channel_id": r.get("channel_id") or "",
                     "channel_title": title,
-                    "count": int(r.get("c") or 0),
-                    "is_music_topic": is_music,
-                    "is_music": is_music,
+                    "count": 0,
+                    "thumb_url": thumb,
+                    "is_music": bucket == "music",
+                    "is_music_topic": bucket == "music",
                 }
-            )
+                buckets[key] = slot
+            slot["count"] += 1
+        out = sorted(buckets.values(), key=lambda x: -int(x["count"]))
         return jsonify({"ok": True, "channels": out, "kind": kind})
 
     @app.patch("/api/library/<video_id>")
@@ -1264,6 +1299,19 @@ def create_app() -> Flask:
         for r in rows:
             cnt = db.fetchone(
                 "SELECT COUNT(*) AS c FROM list_items WHERE list_id = ?",
+                (r["id"],)
+            )
+            covers = db.fetchall(
+                """
+                SELECT v.thumb_url, v.title, v.video_id
+                FROM list_items x
+                JOIN videos v ON v.video_id = x.video_id
+                WHERE x.list_id = ?
+                  AND COALESCE(v.thumb_url, '') != ''
+                  AND lower(COALESCE(v.title, '')) NOT IN ('private video', 'deleted video', 'deleted video.')
+                ORDER BY x.position ASC, x.added_at DESC
+                LIMIT 3
+                """,
                 (r["id"],),
             )
             out.append(
@@ -1272,6 +1320,13 @@ def create_app() -> Flask:
                     "title": r["title"],
                     "created_at": str(r.get("created_at") or ""),
                     "count": int((cnt or {}).get("c") or 0),
+                    "covers": [
+                        {
+                            "thumb_url": c.get("thumb_url") or yt.thumb_url(c["video_id"]),
+                            "title": c.get("title") or "",
+                        }
+                        for c in covers
+                    ],
                 }
             )
         return jsonify({"ok": True, "lists": out})

@@ -436,14 +436,14 @@
       ${topbar("onboard")}
       <section class="hero">
         <h1>Твой YouTube → Clip Queue</h1>
-        <p>Лайки + твои плейлисты (в т.ч. «Listen later») забираем сами. Официальный «Посмотреть позже» (Watch Later) Google API <b>не отдаёт никому</b> — его нет даже у нас.</p>
+        <p>Лайки + обычные плейлисты тянем сами. Системный <b>«Смотреть позже» (WL)</b> Google API не отдаёт — даже с твоим логином через API там пусто. Это ограничение Google, не бага Clip Queue.</p>
       </section>
       <div class="panel" style="margin-bottom:16px">
         <h2>1. Что уже в Clip Queue из YouTube</h2>
         <p class="hint">
-          <b>Качаем:</b> до ~5000 лайков, все твои плейлисты, подписки.<br>
-          <b>Не качается через API:</b> системный «Посмотреть позже» / Watch Later и история — запрет Google.<br>
-          Если отложка у тебя лежит в своём плейлисте (например <b>Listen later</b>) — она уже в разделе «Списки». История — файлом Takeout ниже.
+          <b>Качаем:</b> до ~5000 лайков, все <b>обычные</b> плейлисты (Listen later и т.п.), подписки.<br>
+          <b>Не качается:</b> официальный Watch Later (<code>youtube.com/playlist?list=WL</code>) — API отвечает 0 роликов.<br>
+          Чтобы забрать «смотреть позже»: создай обычный плейлист, перенеси туда WL, жми «Обновить из YouTube». Или шарь ролики в Clip Queue по одному — так и задумано дальше.
         </p>
         <p class="muted">Статус: ${meData.youtube_connected ? "Google подключён" : "нужен вход через Google"} · в библиотеке сейчас: ${meData.library_count || 0}</p>
         <div class="btn-row">
@@ -695,13 +695,19 @@
           { title: "Черновик папок", detail: "раскладываю видео" },
         ], api("/api/organize/propose", { method: "POST", body: JSON.stringify({ use_llm: false }) }));
         const purged = data.proposal?.music_purged || 0;
+        const broken = data.proposal?.broken_purged || 0;
+        const shorts = data.proposal?.shortform_purged || 0;
+        const bits = [];
+        if (purged) bits.push(`музыка ${purged}`);
+        if (shorts) bits.push(`короткие ${shorts}`);
+        if (broken) bits.push(`битые ${broken}`);
         finishProgress(box, {
           ok: true,
-          title: purged ? `Готово · музыку убрал: ${purged}` : "Готово — кликай папки",
-          detail: purged ? "Topic/VEVO/клипы выкинуты из очереди" : "",
+          title: bits.length ? `Готово · убрал: ${bits.join(", ")}` : "Готово — кликай папки",
+          detail: "В плане только длинные нормальные ролики",
         });
         paintProposal(data.proposal);
-        if (purged) toast(`Музыку убрал из очереди: ${purged}`);
+        if (bits.length) toast(`Убрал из очереди: ${bits.join(", ")}`);
       } catch (e) {
         finishProgress(box, { ok: false, title: "Не собралось", detail: e.message });
       } finally {
@@ -928,8 +934,13 @@
         ${channels.length
           ? channels.map((c) => `
             <button type="button" class="channel-row" data-channel="${escapeHtml(c.channel_title)}">
-              <b>${escapeHtml(c.channel_title)}</b>
-              <span class="count">${c.count} видео →</span>
+              <img class="channel-avatar" src="${escapeHtml(c.thumb_url || "")}" alt="" loading="lazy"
+                onerror="this.style.opacity='0.25'" />
+              <div class="channel-row-text">
+                <b>${escapeHtml(c.channel_title)}</b>
+                <span class="count">${c.count} видео</span>
+              </div>
+              <span class="count">→</span>
             </button>`).join("")
           : `<div class="empty">Каналов пока нет — сделай синк YouTube</div>`}
       </div>`;
@@ -1059,13 +1070,28 @@
     }
   }
 
+  function listCardHtml(l) {
+    const covers = l.covers || [];
+    const mosaic = covers.length
+      ? covers.map((c) => `<img src="${escapeHtml(c.thumb_url)}" alt="" loading="lazy" />`).join("")
+      : `<div class="list-cover-empty">📂</div>`;
+    return `
+      <button type="button" class="list-card" data-list="${l.id}">
+        <div class="list-cover list-cover-${Math.min(3, Math.max(1, covers.length))}">${mosaic}</div>
+        <div class="list-card-body">
+          <h3>${escapeHtml(l.title)}</h3>
+          <div class="muted">${l.count} видео</div>
+        </div>
+      </button>`;
+  }
+
   async function renderLists() {
     const data = await api("/api/lists");
     app.innerHTML = `
       ${topbar("lists")}
       <section class="hero">
         <h1>Списки</h1>
-        <p>Собери подборки из уже сохранённого.</p>
+        <p>Твои папки после «Разложить → ОК». С обложками из роликов внутри.</p>
       </section>
       <div class="panel" style="margin-bottom:18px">
         <div class="field">
@@ -1074,12 +1100,8 @@
         </div>
         <button class="btn" id="create-list">Создать</button>
       </div>
-      <div class="grid" id="lists-grid">
-        ${(data.lists || []).map((l) => `
-          <button class="card" style="text-align:left;cursor:pointer;padding:16px" data-list="${l.id}">
-            <h3 class="card-title" style="min-height:auto">${escapeHtml(l.title)}</h3>
-            <div class="card-meta">${l.count} видео</div>
-          </button>`).join("") || `<div class="empty">Списков пока нет</div>`}
+      <div class="list-grid" id="lists-grid">
+        ${(data.lists || []).map(listCardHtml).join("") || `<div class="empty">Списков пока нет — зайди в «Разложить»</div>`}
       </div>
       <div id="list-detail" class="hidden" style="margin-top:22px"></div>`;
     wireNav();
@@ -1108,9 +1130,10 @@
         const box = $("#list-detail");
         box.classList.remove("hidden");
         box.innerHTML = `
-          <h2 style="margin:0 0 12px">${escapeHtml(d.list.title)}</h2>
+          <h2 style="margin:0 0 12px;color:var(--text)">${escapeHtml(d.list.title)}</h2>
           <div class="grid">${d.items?.length ? d.items.map(cardHtml).join("") : `<div class="empty">Пусто — добавь видео из карточки</div>`}</div>`;
         wireNav();
+        box.scrollIntoView({ behavior: "smooth", block: "start" });
       };
     });
   }
