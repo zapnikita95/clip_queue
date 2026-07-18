@@ -3,27 +3,10 @@
 from __future__ import annotations
 
 import json
-import re
-from collections import Counter, defaultdict
+from collections import defaultdict
 from typing import Any
 
-from backend import db, llm, youtube as yt
-
-_TOKEN = re.compile(r"[a-zA-Zа-яА-ЯёЁ0-9]{3,}", re.UNICODE)
-_STOP = {
-    "the",
-    "and",
-    "для",
-    "как",
-    "это",
-    "что",
-    "you",
-    "with",
-    "from",
-    "official",
-    "video",
-    "music",
-}
+from backend import db, llm, themes, youtube as yt
 
 
 def ensure_classify_tables() -> None:
@@ -133,7 +116,6 @@ def heuristic_propose(user_id: int) -> dict[str, Any]:
     shortform: list[str] = []
     longform: list[str] = []
     music: list[str] = []
-    tokens: Counter = Counter()
 
     music_ids: set[str] = set()
     for r in rows:
@@ -158,25 +140,45 @@ def heuristic_propose(user_id: int) -> dict[str, Any]:
                 shortform.append(vid)
             elif dur >= 40 * 60:
                 longform.append(vid)
-        for t in _TOKEN.findall(r.get("title") or ""):
-            tokens[t.lower()] += 1
 
     folders: list[dict] = []
     queue = by_status.get("queue") or []
     watched = by_status.get("watched") or []
     started = by_status.get("in_progress") or []
 
-    if queue:
-        folders.append(
+    # --- Themes first (what the user actually wants to browse) ---
+    by_theme: dict[str, list[str]] = defaultdict(list)
+    themed_ids: set[str] = set()
+    for r in rows:
+        vid = r["video_id"]
+        if vid in music_ids:
+            continue
+        primary = themes.primary_theme(r.get("title"), r.get("channel_title"))
+        if not primary:
+            continue
+        by_theme[primary["id"]].append(vid)
+        themed_ids.add(vid)
+
+    theme_folders = []
+    for theme_def in themes.THEMES:
+        tid = theme_def["id"]
+        vids = by_theme.get(tid) or []
+        if len(vids) < 2:
+            continue
+        theme_folders.append(
             _folder(
-                "В очереди / не разобрано",
-                "Без музыки и клипов — только то, что ещё в очереди",
-                queue[:80],
-                rule=None,
+                theme_def["title"],
+                f"Тема · {len(vids)} видео (по названию и каналу)",
+                vids[:60],
+                rule={"type": "theme", "value": tid},
                 rows_by_id=rows_by_id,
-                persist=False,
+                persist=True,
             )
         )
+    # Biggest themes first
+    theme_folders.sort(key=lambda f: -int(f.get("count") or 0))
+    folders.extend(theme_folders)
+
     if shortform:
         folders.append(
             _folder(
@@ -200,14 +202,19 @@ def heuristic_propose(user_id: int) -> dict[str, Any]:
             )
         )
 
-    top_ch = sorted(by_channel.items(), key=lambda x: -len(x[1]))[:10]
+    # Channels only as secondary (skip if almost everything already themed)
+    top_ch = sorted(by_channel.items(), key=lambda x: -len(x[1]))[:6]
     for ch, vids in top_ch:
-        if len(vids) < 2 or yt.is_music_channel(ch):
+        if len(vids) < 3 or yt.is_music_channel(ch):
+            continue
+        # Prefer theme coverage — skip channel if ≤1 video outside themes
+        unthemed = [v for v in vids if v not in themed_ids]
+        if len(unthemed) < 2 and len(vids) <= 5:
             continue
         folders.append(
             _folder(
                 f"Канал: {ch}"[:80],
-                f"{len(vids)} видео с этого канала",
+                f"{len(vids)} видео с канала (доп. к тематикам)",
                 vids[:40],
                 rule={"type": "channel", "value": ch},
                 rows_by_id=rows_by_id,
@@ -215,29 +222,19 @@ def heuristic_propose(user_id: int) -> dict[str, Any]:
             )
         )
 
-    for word, cnt in tokens.most_common(16):
-        if cnt < 3 or word in _STOP:
-            continue
-        vids = [
-            r["video_id"]
-            for r in rows
-            if r["video_id"] not in music_ids
-            and word in (r.get("title") or "").lower()
-        ][:40]
-        if len(vids) < 3:
-            continue
+    # Leftover queue without a theme — useful “ещё не размечено”
+    unthemed_queue = [v for v in queue if v not in themed_ids] if queue else []
+    if unthemed_queue:
         folders.append(
             _folder(
-                f"Тема: {word}",
-                f"Часто в названиях ({cnt})",
-                vids,
-                rule={"type": "keyword", "value": word},
+                "Без темы / разобрать",
+                "В очереди, но авто-тема не сработала — кликни и глянь",
+                unthemed_queue[:80],
+                rule=None,
                 rows_by_id=rows_by_id,
-                persist=True,
+                persist=False,
             )
         )
-        if len(folders) >= 18:
-            break
 
     if started:
         folders.append(
@@ -266,17 +263,18 @@ def heuristic_propose(user_id: int) -> dict[str, Any]:
     return {
         "engine": "heuristic",
         "summary": (
-            f"В выборке {len(rows)} видео · музыка/клипы скрыты: {len(music_ids)}. "
-            f"Папок с правилами: {persist_n}. "
-            "«ОК» сохранит папки и выкинет музыку из очереди планирования."
+            f"В выборке {len(rows)} · тем: {len(theme_folders)} · "
+            f"без темы: {len(unthemed_queue)} · музыка скрыта: {len(music_ids)}. "
+            "Сначала тематики (английский, новости, история…), каналы — ниже. "
+            "«ОК» сохранит правила для новых ссылок."
         ),
-        "folders": folders[:18],
+        "folders": folders[:20],
         "music_hidden": len(music_ids),
         "music_ids": list(music_ids)[:500],
         "limitations": [
-            "Музыка (Topic/VEVO/клипы) не показывается в раскладке",
-            "Watch Later и % просмотра Google API не отдаёт",
-            "История — через Takeout",
+            "Темы — по словам в названии/канале (не идеальный AI)",
+            "Музыка (Topic/VEVO/клипы) скрыта",
+            "Watch Later Google API не отдаёт",
         ],
     }
 
@@ -549,6 +547,8 @@ def match_rules_for_video(
                 ok = False
         elif rtype == "content_kind" and bucket == val:
             ok = True
+        elif rtype == "theme" and val:
+            ok = themes.matches_theme(val, title, channel)
         if ok and r["list_id"] not in seen:
             seen.add(r["list_id"])
             matched.append(r)
