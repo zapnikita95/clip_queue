@@ -518,7 +518,7 @@
       ${topbar("organize")}
       <section class="hero">
         <h1>Разложить по папкам</h1>
-        <p>После синка YouTube соберём черновик папок по темам и каналам. Потом одним кликом создашь списки.</p>
+        <p>Сразу соберём черновик по каналам, длине и словам из названий — без долгого ожидания AI. Потом одним кликом создашь списки.</p>
       </section>
       <div class="panel">
         <div class="btn-row">
@@ -539,11 +539,10 @@
       });
       try {
         const data = await runBusySteps(box, [
-          { title: "Смотрю библиотеку", detail: "очередь и просмотренные" },
-          { title: "Кластеризую по темам", detail: "каналы, длины, теги" },
+          { title: "Смотрю библиотеку", detail: "очередь и каналы" },
+          { title: "Кластеризую", detail: "темы, длины, каналы" },
           { title: "Черновик папок", detail: "раскладываю видео" },
-          { title: "Проверяю лимиты", detail: "что API не отдаёт" },
-        ], api("/api/organize/propose", { method: "POST", body: "{}" }));
+        ], api("/api/organize/propose", { method: "POST", body: JSON.stringify({ use_llm: false }) }));
         lastProposal = data.proposal;
         finishProgress(box, {
           ok: true,
@@ -552,13 +551,13 @@
         });
         const folders = (lastProposal.folders || []).map((f) => `
           <div style="border:1px solid var(--border);border-radius:12px;padding:12px;margin-bottom:10px">
-            <b>${escapeHtml(f.title)}</b>
+            <b style="color:var(--text)">${escapeHtml(f.title)}</b>
             <div class="muted" style="font-size:13px;margin:4px 0">${escapeHtml(f.reason || "")}</div>
-            <div class="muted" style="font-size:12px">${(f.video_ids || []).length} видео · engine: ${escapeHtml(lastProposal.engine)}</div>
+            <div class="muted" style="font-size:12px">${(f.video_ids || []).length} видео</div>
           </div>`).join("");
         const wrap = document.createElement("div");
         wrap.innerHTML = `
-          <p style="margin-top:14px">${escapeHtml(lastProposal.summary || "")}</p>
+          <p style="margin-top:14px;color:var(--text)">${escapeHtml(lastProposal.summary || "")}</p>
           ${(lastProposal.limitations || []).map((x) => `<div class="muted" style="font-size:12px">• ${escapeHtml(x)}</div>`).join("")}
           <div style="margin-top:14px">${folders || "<div class='empty'>Мало данных — сначала синк YouTube</div>"}</div>`;
         $("#proposal-box").appendChild(wrap);
@@ -918,14 +917,21 @@
       <div id="list-detail" class="hidden" style="margin-top:22px"></div>`;
     wireNav();
     $("#create-list").onclick = async () => {
+      const btn = $("#create-list");
+      const title = $("#list-title").value.trim();
+      if (!title) return toast("Напиши название списка");
+      btn.classList.add("busy");
       try {
         await api("/api/lists", {
           method: "POST",
-          body: JSON.stringify({ title: $("#list-title").value.trim() }),
+          body: JSON.stringify({ title }),
         });
+        toast("Список создан");
         renderLists();
       } catch (e) {
         toast(e.message);
+      } finally {
+        btn.classList.remove("busy");
       }
     };
     document.querySelectorAll("[data-list]").forEach((btn) => {

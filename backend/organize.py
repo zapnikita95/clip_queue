@@ -137,7 +137,7 @@ def heuristic_propose(user_id: int) -> dict[str, Any]:
 def llm_propose(user_id: int) -> dict[str, Any] | None:
     if not llm.available():
         return None
-    rows = _library_snapshot(user_id, limit=120)
+    rows = _library_snapshot(user_id, limit=80)
     if len(rows) < 3:
         return None
     compact = [
@@ -150,6 +150,7 @@ def llm_propose(user_id: int) -> dict[str, Any] | None:
         }
         for r in rows
     ]
+    # Free OpenRouter models often queue 60–180s — hard cap so UX never hangs.
     data = llm.chat_json(
         system=(
             "Ты помогаешь разобрать личную библиотеку YouTube-видео. "
@@ -158,6 +159,8 @@ def llm_propose(user_id: int) -> dict[str, Any] | None:
         ),
         user=json.dumps(compact, ensure_ascii=False),
         temperature=0.3,
+        timeout=10,
+        max_models=1,
     )
     if not data:
         return None
@@ -174,6 +177,8 @@ def llm_propose(user_id: int) -> dict[str, Any] | None:
                 "video_ids": vids[:50],
             }
         )
+    if not folders:
+        return None
     return {
         "engine": "llm",
         "summary": str(data.get("summary") or "")[:800],
@@ -184,8 +189,13 @@ def llm_propose(user_id: int) -> dict[str, Any] | None:
     }
 
 
-def propose_structure(user_id: int) -> dict[str, Any]:
-    proposal = llm_propose(user_id) or heuristic_propose(user_id)
+def propose_structure(user_id: int, *, use_llm: bool = False) -> dict[str, Any]:
+    """Default = instant heuristic. LLM only if use_llm=1 (and still ≤10s)."""
+    proposal = None
+    if use_llm:
+        proposal = llm_propose(user_id)
+    if not proposal:
+        proposal = heuristic_propose(user_id)
     db.execute(
         "INSERT INTO organize_proposals (user_id, proposal_json) VALUES (?, ?)",
         (user_id, json.dumps(proposal, ensure_ascii=False)),

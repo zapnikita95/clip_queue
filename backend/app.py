@@ -233,7 +233,9 @@ def create_app() -> Flask:
     @require_auth
     def organize_propose():
         uid = current_user()["user_id"]
-        proposal = organize.propose_structure(uid)
+        body = request.get_json(silent=True) or {}
+        use_llm = bool(body.get("use_llm")) or (request.args.get("llm") == "1")
+        proposal = organize.propose_structure(uid, use_llm=use_llm)
         return jsonify({"ok": True, "proposal": proposal})
 
     @app.post("/api/organize/apply")

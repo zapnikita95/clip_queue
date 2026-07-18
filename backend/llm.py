@@ -46,10 +46,19 @@ def available() -> bool:
     return bool(_config()[0])
 
 
-def chat_json(system: str, user: str, temperature: float = 0.2) -> Optional[dict[str, Any]]:
+def chat_json(
+    system: str,
+    user: str,
+    temperature: float = 0.2,
+    *,
+    timeout: float = 20,
+    max_models: int | None = None,
+) -> Optional[dict[str, Any]]:
     key, base, models = _config()
     if not key:
         return None
+    if max_models is not None:
+        models = models[: max(1, int(max_models))]
     headers = {
         "Authorization": f"Bearer {key}",
         "Content-Type": "application/json",
@@ -76,7 +85,7 @@ def chat_json(system: str, user: str, temperature: float = 0.2) -> Optional[dict
                         {"role": "user", "content": user},
                     ],
                 },
-                timeout=45,
+                timeout=timeout,
             )
             if r.status_code in (404, 400):
                 print(f"[llm] skip {model}: {r.status_code}", flush=True)
