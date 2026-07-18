@@ -45,6 +45,135 @@
       .replace(/"/g, "&quot;");
   }
 
+  function fmtSec(s) {
+    const n = Math.max(0, Math.round(Number(s) || 0));
+    if (n < 60) return `${n} сек`;
+    const m = Math.floor(n / 60);
+    const r = n % 60;
+    return r ? `${m} мин ${r} сек` : `${m} мин`;
+  }
+
+  function mountProgress(el, { title = "Работаю…", detail = "" } = {}) {
+    if (!el) return null;
+    el.innerHTML = `
+      <div class="progress-box" data-progress>
+        <div class="progress-head">
+          <div class="progress-spin" aria-hidden="true"></div>
+          <div class="progress-copy">
+            <div class="progress-title">${escapeHtml(title)}</div>
+            <div class="progress-detail">${escapeHtml(detail)}</div>
+          </div>
+          <div class="progress-meta">
+            <div class="progress-pct">0%</div>
+            <div class="progress-eta">считаю время…</div>
+          </div>
+        </div>
+        <div class="progress-bar"><i style="width:2%"></i></div>
+        <ul class="progress-log"></ul>
+      </div>`;
+    return el.querySelector("[data-progress]");
+  }
+
+  function updateProgress(box, ev = {}) {
+    if (!box) return;
+    const pct = Math.max(0, Math.min(100, Number(ev.pct) || 0));
+    const title = ev.title || "Работаю…";
+    const detail = ev.detail || "";
+    box.querySelector(".progress-title").textContent = title;
+    box.querySelector(".progress-detail").textContent = detail;
+    box.querySelector(".progress-pct").textContent = `${Math.round(pct)}%`;
+    const bar = box.querySelector(".progress-bar > i");
+    if (bar) bar.style.width = `${Math.max(2, pct)}%`;
+    let etaText = "считаю время…";
+    if (ev.eta_sec != null && pct < 100) etaText = `ещё ~${fmtSec(ev.eta_sec)}`;
+    else if (pct >= 100) etaText = ev.elapsed_sec != null ? `готово за ${fmtSec(ev.elapsed_sec)}` : "готово";
+    else if (ev.elapsed_sec != null) etaText = `уже ${fmtSec(ev.elapsed_sec)}`;
+    box.querySelector(".progress-eta").textContent = etaText;
+    if (detail || title) {
+      const log = box.querySelector(".progress-log");
+      if (log && (!log.dataset.last || log.dataset.last !== `${title}|${detail}`)) {
+        log.dataset.last = `${title}|${detail}`;
+        const li = document.createElement("li");
+        li.textContent = detail ? `${title} — ${detail}` : title;
+        log.prepend(li);
+        while (log.children.length > 8) log.lastChild.remove();
+      }
+    }
+  }
+
+  function finishProgress(box, { ok = true, title, detail, pct = 100, elapsed_sec } = {}) {
+    if (!box) return;
+    box.classList.toggle("done", ok);
+    box.classList.toggle("error", !ok);
+    updateProgress(box, {
+      pct,
+      title: title || (ok ? "Готово" : "Ошибка"),
+      detail: detail || "",
+      eta_sec: 0,
+      elapsed_sec,
+    });
+  }
+
+  /** Fake stepped progress while a non-streaming request runs */
+  function runBusySteps(box, steps, promise) {
+    let i = 0;
+    const t0 = Date.now();
+    const tick = () => {
+      const step = steps[Math.min(i, steps.length - 1)];
+      const pct = Math.min(92, 8 + Math.round((i / Math.max(1, steps.length)) * 84));
+      const elapsed = (Date.now() - t0) / 1000;
+      const remain = Math.max(2, (steps.length - i) * 2.2);
+      updateProgress(box, {
+        pct,
+        title: step.title,
+        detail: step.detail || "",
+        elapsed_sec: elapsed,
+        eta_sec: remain,
+      });
+      i += 1;
+    };
+    tick();
+    const timer = setInterval(tick, 900);
+    return promise.finally(() => clearInterval(timer));
+  }
+
+  async function streamNdjson(path, { method = "POST", body = "{}", onEvent } = {}) {
+    const headers = { "Content-Type": "application/json", Accept: "application/x-ndjson" };
+    const t = token();
+    if (t) headers.Authorization = `Bearer ${t}`;
+    const res = await fetch(path, { method, headers, body });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || `HTTP ${res.status}`);
+    }
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf = "";
+    let last = null;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const parts = buf.split("\n");
+      buf = parts.pop() || "";
+      for (const line of parts) {
+        const s = line.trim();
+        if (!s) continue;
+        let ev;
+        try { ev = JSON.parse(s); } catch (_) { continue; }
+        last = ev;
+        if (onEvent) onEvent(ev);
+      }
+    }
+    if (buf.trim()) {
+      try {
+        last = JSON.parse(buf.trim());
+        if (onEvent) onEvent(last);
+      } catch (_) {}
+    }
+    return last;
+  }
+
   function tagPillsHtml(tags, { removable = false, videoId = "" } = {}) {
     if (!tags?.length) return `<span class="muted" style="font-size:13px">Тегов пока нет</span>`;
     return tags.map((t) => {
@@ -80,11 +209,10 @@
     return `
       <header class="topbar">
         <a class="brand" href="/home" data-nav>
-          <div class="brand-mark" aria-hidden="true"></div>
-          <div>
-            <div class="brand-name">Clip Queue</div>
-            <div class="brand-sub">очередь из твоих интересов</div>
+          <div class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#fff" d="M8.2 5.4v13.2l11-6.6-11-6.6z"/></svg>
           </div>
+          <div class="brand-name">Clip Queue</div>
         </a>
         <nav class="nav">
           <button class="nav-btn ${active === "home" ? "active" : ""}" data-route="/home">Главная</button>
@@ -247,7 +375,7 @@
           ${!meData.youtube_connected && meData.google_oauth_configured
             ? `<a class="btn secondary" href="/api/auth/google/start">Подключить Google</a>` : ""}
         </div>
-        <pre id="sync-out" class="muted" style="white-space:pre-wrap;margin-top:12px;font-size:13px"></pre>
+        <div id="sync-out"></div>
       </div>
       <div class="panel" style="margin-bottom:16px">
         <h2>2. История из Google Takeout</h2>
@@ -258,7 +386,7 @@
             <input type="file" id="takeout-file" accept=".json,application/json" />
           </label>
         </div>
-        <pre id="takeout-out" class="muted" style="white-space:pre-wrap;margin-top:12px;font-size:13px"></pre>
+        <div id="takeout-out"></div>
       </div>
       <div class="panel">
         <h2>3. Предложить структуру</h2>
@@ -273,68 +401,147 @@
     wireNav();
     let lastProposal = null;
     $("#sync-yt").onclick = async () => {
-      $("#sync-out").textContent = "Синхронизация…";
+      const btn = $("#sync-yt");
+      btn.classList.add("busy");
+      btn.disabled = true;
+      const box = mountProgress($("#sync-out"), {
+        title: "Стартую синк",
+        detail: "Сейчас пойдёт: лайки → плейлисты → подписки",
+      });
       try {
-        const data = await api("/api/youtube/sync", { method: "POST", body: "{}" });
-        $("#sync-out").textContent = JSON.stringify(data.stats, null, 2);
-        toast("Синк готов");
+        const last = await streamNdjson("/api/youtube/sync", {
+          onEvent: (ev) => {
+            if (ev.type === "error") {
+              finishProgress(box, { ok: false, title: ev.title || "Ошибка", detail: ev.error || "" });
+              return;
+            }
+            if (ev.type === "done") {
+              finishProgress(box, {
+                ok: true,
+                title: ev.title || "Синк готов",
+                detail: ev.detail || "",
+                elapsed_sec: ev.elapsed_sec,
+              });
+              return;
+            }
+            updateProgress(box, ev);
+          },
+        });
+        if (last?.type === "error") throw new Error(last.error || "Синк оборвался");
+        const s = last?.stats || {};
+        toast(`Готово: +${s.liked_new || 0} лайков, ${s.playlists || 0} плейлистов`);
       } catch (e) {
-        $("#sync-out").textContent = e.message;
+        finishProgress(box, { ok: false, title: "Синк не вышел", detail: e.message });
         toast(e.message);
+      } finally {
+        btn.classList.remove("busy");
+        btn.disabled = !meData.youtube_connected;
       }
     };
     $("#takeout-file").onchange = async (ev) => {
       const file = ev.target.files?.[0];
       if (!file) return;
+      const out = $("#takeout-out");
+      const box = mountProgress(out, {
+        title: "Читаю Takeout",
+        detail: file.name,
+      });
       try {
         const text = await file.text();
+        updateProgress(box, { pct: 18, title: "Парсю JSON", detail: `${Math.round(file.size / 1024)} КБ` });
         const json = JSON.parse(text);
-        $("#takeout-out").textContent = "Импорт…";
-        const data = await api("/api/youtube/takeout", {
+        const data = await runBusySteps(box, [
+          { title: "Гружу историю на сервер", detail: "watch-history.json" },
+          { title: "Разбираю просмотры", detail: "складываю в библиотеку" },
+          { title: "Отмечаю уже просмотренные", detail: "статус watched" },
+          { title: "Почти готово", detail: "пишу итог" },
+        ], api("/api/youtube/takeout", {
           method: "POST",
           body: JSON.stringify(json),
+        }));
+        const s = data.stats || {};
+        finishProgress(box, {
+          ok: true,
+          title: "Takeout загружен",
+          detail: JSON.stringify(s),
+          elapsed_sec: undefined,
         });
-        $("#takeout-out").textContent = JSON.stringify(data.stats, null, 2);
         toast("Takeout загружен");
       } catch (e) {
-        $("#takeout-out").textContent = e.message;
+        finishProgress(box, { ok: false, title: "Импорт не вышел", detail: e.message });
         toast(e.message);
       }
     };
     $("#propose").onclick = async () => {
-      $("#proposal-box").innerHTML = `<p class="muted">Думаем…</p>`;
+      const btn = $("#propose");
+      btn.classList.add("busy");
+      const box = mountProgress($("#proposal-box"), {
+        title: "Собираю структуру",
+        detail: "Смотрю библиотеку и каналы",
+      });
       try {
-        const data = await api("/api/organize/propose", { method: "POST", body: "{}" });
+        const data = await runBusySteps(box, [
+          { title: "Смотрю библиотеку", detail: "очередь и просмотренные" },
+          { title: "Кластеризую по темам", detail: "каналы, длины, теги" },
+          { title: "Черновик папок", detail: "раскладываю видео" },
+          { title: "Проверяю лимиты", detail: "что API не отдаёт" },
+        ], api("/api/organize/propose", { method: "POST", body: "{}" }));
         lastProposal = data.proposal;
+        finishProgress(box, {
+          ok: true,
+          title: "Предложение готово",
+          detail: lastProposal.summary || "",
+        });
         const folders = (lastProposal.folders || []).map((f) => `
           <div style="border:1px solid var(--border);border-radius:12px;padding:12px;margin-bottom:10px">
             <b>${escapeHtml(f.title)}</b>
             <div class="muted" style="font-size:13px;margin:4px 0">${escapeHtml(f.reason || "")}</div>
             <div class="muted" style="font-size:12px">${(f.video_ids || []).length} видео · engine: ${escapeHtml(lastProposal.engine)}</div>
           </div>`).join("");
-        $("#proposal-box").innerHTML = `
-          <p>${escapeHtml(lastProposal.summary || "")}</p>
+        const wrap = document.createElement("div");
+        wrap.innerHTML = `
+          <p style="margin-top:14px">${escapeHtml(lastProposal.summary || "")}</p>
           ${(lastProposal.limitations || []).map((x) => `<div class="muted" style="font-size:12px">• ${escapeHtml(x)}</div>`).join("")}
           <div style="margin-top:14px">${folders || "<div class='empty'>Мало данных — сначала синк/takeout</div>"}</div>`;
+        $("#proposal-box").appendChild(wrap);
         $("#apply-proposal").classList.remove("hidden");
       } catch (e) {
-        $("#proposal-box").innerHTML = `<p class="muted">${escapeHtml(e.message)}</p>`;
+        finishProgress(box, { ok: false, title: "Не собралось", detail: e.message });
+      } finally {
+        btn.classList.remove("busy");
       }
     };
     $("#apply-proposal").onclick = async () => {
       if (!lastProposal) return;
+      const btn = $("#apply-proposal");
+      btn.classList.add("busy");
+      const box = mountProgress($("#proposal-box"), {
+        title: "Создаю папки",
+        detail: "Пишу списки в библиотеку",
+      });
       try {
-        const data = await api("/api/organize/apply", {
+        const data = await runBusySteps(box, [
+          { title: "Создаю папки", detail: "списки в Clip Queue" },
+          { title: "Раскладываю видео", detail: "по предложенным папкам" },
+        ], api("/api/organize/apply", {
           method: "POST",
           body: JSON.stringify({
             proposal: lastProposal,
             proposal_id: lastProposal.proposal_id,
           }),
+        }));
+        finishProgress(box, {
+          ok: true,
+          title: "Папки созданы",
+          detail: `Списков: ${(data.lists || []).length}`,
         });
         toast(`Создано списков: ${(data.lists || []).length}`);
-        navigate("/lists");
+        setTimeout(() => navigate("/lists"), 600);
       } catch (e) {
+        finishProgress(box, { ok: false, title: "Не создалось", detail: e.message });
         toast(e.message);
+      } finally {
+        btn.classList.remove("busy");
       }
     };
   }
@@ -793,18 +1000,33 @@
       }
     };
     $("#ai-tag").onclick = async () => {
-      $("#ai-out").textContent = "Думаю…";
+      const btn = $("#ai-tag");
+      btn.classList.add("busy");
+      const box = mountProgress($("#ai-out"), {
+        title: "Смотрю ролик",
+        detail: "Подбираю тему и теги",
+      });
       try {
-        const r = await api(`/api/videos/${encodeURIComponent(videoId)}/suggest-themes`, {
+        const r = await runBusySteps(box, [
+          { title: "Читаю название и описание", detail: "контекст ролика" },
+          { title: "Спрашиваю модель", detail: "тема и теги" },
+          { title: "Вешаю теги", detail: "в библиотеку" },
+        ], api(`/api/videos/${encodeURIComponent(videoId)}/suggest-themes`, {
           method: "POST",
           body: JSON.stringify({ apply: true }),
+        }));
+        finishProgress(box, {
+          ok: true,
+          title: "Теги готовы",
+          detail: (r.suggestion?.tags || []).join(", ") || "без новых тегов",
         });
-        $("#ai-out").textContent = JSON.stringify(r.suggestion, null, 2);
         toast(r.suggestion?.tags?.length ? `Теги: ${r.suggestion.tags.join(", ")}` : "Готово");
-        renderVideo(videoId);
+        setTimeout(() => renderVideo(videoId), 500);
       } catch (e) {
-        $("#ai-out").textContent = e.message;
+        finishProgress(box, { ok: false, title: "Не вышло", detail: e.message });
         toast(e.message);
+      } finally {
+        btn.classList.remove("busy");
       }
     };
     $("#add-to-list").onclick = async () => {

@@ -51,22 +51,27 @@ button { cursor: pointer; }
   gap: 12px;
 }
 .brand-mark {
-  width: 36px;
-  height: 36px;
+  width: 40px;
+  height: 40px;
   border-radius: 12px;
   background: linear-gradient(135deg, var(--accent), var(--accent-2));
   box-shadow: 0 8px 24px rgba(255, 59, 48, 0.35);
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+.brand-mark svg {
+  width: 18px;
+  height: 18px;
+  margin-left: 2px; /* optical center for play triangle */
+  display: block;
 }
 .brand-name {
   font-family: var(--display);
   font-weight: 800;
   letter-spacing: -0.03em;
-  font-size: 1.25rem;
-}
-.brand-sub {
-  color: var(--muted);
-  font-size: 12px;
-  margin-top: 2px;
+  font-size: 1.35rem;
+  line-height: 1.1;
 }
 
 .nav {
@@ -472,4 +477,146 @@ a.btn.ghost:hover {
   .topbar .nav { display: none; }
   .bottom-nav { display: flex; }
   .app-shell { padding-bottom: 110px; }
+}
+
+/* Live process feedback */
+.progress-box {
+  margin-top: 14px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 59, 48, 0.28);
+  background: linear-gradient(180deg, rgba(255, 59, 48, 0.1), rgba(255, 255, 255, 0.03));
+  animation: progress-in 0.22s ease;
+}
+.progress-box.done {
+  border-color: rgba(61, 214, 140, 0.35);
+  background: linear-gradient(180deg, rgba(61, 214, 140, 0.1), rgba(255, 255, 255, 0.03));
+}
+.progress-box.error {
+  border-color: rgba(255, 59, 48, 0.55);
+}
+@keyframes progress-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+.progress-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+.progress-spin {
+  width: 22px;
+  height: 22px;
+  margin-top: 2px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.15);
+  border-top-color: var(--accent-2);
+  animation: spin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+.progress-box.done .progress-spin,
+.progress-box.error .progress-spin {
+  animation: none;
+  border: 0;
+  background: var(--ok);
+  position: relative;
+}
+.progress-box.done .progress-spin::after {
+  content: "";
+  position: absolute;
+  inset: 6px 5px 7px 7px;
+  border: solid #0b0b0d;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+.progress-box.error .progress-spin {
+  background: var(--accent);
+}
+.progress-box.error .progress-spin::after {
+  content: "!";
+  color: #fff;
+  font-size: 13px;
+  font-weight: 800;
+  display: grid;
+  place-items: center;
+  inset: 0;
+  position: absolute;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.progress-copy { flex: 1; min-width: 0; }
+.progress-title {
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: -0.02em;
+}
+.progress-detail {
+  margin-top: 3px;
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.35;
+}
+.progress-meta {
+  text-align: right;
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+.progress-pct {
+  font-weight: 800;
+  font-family: var(--display);
+  font-size: 1.1rem;
+}
+.progress-eta {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.progress-bar {
+  margin-top: 12px;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+.progress-bar > i {
+  display: block;
+  height: 100%;
+  width: 0%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  transition: width 0.25s ease;
+  position: relative;
+}
+.progress-bar > i::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.35), transparent);
+  animation: sheen 1.1s linear infinite;
+}
+@keyframes sheen {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(100%); }
+}
+.progress-box.done .progress-bar > i {
+  background: var(--ok);
+}
+.progress-box.done .progress-bar > i::after { animation: none; opacity: 0; }
+.progress-log {
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+  max-height: 120px;
+  overflow: auto;
+  font-size: 12px;
+  color: var(--muted);
+}
+.progress-log li {
+  padding: 3px 0;
+  border-top: 1px solid rgba(255,255,255,0.06);
+}
+.progress-log li:first-child { border-top: 0; }
+.btn.busy {
+  pointer-events: none;
+  opacity: 0.7;
+  position: relative;
 }

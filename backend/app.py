@@ -9,7 +9,7 @@ from functools import wraps
 from pathlib import Path
 
 from dotenv import load_dotenv
-from flask import Flask, g, jsonify, redirect, request, send_from_directory
+from flask import Flask, Response, g, jsonify, redirect, request, send_from_directory, stream_with_context
 
 from backend import auth, db, google_oauth, llm, organize, takeout, yt_sync
 from backend import similarity as sim
@@ -158,11 +158,32 @@ def create_app() -> Flask:
     @require_auth
     def youtube_sync():
         uid = current_user()["user_id"]
-        try:
-            stats = yt_sync.sync_youtube_library(uid)
-        except Exception as e:
-            return json_error(str(e), 502)
-        return jsonify({"ok": True, "stats": stats})
+        # Default: NDJSON progress stream so UI can show live steps
+        if (request.args.get("plain") or "").strip() == "1":
+            try:
+                stats = yt_sync.sync_youtube_library(uid)
+            except Exception as e:
+                return json_error(str(e), 502)
+            return jsonify({"ok": True, "stats": stats})
+
+        def generate():
+            try:
+                for ev in yt_sync.iter_sync_youtube_library(uid):
+                    yield json.dumps(ev, ensure_ascii=False) + "\n"
+            except Exception as e:
+                yield json.dumps(
+                    {"type": "error", "error": str(e)[:400], "title": "Синк оборвался"},
+                    ensure_ascii=False,
+                ) + "\n"
+
+        return Response(
+            stream_with_context(generate()),
+            mimetype="application/x-ndjson",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            },
+        )
 
     @app.post("/api/youtube/takeout")
     @require_auth

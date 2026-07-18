@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Optional
+import time
+from typing import Any, Generator, Optional
 
 import requests
 
@@ -211,9 +212,25 @@ def _enrich_durations(access: str, video_ids: list[str]) -> dict[str, int]:
     return out
 
 
-def sync_youtube_library(user_id: int) -> dict[str, Any]:
-    access = google_oauth.get_valid_access_token(user_id)
-    stats = {
+def iter_sync_youtube_library(user_id: int) -> Generator[dict[str, Any], None, None]:
+    """Yield NDJSON-friendly progress events, then a final {type: done, stats}."""
+    t0 = time.time()
+
+    def emit(pct: int, title: str, detail: str = "") -> dict[str, Any]:
+        elapsed = time.time() - t0
+        eta = None
+        if 4 <= pct < 100:
+            eta = max(1, round(elapsed / pct * (100 - pct)))
+        return {
+            "type": "progress",
+            "pct": max(0, min(99, int(pct))),
+            "title": title,
+            "detail": detail,
+            "elapsed_sec": int(elapsed),
+            "eta_sec": eta,
+        }
+
+    stats: dict[str, Any] = {
         "liked_new": 0,
         "liked_total": 0,
         "playlists": 0,
@@ -226,6 +243,10 @@ def sync_youtube_library(user_id: int) -> dict[str, Any]:
         ],
     }
 
+    yield emit(3, "Подключаюсь к YouTube", "Проверяю Google-доступ и обновляю токен")
+    access = google_oauth.get_valid_access_token(user_id)
+
+    yield emit(8, "Читаю твой канал", "Ищу плейлист лайков")
     ch = _get(
         access,
         "channels",
@@ -238,20 +259,31 @@ def sync_youtube_library(user_id: int) -> dict[str, Any]:
         likes_pl = related.get("likes")
 
     if likes_pl:
+        yield emit(14, "Тяну лайки", "Загружаю список понравившихся видео")
         liked = _iter_playlist_items(access, likes_pl, limit=500)
         stats["liked_total"] = len(liked)
         ids = [x["video_id"] for x in liked]
+        yield emit(
+            22,
+            "Сохраняю лайки",
+            f"Найдено {len(liked)} · подтягиваю длительности и превью",
+        )
         _enrich_durations(access, ids)
         list_id = _ensure_list(user_id, "Лайки YouTube")
-        for x in liked:
+        for i, x in enumerate(liked):
             vid = x["video_id"]
             if not db.fetchone("SELECT video_id FROM videos WHERE video_id = ?", (vid,)):
                 _upsert_video_from_snippet(vid, x.get("snippet") or {})
             if _ensure_library(user_id, vid, source="liked", status="queue"):
                 stats["liked_new"] += 1
             _add_list_item(list_id, vid)
+            if liked and i % 40 == 0:
+                pct = 22 + int(10 * (i + 1) / max(1, len(liked)))
+                yield emit(pct, "Сохраняю лайки", f"{i + 1} из {len(liked)}")
+    else:
+        yield emit(20, "Лайки недоступны", "У канала нет открытого плейлиста лайков — иду дальше")
 
-    # User playlists
+    yield emit(36, "Читаю плейлисты", "Список твоих плейлистов на YouTube")
     page = None
     playlists: list[dict] = []
     while len(playlists) < 40:
@@ -264,12 +296,23 @@ def sync_youtube_library(user_id: int) -> dict[str, Any]:
         if not page:
             break
 
+    work_pls = []
     for pl in playlists:
         pl_id = pl.get("id")
         title = ((pl.get("snippet") or {}).get("title") or "Плейлист").strip()
         if pl_id in ("WL", "HL") or title.lower() in ("watch later", "смотреть позже"):
             stats["skipped_private"].append(title or pl_id)
             continue
+        work_pls.append((pl_id, title))
+
+    n_pl = max(1, len(work_pls))
+    for pi, (pl_id, title) in enumerate(work_pls):
+        base = 40 + int(40 * pi / n_pl)
+        yield emit(
+            base,
+            f"Плейлист: {title[:48]}",
+            f"{pi + 1} из {len(work_pls)} · качаю ролики",
+        )
         stats["playlists"] += 1
         items = _iter_playlist_items(access, pl_id, limit=300)
         ids = [x["video_id"] for x in items]
@@ -282,8 +325,13 @@ def sync_youtube_library(user_id: int) -> dict[str, Any]:
             if _ensure_library(user_id, vid, source="playlist", status="queue"):
                 stats["playlist_items_new"] += 1
             _add_list_item(list_id, vid)
+        yield emit(
+            40 + int(40 * (pi + 1) / n_pl),
+            f"Плейлист: {title[:48]}",
+            f"Готово · {len(items)} видео",
+        )
 
-    # Subscriptions (channels only — for organize hints)
+    yield emit(84, "Тяну подписки", "Каналы для подсказок по структуре")
     page = None
     subs = 0
     while subs < 200:
@@ -309,10 +357,29 @@ def sync_youtube_library(user_id: int) -> dict[str, Any]:
         page = data.get("nextPageToken")
         if not page:
             break
+        yield emit(88, "Тяну подписки", f"Уже {subs} каналов")
     stats["subscriptions"] = subs
 
+    yield emit(95, "Записываю итог", "Сохраняю отчёт синка")
     db.execute(
         "INSERT INTO sync_runs (user_id, kind, status, stats_json) VALUES (?, ?, ?, ?)",
         (user_id, "youtube_oauth", "ok", json.dumps(stats, ensure_ascii=False)),
     )
+    elapsed = int(time.time() - t0)
+    yield {
+        "type": "done",
+        "pct": 100,
+        "title": "Синк готов",
+        "detail": f"Лайки: +{stats['liked_new']} · плейлисты: {stats['playlists']} · подписки: {stats['subscriptions']}",
+        "elapsed_sec": elapsed,
+        "eta_sec": 0,
+        "stats": stats,
+    }
+
+
+def sync_youtube_library(user_id: int) -> dict[str, Any]:
+    stats: dict[str, Any] = {}
+    for ev in iter_sync_youtube_library(user_id):
+        if ev.get("type") == "done":
+            stats = ev.get("stats") or {}
     return stats
