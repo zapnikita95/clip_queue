@@ -217,8 +217,9 @@
         <nav class="nav">
           <button class="nav-btn ${active === "home" ? "active" : ""}" data-route="/home">Главная</button>
           <button class="nav-btn ${active === "queue" ? "active" : ""}" data-route="/queue">Очередь</button>
-          <button class="nav-btn ${active === "add" ? "active" : ""}" data-route="/add">Добавить</button>
+          <button class="nav-btn ${active === "channels" ? "active" : ""}" data-route="/channels">Каналы</button>
           <button class="nav-btn ${active === "lists" ? "active" : ""}" data-route="/lists">Списки</button>
+          <button class="nav-btn ${active === "add" ? "active" : ""}" data-route="/add">Добавить</button>
           <button class="nav-btn ${active === "tags" ? "active" : ""}" data-route="/tags">Теги</button>
           <button class="nav-btn ${active === "onboard" ? "active" : ""}" data-route="/onboard">YouTube</button>
           <button class="nav-btn" id="logout-btn" title="${escapeHtml(name)}">Выйти</button>
@@ -594,11 +595,16 @@
       ${topbar("home")}
       <section class="hero">
         <h1>Что посмотреть из своего</h1>
-        <p>Не поиск нового — панель твоих сохранений, каналов и вайба.</p>
+        <p>Видео без YouTube Music. Музыка — отдельной лентой внизу. Каналы — <a href="/channels" data-nav>сюда</a>.</p>
         <div class="stats">
           <div class="stat">В очереди: <b>${shell.counts.queue}</b></div>
           <div class="stat">Посмотрено: <b>${shell.counts.watched}</b></div>
           <div class="stat">Списков: <b>${shell.counts.lists}</b></div>
+        </div>
+        <div class="btn-row" style="margin-top:14px">
+          <a class="btn" href="/channels" data-nav>Мои каналы</a>
+          <a class="btn secondary" href="/queue?kind=video" data-nav>Очередь видео</a>
+          <a class="btn ghost" href="/queue?kind=music" data-nav>Музыка</a>
         </div>
       </section>
       <div id="rails"></div>`;
@@ -607,8 +613,16 @@
     for (const rail of railDefs) {
       const block = document.createElement("section");
       block.className = "rail";
+      const more =
+        rail.id === "channels_you_watch"
+          ? `<a href="/channels" data-nav class="muted" style="font-size:13px">Все каналы →</a>`
+          : rail.id === "music_topic"
+            ? `<a href="/queue?kind=music" data-nav class="muted" style="font-size:13px">Вся музыка →</a>`
+            : rail.id === "queue"
+              ? `<a href="/queue?kind=video" data-nav class="muted" style="font-size:13px">Вся очередь →</a>`
+              : "";
       block.innerHTML = `
-        <div class="rail-head"><h2>${escapeHtml(rail.title)}</h2></div>
+        <div class="rail-head"><h2>${escapeHtml(rail.title)}</h2>${more}</div>
         <div class="rail-track"><div class="muted" style="padding:12px">Загрузка…</div></div>`;
       host.appendChild(block);
       try {
@@ -629,31 +643,100 @@
   }
 
   async function renderQueue() {
-    const data = await api("/api/library?status=queue&limit=100");
+    const params = new URL(location.href).searchParams;
+    let kind = params.get("kind") || "video";
+    const channel = params.get("channel") || "";
+    const qs = new URLSearchParams({
+      status: "queue",
+      kind,
+      limit: "120",
+    });
+    if (channel) qs.set("channel", channel);
+    const data = await api(`/api/library?${qs}`);
+    const items = data.items || [];
     app.innerHTML = `
       ${topbar("queue")}
       <section class="hero">
-        <h1>Очередь</h1>
-        <p>Всё, что хотел посмотреть и не потерять.</p>
+        <h1>${channel ? escapeHtml(channel) : "Очередь"}</h1>
+        <p>${channel
+          ? `Видео канала · <a href="/channels" data-nav>все каналы</a>`
+          : `По умолчанию без YouTube Music. Музыка — отдельной вкладкой.`}</p>
       </section>
-      <div class="field" style="max-width:420px">
-        <input id="q-filter" placeholder="Фильтр по названию или каналу" />
+      <div class="filter-chips" id="kind-chips">
+        <button type="button" class="chip ${kind === "video" ? "active" : ""}" data-kind="video">Видео</button>
+        <button type="button" class="chip ${kind === "music" ? "active" : ""}" data-kind="music">Музыка</button>
+        <button type="button" class="chip ${kind === "all" ? "active" : ""}" data-kind="all">Всё</button>
+        <a class="chip" href="/channels" data-nav>Каналы →</a>
+        ${channel ? `<button type="button" class="chip" id="clear-channel">Сбросить канал</button>` : ""}
       </div>
+      <div class="field" style="max-width:420px">
+        <input id="q-filter" placeholder="Поиск по названию или каналу" />
+      </div>
+      <div class="muted" style="margin:0 0 12px;font-size:13px">Показано: ${items.length}${channel ? ` · ${escapeHtml(channel)}` : ""}</div>
       <div class="grid" id="queue-grid">
-        ${data.items?.length ? data.items.map(cardHtml).join("") : `<div class="empty">Очередь пуста — <a href="/add" data-nav>добавь видео</a></div>`}
+        ${items.length ? items.map(cardHtml).join("") : `<div class="empty">Пусто в этом фильтре. <a href="/queue?kind=all" data-nav>Показать всё</a> или <a href="/channels" data-nav>каналы</a>.</div>`}
       </div>`;
     wireNav();
-    const items = data.items || [];
-    $("#q-filter").oninput = (e) => {
-      const q = e.target.value.trim().toLowerCase();
-      const filtered = !q
-        ? items
-        : items.filter((i) => `${i.title} ${i.channel_title}`.toLowerCase().includes(q));
-      $("#queue-grid").innerHTML = filtered.length
-        ? filtered.map(cardHtml).join("")
+    const paint = (list) => {
+      $("#queue-grid").innerHTML = list.length
+        ? list.map(cardHtml).join("")
         : `<div class="empty">Ничего не нашлось</div>`;
       wireNav();
     };
+    $("#q-filter").oninput = (e) => {
+      const q = e.target.value.trim().toLowerCase();
+      paint(!q ? items : items.filter((i) => `${i.title} ${i.channel_title}`.toLowerCase().includes(q)));
+    };
+    document.querySelectorAll("#kind-chips [data-kind]").forEach((btn) => {
+      btn.onclick = () => {
+        const next = new URL(location.href);
+        next.searchParams.set("kind", btn.getAttribute("data-kind"));
+        if (channel) next.searchParams.set("channel", channel);
+        else next.searchParams.delete("channel");
+        navigate(next.pathname + next.search);
+      };
+    });
+    const clearCh = $("#clear-channel");
+    if (clearCh) {
+      clearCh.onclick = () => navigate(`/queue?kind=${encodeURIComponent(kind)}`);
+    }
+  }
+
+  async function renderChannels() {
+    const params = new URL(location.href).searchParams;
+    const kind = params.get("kind") || "video";
+    const data = await api(`/api/channels?kind=${encodeURIComponent(kind)}&status=queue`);
+    const channels = data.channels || [];
+    app.innerHTML = `
+      ${topbar("channels")}
+      <section class="hero">
+        <h1>Каналы</h1>
+        <p>Зайди в канал — увидишь только его видео из твоей очереди.</p>
+      </section>
+      <div class="filter-chips">
+        <button type="button" class="chip ${kind === "video" ? "active" : ""}" data-kind="video">Видео</button>
+        <button type="button" class="chip ${kind === "music" ? "active" : ""}" data-kind="music">Музыка</button>
+        <button type="button" class="chip ${kind === "all" ? "active" : ""}" data-kind="all">Всё</button>
+      </div>
+      <div class="channel-list">
+        ${channels.length
+          ? channels.map((c) => `
+            <button type="button" class="channel-row" data-channel="${escapeHtml(c.channel_title)}">
+              <b>${escapeHtml(c.channel_title)}</b>
+              <span class="count">${c.count} видео →</span>
+            </button>`).join("")
+          : `<div class="empty">Каналов пока нет — сделай синк YouTube</div>`}
+      </div>`;
+    wireNav();
+    document.querySelectorAll(".filter-chips [data-kind]").forEach((btn) => {
+      btn.onclick = () => navigate(`/channels?kind=${btn.getAttribute("data-kind")}`);
+    });
+    document.querySelectorAll("[data-channel]").forEach((btn) => {
+      btn.onclick = () => {
+        const ch = btn.getAttribute("data-channel");
+        navigate(`/queue?kind=${encodeURIComponent(kind)}&channel=${encodeURIComponent(ch)}`);
+      };
+    });
   }
 
   function shareParams() {
@@ -877,6 +960,7 @@
       return `<button type="button" class="tag-pill tag-pill-btn ${on ? "tag-pill-on" : ""}" data-toggle-tag="${t.id}" data-tag-name="${escapeHtml(t.name)}">${escapeHtml(label)}${on ? " ✓" : ""}</button>`;
     }).join("");
 
+    const unavailable = item.is_unavailable || /^(private|deleted) video$/i.test(item.title || "");
     app.innerHTML = `
       ${topbar("queue")}
       <div class="video-page">
@@ -884,8 +968,11 @@
           <div class="video-hero">
             <img src="${escapeHtml(item.thumb_url)}" alt="" />
           </div>
+          ${unavailable ? `<div class="warn-box">YouTube скрыл этот ролик (private/deleted). В лайках осталась заглушка — открыть на YouTube, скорее всего, не получится. Можно убрать из библиотеки.</div>` : ""}
           <h1 style="font-family:var(--display);letter-spacing:-0.03em;margin:16px 0 8px;font-size:1.6rem">${escapeHtml(item.title)}</h1>
-          <div class="muted">${escapeHtml(item.channel_title || "")}${item.duration_label ? " · " + escapeHtml(item.duration_label) : ""}</div>
+          <div class="muted">${escapeHtml(item.channel_title || "")}${item.duration_label ? " · " + escapeHtml(item.duration_label) : ""}
+            ${item.channel_title && !unavailable ? ` · <a href="/queue?kind=video&channel=${encodeURIComponent(item.channel_title)}" data-nav>все с канала</a>` : ""}
+          </div>
           <div id="assigned-tags" class="tags-row" style="margin-top:12px">
             ${tagPillsHtml(item.user_tags || [], { removable: true, videoId })}
           </div>
@@ -1097,6 +1184,7 @@
     }
     if (path === "/" || path === "/home") return renderHome();
     if (path === "/queue") return renderQueue();
+    if (path === "/channels") return renderChannels();
     if (path === "/add") return renderAdd();
     if (path === "/lists") return renderLists();
     if (path === "/tags") return renderTagsPage();

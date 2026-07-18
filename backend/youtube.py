@@ -159,24 +159,38 @@ def format_duration(sec: Optional[int]) -> str:
     return f"{m}:{s:02d}"
 
 
+def is_music_topic_channel(channel_title: str | None) -> bool:
+    t = (channel_title or "").strip().lower()
+    return t.endswith(" - topic") or t.endswith(" topic") or t == "topic"
+
+
+def is_unavailable_video(title: str | None) -> bool:
+    t = (title or "").strip().lower()
+    return t in ("deleted video", "private video", "deleted video.")
+
+
 def card_from_video_row(row: dict, extra: Optional[dict] = None) -> dict:
     tags = []
     try:
         tags = json.loads(row.get("tags_json") or "[]")
     except Exception:
         tags = []
+    title = row.get("title") or ""
+    channel_title = row.get("channel_title") or ""
     out = {
         "video_id": row["video_id"],
-        "title": row.get("title") or "",
+        "title": title,
         "description": row.get("description") or "",
         "channel_id": row.get("channel_id") or "",
-        "channel_title": row.get("channel_title") or "",
+        "channel_title": channel_title,
         "duration_sec": row.get("duration_sec"),
         "duration_label": format_duration(row.get("duration_sec")),
         "published_at": row.get("published_at"),
         "thumb_url": row.get("thumb_url") or thumb_url(row["video_id"]),
         "tags": tags,
         "watch_url": watch_url(row["video_id"]),
+        "is_music_topic": is_music_topic_channel(channel_title),
+        "is_unavailable": is_unavailable_video(title),
     }
     if extra:
         out.update(extra)
