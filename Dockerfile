@@ -16,6 +16,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY backend ./backend
 COPY web ./web
 COPY docs ./docs
+COPY scripts ./scripts
 
 EXPOSE 8080
 

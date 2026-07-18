@@ -434,13 +434,14 @@
       ${topbar("onboard")}
       <section class="hero">
         <h1>Твой YouTube → Clip Queue</h1>
-        <p>После входа через Google сразу забираем всё, что API отдаёт официально. История просмотров — отдельно через Takeout (Google её в API не пускает).</p>
+        <p>Лайки + твои плейлисты (в т.ч. «Listen later») забираем сами. Официальный «Посмотреть позже» (Watch Later) Google API <b>не отдаёт никому</b> — его нет даже у нас.</p>
       </section>
       <div class="panel" style="margin-bottom:16px">
-        <h2>1. Что забираем из YouTube API</h2>
+        <h2>1. Что уже в Clip Queue из YouTube</h2>
         <p class="hint">
-          <b>Доступно и качаем:</b> лайки, твои плейлисты (со всеми роликами), подписки.<br>
-          <span class="muted">Google закрыл Watch Later и историю просмотров для любого стороннего API — это не «мы не сделали», а запрет на стороне YouTube. Историю можно догрузить файлом ниже.</span>
+          <b>Качаем:</b> лайки, все твои плейлисты, подписки.<br>
+          <b>Не качается через API:</b> системный «Посмотреть позже» / Watch Later и история — запрет Google.<br>
+          Если отложка у тебя лежит в своём плейлисте (например <b>Listen later</b>) — она уже в разделе «Списки». История — файлом Takeout ниже.
         </p>
         <p class="muted">Статус: ${meData.youtube_connected ? "Google подключён" : "нужен вход через Google"} · в библиотеке сейчас: ${meData.library_count || 0}</p>
         <div class="btn-row">

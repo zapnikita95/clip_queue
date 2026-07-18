@@ -681,6 +681,8 @@ def create_app() -> Flask:
                 },
                 "rails": [
                     {"id": "queue", "title": "В очереди"},
+                    {"id": "not_music", "title": "Видео (не музыка Topic)"},
+                    {"id": "from_playlists", "title": "Из твоих плейлистов"},
                     {"id": "recent_saved", "title": "Недавно сохранённые"},
                     {"id": "continue_vibe", "title": "В том же вайбе"},
                     {"id": "by_duration", "title": "Под сейчас"},
@@ -689,6 +691,64 @@ def create_app() -> Flask:
                 ],
             }
         )
+
+    def _is_music_topic_channel(channel_title: str | None) -> bool:
+        t = (channel_title or "").strip().lower()
+        return t.endswith(" - topic") or t.endswith(" topic") or t == "topic"
+
+    def _diversify_lib_rows(
+        rows: list[dict],
+        limit: int,
+        *,
+        max_per_channel: int = 2,
+        max_topic_share: float = 0.3,
+    ) -> list[dict]:
+        """Avoid a wall of YouTube Music '- Topic' likes on the home rails."""
+        if not rows:
+            return []
+        max_topic = max(1, int(limit * max_topic_share))
+        out: list[dict] = []
+        per_ch: dict[str, int] = {}
+        topic_n = 0
+        deferred: list[dict] = []
+
+        def take(row: dict, force: bool = False) -> bool:
+            nonlocal topic_n
+            ch = (row.get("channel_title") or "").strip() or "?"
+            is_topic = _is_music_topic_channel(ch)
+            if not force:
+                if per_ch.get(ch, 0) >= max_per_channel:
+                    return False
+                if is_topic and topic_n >= max_topic:
+                    return False
+            per_ch[ch] = per_ch.get(ch, 0) + 1
+            if is_topic:
+                topic_n += 1
+            out.append(row)
+            return True
+
+        for row in rows:
+            if len(out) >= limit:
+                break
+            if not take(row):
+                deferred.append(row)
+        for row in deferred:
+            if len(out) >= limit:
+                break
+            ch = (row.get("channel_title") or "").strip() or "?"
+            if per_ch.get(ch, 0) >= max_per_channel + 2:
+                continue
+            take(row, force=True)
+        if len(out) < min(limit, len(rows)):
+            seen = {r.get("video_id") for r in out}
+            for row in rows:
+                if len(out) >= limit:
+                    break
+                if row.get("video_id") in seen:
+                    continue
+                out.append(row)
+                seen.add(row.get("video_id"))
+        return out[:limit]
 
     def _cards_from_lib_rows(rows: list[dict]) -> list[dict]:
         return [
@@ -711,27 +771,72 @@ def create_app() -> Flask:
         offset = max(int(request.args.get("offset") or 0), 0)
 
         if rail_id == "queue":
-            rows = db.fetchall(
+            pool = db.fetchall(
                 """
-                SELECT v.*, li.status, li.saved_at, li.watched_at
+                SELECT v.*, li.status, li.saved_at, li.watched_at, li.source
                 FROM library_items li JOIN videos v ON v.video_id = li.video_id
                 WHERE li.user_id = ? AND li.status = 'queue'
+                ORDER BY li.saved_at DESC LIMIT ?
+                """,
+                (uid, max(limit * 8, 96)),
+            )
+            # offset applied after diversify for first page; deep pages fall back to SQL
+            if offset == 0:
+                rows = _diversify_lib_rows(pool, limit)
+            else:
+                rows = pool[offset : offset + limit]
+            return jsonify({"ok": True, "rail": rail_id, "items": _cards_from_lib_rows(rows)})
+
+        if rail_id == "not_music":
+            if db.is_postgres():
+                rows = db.fetchall(
+                    """
+                    SELECT v.*, li.status, li.saved_at, li.watched_at, li.source
+                    FROM library_items li JOIN videos v ON v.video_id = li.video_id
+                    WHERE li.user_id = ? AND li.status = 'queue'
+                      AND (v.channel_title IS NULL OR v.channel_title NOT ILIKE %s)
+                    ORDER BY li.saved_at DESC LIMIT ? OFFSET ?
+                    """,
+                    (uid, "%Topic", limit, offset),
+                )
+            else:
+                rows = db.fetchall(
+                    """
+                    SELECT v.*, li.status, li.saved_at, li.watched_at, li.source
+                    FROM library_items li JOIN videos v ON v.video_id = li.video_id
+                    WHERE li.user_id = ? AND li.status = 'queue'
+                      AND (v.channel_title IS NULL OR lower(v.channel_title) NOT LIKE ?)
+                    ORDER BY li.saved_at DESC LIMIT ? OFFSET ?
+                    """,
+                    (uid, "%topic", limit, offset),
+                )
+            return jsonify({"ok": True, "rail": rail_id, "items": _cards_from_lib_rows(rows)})
+
+        if rail_id == "from_playlists":
+            rows = db.fetchall(
+                """
+                SELECT v.*, li.status, li.saved_at, li.watched_at, li.source
+                FROM library_items li JOIN videos v ON v.video_id = li.video_id
+                WHERE li.user_id = ? AND li.status = 'queue' AND li.source = 'playlist'
                 ORDER BY li.saved_at DESC LIMIT ? OFFSET ?
                 """,
                 (uid, limit, offset),
             )
+            if offset == 0:
+                rows = _diversify_lib_rows(rows, limit, max_topic_share=0.5)
             return jsonify({"ok": True, "rail": rail_id, "items": _cards_from_lib_rows(rows)})
 
         if rail_id == "recent_saved":
-            rows = db.fetchall(
+            pool = db.fetchall(
                 """
-                SELECT v.*, li.status, li.saved_at, li.watched_at
+                SELECT v.*, li.status, li.saved_at, li.watched_at, li.source
                 FROM library_items li JOIN videos v ON v.video_id = li.video_id
                 WHERE li.user_id = ?
-                ORDER BY li.saved_at DESC LIMIT ? OFFSET ?
+                ORDER BY li.saved_at DESC LIMIT ?
                 """,
-                (uid, limit, offset),
+                (uid, max(limit * 8, 96)),
             )
+            rows = _diversify_lib_rows(pool, limit) if offset == 0 else pool[offset : offset + limit]
             return jsonify({"ok": True, "rail": rail_id, "items": _cards_from_lib_rows(rows)})
 
         if rail_id == "by_duration":
