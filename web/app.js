@@ -252,7 +252,12 @@
       <div class="panel" style="margin-bottom:16px">
         <h2>2. История из Google Takeout</h2>
         <p class="hint">takeout.google.com → YouTube → history → watch-history.json. Залей файл — получим то, что реально смотрел.</p>
-        <input type="file" id="takeout-file" accept=".json,application/json" />
+        <div class="btn-row">
+          <label class="file-btn">
+            Выбрать JSON
+            <input type="file" id="takeout-file" accept=".json,application/json" />
+          </label>
+        </div>
         <pre id="takeout-out" class="muted" style="white-space:pre-wrap;margin-top:12px;font-size:13px"></pre>
       </div>
       <div class="panel">
