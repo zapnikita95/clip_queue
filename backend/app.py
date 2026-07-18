@@ -103,16 +103,40 @@ def create_app() -> Flask:
     @require_auth
     def me():
         u = current_user()
+        uid = u["user_id"]
+        lib = db.fetchone(
+            "SELECT COUNT(*) AS c FROM library_items WHERE user_id = ?",
+            (uid,),
+        )
+        last_sync = db.fetchone(
+            "SELECT status, stats_json, created_at FROM sync_runs "
+            "WHERE user_id = ? AND kind = 'youtube_oauth' ORDER BY id DESC LIMIT 1",
+            (uid,),
+        )
+        stats = {}
+        if last_sync and last_sync.get("stats_json"):
+            try:
+                stats = json.loads(last_sync["stats_json"])
+            except Exception:
+                stats = {}
         return jsonify(
             {
                 "ok": True,
                 "user": {
-                    "id": u["user_id"],
+                    "id": uid,
                     "email": u["email"],
                     "name": u["name"],
                 },
                 "google_oauth_configured": google_oauth.configured(),
-                "youtube_connected": google_oauth.youtube_connected(u["user_id"]),
+                "youtube_connected": google_oauth.youtube_connected(uid),
+                "library_count": int((lib or {}).get("c") or 0),
+                "last_youtube_sync": {
+                    "status": (last_sync or {}).get("status"),
+                    "at": str((last_sync or {}).get("created_at") or "") or None,
+                    "stats": stats,
+                }
+                if last_sync
+                else None,
             }
         )
 
@@ -151,8 +175,8 @@ def create_app() -> Flask:
             session = google_oauth.login_with_code(code, state)
         except Exception as e:
             return redirect(f"/login?error={str(e)[:120]}")
-        # SPA picks token from query
-        return redirect(f"/auth/callback?token={session['token']}")
+        # SPA picks token and immediately streams YouTube sync
+        return redirect(f"/auth/callback?token={session['token']}&autosync=1")
 
     @app.post("/api/youtube/sync")
     @require_auth

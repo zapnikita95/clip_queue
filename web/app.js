@@ -274,7 +274,7 @@
       <div class="login-wrap">
         <div class="panel" style="width:min(460px,100%)">
           <h2>Clip Queue</h2>
-          <p class="hint">Войди через Google — подтянем лайки, плейлисты и подписки с YouTube. Дальше разложим по папкам.</p>
+          <p class="hint">Войди через Google — сразу после входа сами заберём лайки, плейлисты и подписки в библиотеку.</p>
           ${err ? `<p class="hint" style="color:#ff8a80">Ошибка входа: ${escapeHtml(err)}</p>` : ""}
           <div class="btn-row" style="flex-direction:column;align-items:stretch">
             ${status.configured
@@ -346,40 +346,98 @@
     };
   }
 
+  async function runYoutubeSync({ autoGoHome = false } = {}) {
+    const btn = $("#sync-yt");
+    const out = $("#sync-out");
+    if (!out) return null;
+    if (btn) {
+      btn.classList.add("busy");
+      btn.disabled = true;
+    }
+    const box = mountProgress(out, {
+      title: "Забираю твой YouTube",
+      detail: "Лайки → плейлисты → подписки",
+    });
+    try {
+      const last = await streamNdjson("/api/youtube/sync", {
+        onEvent: (ev) => {
+          if (ev.type === "error") {
+            finishProgress(box, { ok: false, title: ev.title || "Ошибка", detail: ev.error || "" });
+            return;
+          }
+          if (ev.type === "done") {
+            finishProgress(box, {
+              ok: true,
+              title: ev.title || "YouTube у тебя в Clip Queue",
+              detail: ev.detail || "",
+              elapsed_sec: ev.elapsed_sec,
+            });
+            return;
+          }
+          updateProgress(box, ev);
+        },
+      });
+      if (last?.type === "error") throw new Error(last.error || "Синк оборвался");
+      const s = last?.stats || {};
+      toast(`В библиотеке: +${s.liked_new || 0} лайков, ${s.playlists || 0} плейлистов, ${s.subscriptions || 0} подписок`);
+      if (autoGoHome) {
+        setTimeout(() => navigate("/home"), 700);
+      }
+      return s;
+    } catch (e) {
+      finishProgress(box, { ok: false, title: "Синк не вышел", detail: e.message });
+      toast(e.message);
+      return null;
+    } finally {
+      if (btn) {
+        btn.classList.remove("busy");
+        btn.disabled = false;
+      }
+    }
+  }
+
   async function renderAuthCallback() {
-    const t = new URL(location.href).searchParams.get("token");
+    const params = new URL(location.href).searchParams;
+    const t = params.get("token");
     if (!t) {
       toast("Нет токена");
       return navigate("/login", true);
     }
     setToken(t);
     await ensureAuth();
-    toast("Google подключён");
-    navigate("/onboard", true);
+    toast("Google подключён — тяну YouTube");
+    navigate("/onboard?autosync=1", true);
   }
 
   async function renderOnboard() {
     const meData = await api("/api/me");
+    const wantAutosync =
+      new URL(location.href).searchParams.get("autosync") === "1" ||
+      (meData.youtube_connected && !(meData.library_count > 0));
     app.innerHTML = `
       ${topbar("onboard")}
       <section class="hero">
-        <h1>Подтянуть YouTube</h1>
-        <p>Сначала синк того, что Google отдаёт официально. Потом — опционально Takeout. В конце предложим структуру папок.</p>
+        <h1>Твой YouTube → Clip Queue</h1>
+        <p>После входа через Google сразу забираем всё, что API отдаёт официально. История просмотров — отдельно через Takeout (Google её в API не пускает).</p>
       </section>
       <div class="panel" style="margin-bottom:16px">
-        <h2>1. Синк через Google</h2>
-        <p class="hint">Лайки, твои плейлисты, подписки. <b>Watch Later и история через API недоступны</b> — это ограничение Google, не бага.</p>
-        <p class="muted">YouTube: ${meData.youtube_connected ? "подключён" : "не подключён — войди через Google"}</p>
+        <h2>1. Что забираем из YouTube API</h2>
+        <p class="hint">
+          <b>Доступно и качаем:</b> лайки, твои плейлисты (со всеми роликами), подписки.<br>
+          <span class="muted">Google закрыл Watch Later и историю просмотров для любого стороннего API — это не «мы не сделали», а запрет на стороне YouTube. Историю можно догрузить файлом ниже.</span>
+        </p>
+        <p class="muted">Статус: ${meData.youtube_connected ? "Google подключён" : "нужен вход через Google"} · в библиотеке сейчас: ${meData.library_count || 0}</p>
         <div class="btn-row">
-          <button class="btn" id="sync-yt" ${meData.youtube_connected ? "" : "disabled"}>Синхронизировать</button>
+          <button class="btn" id="sync-yt" ${meData.youtube_connected ? "" : "disabled"}>Обновить из YouTube</button>
           ${!meData.youtube_connected && meData.google_oauth_configured
-            ? `<a class="btn secondary" href="/api/auth/google/start">Подключить Google</a>` : ""}
+            ? `<a class="btn secondary" href="/api/auth/google/start">Войти через Google</a>` : ""}
+          <a class="btn ghost" href="/home" data-nav>На главную</a>
         </div>
         <div id="sync-out"></div>
       </div>
       <div class="panel" style="margin-bottom:16px">
-        <h2>2. История из Google Takeout</h2>
-        <p class="hint">takeout.google.com → YouTube → history → watch-history.json. Залей файл — получим то, что реально смотрел.</p>
+        <h2>2. История (опционально, Takeout)</h2>
+        <p class="hint">Если нужна именно история «что смотрел» — takeout.google.com → YouTube → watch-history.json.</p>
         <div class="btn-row">
           <label class="file-btn">
             Выбрать JSON
@@ -389,55 +447,21 @@
         <div id="takeout-out"></div>
       </div>
       <div class="panel">
-        <h2>3. Предложить структуру</h2>
-        <p class="hint">Разложим видео по папкам: темы, каналы, короткие/длинные, очередь vs уже смотрел.</p>
+        <h2>3. Разложить по папкам</h2>
+        <p class="hint">После синка предложим структуру: темы, каналы, короткие/длинные.</p>
         <div class="btn-row">
           <button class="btn" id="propose">Собрать предложение</button>
           <button class="btn secondary hidden" id="apply-proposal">Создать папки</button>
-          <a class="btn ghost" href="/home" data-nav>На главную</a>
         </div>
         <div id="proposal-box" style="margin-top:16px"></div>
       </div>`;
     wireNav();
     let lastProposal = null;
-    $("#sync-yt").onclick = async () => {
-      const btn = $("#sync-yt");
-      btn.classList.add("busy");
-      btn.disabled = true;
-      const box = mountProgress($("#sync-out"), {
-        title: "Стартую синк",
-        detail: "Сейчас пойдёт: лайки → плейлисты → подписки",
-      });
-      try {
-        const last = await streamNdjson("/api/youtube/sync", {
-          onEvent: (ev) => {
-            if (ev.type === "error") {
-              finishProgress(box, { ok: false, title: ev.title || "Ошибка", detail: ev.error || "" });
-              return;
-            }
-            if (ev.type === "done") {
-              finishProgress(box, {
-                ok: true,
-                title: ev.title || "Синк готов",
-                detail: ev.detail || "",
-                elapsed_sec: ev.elapsed_sec,
-              });
-              return;
-            }
-            updateProgress(box, ev);
-          },
-        });
-        if (last?.type === "error") throw new Error(last.error || "Синк оборвался");
-        const s = last?.stats || {};
-        toast(`Готово: +${s.liked_new || 0} лайков, ${s.playlists || 0} плейлистов`);
-      } catch (e) {
-        finishProgress(box, { ok: false, title: "Синк не вышел", detail: e.message });
-        toast(e.message);
-      } finally {
-        btn.classList.remove("busy");
-        btn.disabled = !meData.youtube_connected;
-      }
-    };
+    $("#sync-yt").onclick = () => runYoutubeSync({ autoGoHome: false });
+    if (wantAutosync && meData.youtube_connected) {
+      // Immediately pull YouTube — no manual click
+      runYoutubeSync({ autoGoHome: true });
+    }
     $("#takeout-file").onchange = async (ev) => {
       const file = ev.target.files?.[0];
       if (!file) return;
