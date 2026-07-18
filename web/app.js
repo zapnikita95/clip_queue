@@ -299,7 +299,7 @@
               </div>
             </div>
           </details>
-          <p class="sister">Сестра <a href="https://movie-planner.ru" target="_blank" rel="noopener">Movie Planner</a>. Watch Later/историю Google API не отдаёт — для истории есть Takeout на экране онбординга.</p>
+          <p class="sister">Сестра <a href="https://movie-planner.ru" target="_blank" rel="noopener">Movie Planner</a>.</p>
         </div>
       </div>`;
     $("#send-code").onclick = async () => {
