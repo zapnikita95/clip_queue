@@ -19,4 +19,4 @@ COPY docs ./docs
 
 EXPOSE 8080
 
-CMD gunicorn -b 0.0.0.0:${PORT} -w 2 -k gthread --threads 4 "backend.app:create_app()"
+CMD ["sh", "-c", "gunicorn -b 0.0.0.0:${PORT:-8080} -w 2 -k gthread --threads 4 backend.app:app"]
