@@ -238,6 +238,34 @@ def create_app() -> Flask:
         proposal = organize.propose_structure(uid, use_llm=use_llm)
         return jsonify({"ok": True, "proposal": proposal})
 
+    @app.get("/api/organize/rules")
+    @require_auth
+    def organize_rules():
+        uid = current_user()["user_id"]
+        return jsonify({"ok": True, "rules": organize.list_rules(uid)})
+
+    @app.post("/api/organize/preview-classify")
+    @require_auth
+    def organize_preview_classify():
+        """Dry-run: where would this video go under saved rules."""
+        uid = current_user()["user_id"]
+        body = request.get_json(silent=True) or {}
+        matched = organize.match_rules_for_video(
+            uid,
+            title=body.get("title"),
+            channel_title=body.get("channel_title"),
+            duration_sec=body.get("duration_sec"),
+        )
+        return jsonify(
+            {
+                "ok": True,
+                "matched": [
+                    {"list_id": m["list_id"], "list_title": m.get("list_title")}
+                    for m in matched
+                ],
+            }
+        )
+
     @app.post("/api/organize/apply")
     @require_auth
     def organize_apply():
@@ -389,8 +417,31 @@ def create_app() -> Flask:
                 if name:
                     _ensure_tag_on_item(uid, vid, name)
 
+        # Apply saved classification from last «Разложить → ОК»
+        apply_class = body.get("apply_classification")
+        if apply_class is None:
+            apply_class = True
+        matched = []
+        if apply_class:
+            matched = organize.apply_rules_to_video(
+                uid,
+                vid,
+                title=meta.get("title"),
+                channel_title=meta.get("channel_title"),
+                duration_sec=meta.get("duration_sec"),
+            )
+
         item = _library_card(uid, vid)
-        return jsonify({"ok": True, "item": item})
+        return jsonify(
+            {
+                "ok": True,
+                "item": item,
+                "classified_into": [
+                    {"list_id": m["list_id"], "list_title": m.get("list_title")}
+                    for m in matched
+                ],
+            }
+        )
 
     def _library_card(uid: int, video_id: str) -> dict | None:
         row = db.fetchone(

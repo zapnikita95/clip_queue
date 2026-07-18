@@ -414,3 +414,9 @@ def init_db() -> None:
                 continue
             raise
     _migrate_columns()
+    try:
+        from backend import organize
+
+        organize.ensure_classify_tables()
+    except Exception:
+        pass

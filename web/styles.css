@@ -711,3 +711,95 @@ a.btn.ghost:hover {
   font-size: 14px;
   line-height: 1.4;
 }
+
+.folder-list { display: grid; gap: 12px; }
+.folder-card {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--bg-elev);
+  overflow: hidden;
+  color: var(--text);
+}
+.folder-card.open { border-color: rgba(255, 59, 48, 0.45); }
+.folder-head {
+  width: 100%;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.folder-head:hover { background: rgba(255, 255, 255, 0.03); }
+.folder-head-text { min-width: 0; flex: 1; }
+.folder-head-text b { display: block; font-size: 15px; margin-bottom: 4px; color: var(--text); }
+.folder-head-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.folder-head-meta .count {
+  color: var(--muted);
+  font-size: 13px;
+  white-space: nowrap;
+}
+.folder-rule {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #ffb4a8;
+}
+.folder-rule.muted { color: var(--muted); font-weight: 600; text-transform: none; letter-spacing: 0; }
+.folder-thumbs {
+  display: flex;
+  gap: 6px;
+  padding: 0 14px 12px;
+  overflow-x: auto;
+}
+.folder-thumb {
+  flex: 0 0 88px;
+  aspect-ratio: 16 / 9;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #000;
+  border: 1px solid var(--border);
+}
+.folder-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.folder-body { padding: 0 14px 14px; border-top: 1px solid rgba(255,255,255,0.06); }
+.folder-grid { display: grid; gap: 8px; margin-top: 12px; }
+.folder-item {
+  display: grid;
+  grid-template-columns: 120px 1fr;
+  gap: 10px;
+  align-items: center;
+  padding: 8px;
+  border-radius: 10px;
+  background: rgba(255,255,255,0.03);
+  color: var(--text);
+}
+.folder-item img {
+  width: 120px;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border-radius: 8px;
+  background: #000;
+}
+.folder-item-title {
+  font-size: 14px;
+  font-weight: 650;
+  color: var(--text);
+  line-height: 1.3;
+}

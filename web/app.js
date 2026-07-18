@@ -513,24 +513,101 @@
     };
   }
 
+  function folderPreviewHtml(folder, idx) {
+    const items = folder.items || [];
+    const thumbs = items.slice(0, 6).map((it) => `
+      <a class="folder-thumb" href="/v/${encodeURIComponent(it.video_id)}" data-nav title="${escapeHtml(it.title || "")}">
+        <img src="${escapeHtml(it.thumb_url || "")}" alt="" loading="lazy" />
+      </a>`).join("");
+    const ruleHint = folder.persist && folder.rule
+      ? `<span class="folder-rule">правило сохранится</span>`
+      : `<span class="folder-rule muted">только просмотр</span>`;
+    return `
+      <div class="folder-card" data-folder-idx="${idx}">
+        <button type="button" class="folder-head" data-toggle-folder="${idx}">
+          <div class="folder-head-text">
+            <b>${escapeHtml(folder.title || "Папка")}</b>
+            <div class="muted">${escapeHtml(folder.reason || "")}</div>
+          </div>
+          <div class="folder-head-meta">
+            ${ruleHint}
+            <span class="count">${folder.count || (folder.video_ids || []).length} →</span>
+          </div>
+        </button>
+        <div class="folder-thumbs">${thumbs || `<div class="muted" style="padding:8px">Нет превью</div>`}</div>
+        <div class="folder-body hidden" id="folder-body-${idx}">
+          <div class="folder-grid">
+            ${(items.length ? items : []).map((it) => `
+              <a class="folder-item" href="/v/${encodeURIComponent(it.video_id)}" data-nav>
+                <img src="${escapeHtml(it.thumb_url || "")}" alt="" loading="lazy" />
+                <div>
+                  <div class="folder-item-title">${escapeHtml(it.title || "")}</div>
+                  <div class="muted" style="font-size:12px">${escapeHtml(it.channel_title || "")}${it.duration_label ? " · " + escapeHtml(it.duration_label) : ""}</div>
+                </div>
+              </a>`).join("") || `<div class="empty">Пусто</div>`}
+          </div>
+          ${(folder.video_ids || []).length > items.length
+            ? `<div class="muted" style="margin-top:8px;font-size:12px">Показаны первые ${items.length} из ${folder.video_ids.length}</div>`
+            : ""}
+        </div>
+      </div>`;
+  }
+
   async function renderOrganize() {
     app.innerHTML = `
       ${topbar("organize")}
       <section class="hero">
         <h1>Разложить по папкам</h1>
-        <p>Сразу соберём черновик по каналам, длине и словам из названий — без долгого ожидания AI. Потом одним кликом создашь списки.</p>
+        <p>Кликай папку — смотри ролики. «ОК» сохранит папки и правила: новые ссылки сами попадут куда надо.</p>
       </section>
       <div class="panel">
         <div class="btn-row">
-          <button class="btn" id="propose">Собрать предложение</button>
-          <button class="btn secondary hidden" id="apply-proposal">Создать папки</button>
+          <button class="btn" id="propose">Обновить черновик</button>
+          <button class="btn secondary hidden" id="apply-proposal">ОК — сохранить классификацию</button>
           <a class="btn ghost" href="/lists" data-nav>Мои списки</a>
         </div>
+        <div id="active-rules" class="muted" style="margin-top:12px;font-size:13px"></div>
         <div id="proposal-box" style="margin-top:16px"></div>
       </div>`;
     wireNav();
     let lastProposal = null;
-    $("#propose").onclick = async () => {
+
+    const paintRules = async () => {
+      try {
+        const r = await api("/api/organize/rules");
+        const rules = r.rules || [];
+        $("#active-rules").innerHTML = rules.length
+          ? `Сейчас действует <b style="color:var(--text)">${rules.length}</b> правил после прошлого ОК. Новые шары пойдут по ним.`
+          : `Правил ещё нет — собери черновик и нажми «ОК — сохранить классификацию».`;
+      } catch (_) {
+        $("#active-rules").textContent = "";
+      }
+    };
+
+    const paintProposal = (proposal) => {
+      lastProposal = proposal;
+      const folders = (proposal.folders || []).map((f, i) => folderPreviewHtml(f, i)).join("");
+      const host = $("#proposal-box");
+      host.innerHTML = `
+        <p style="margin:0 0 12px;color:var(--text)">${escapeHtml(proposal.summary || "")}</p>
+        ${(proposal.limitations || []).map((x) => `<div class="muted" style="font-size:12px">• ${escapeHtml(x)}</div>`).join("")}
+        <div class="folder-list" style="margin-top:14px">${folders || `<div class="empty">Мало данных — сначала синк YouTube</div>`}</div>`;
+      wireNav();
+      document.querySelectorAll("[data-toggle-folder]").forEach((btn) => {
+        btn.onclick = () => {
+          const i = btn.getAttribute("data-toggle-folder");
+          const body = $(`#folder-body-${i}`);
+          const card = btn.closest(".folder-card");
+          if (!body) return;
+          const open = body.classList.contains("hidden");
+          body.classList.toggle("hidden", !open);
+          card?.classList.toggle("open", open);
+        };
+      });
+      $("#apply-proposal").classList.toggle("hidden", !(proposal.folders || []).length);
+    };
+
+    const runPropose = async () => {
       const btn = $("#propose");
       btn.classList.add("busy");
       const box = mountProgress($("#proposal-box"), {
@@ -543,43 +620,29 @@
           { title: "Кластеризую", detail: "темы, длины, каналы" },
           { title: "Черновик папок", detail: "раскладываю видео" },
         ], api("/api/organize/propose", { method: "POST", body: JSON.stringify({ use_llm: false }) }));
-        lastProposal = data.proposal;
-        finishProgress(box, {
-          ok: true,
-          title: "Предложение готово",
-          detail: lastProposal.summary || "",
-        });
-        const folders = (lastProposal.folders || []).map((f) => `
-          <div style="border:1px solid var(--border);border-radius:12px;padding:12px;margin-bottom:10px">
-            <b style="color:var(--text)">${escapeHtml(f.title)}</b>
-            <div class="muted" style="font-size:13px;margin:4px 0">${escapeHtml(f.reason || "")}</div>
-            <div class="muted" style="font-size:12px">${(f.video_ids || []).length} видео</div>
-          </div>`).join("");
-        const wrap = document.createElement("div");
-        wrap.innerHTML = `
-          <p style="margin-top:14px;color:var(--text)">${escapeHtml(lastProposal.summary || "")}</p>
-          ${(lastProposal.limitations || []).map((x) => `<div class="muted" style="font-size:12px">• ${escapeHtml(x)}</div>`).join("")}
-          <div style="margin-top:14px">${folders || "<div class='empty'>Мало данных — сначала синк YouTube</div>"}</div>`;
-        $("#proposal-box").appendChild(wrap);
-        $("#apply-proposal").classList.remove("hidden");
+        finishProgress(box, { ok: true, title: "Готово — кликай папки", detail: "" });
+        paintProposal(data.proposal);
       } catch (e) {
         finishProgress(box, { ok: false, title: "Не собралось", detail: e.message });
       } finally {
         btn.classList.remove("busy");
       }
     };
+
+    $("#propose").onclick = () => runPropose();
     $("#apply-proposal").onclick = async () => {
       if (!lastProposal) return;
       const btn = $("#apply-proposal");
       btn.classList.add("busy");
       const box = mountProgress($("#proposal-box"), {
-        title: "Создаю папки",
-        detail: "Пишу списки в библиотеку",
+        title: "Сохраняю классификацию",
+        detail: "Папки + правила для новых видео",
       });
       try {
         const data = await runBusySteps(box, [
           { title: "Создаю папки", detail: "списки в Clip Queue" },
-          { title: "Раскладываю видео", detail: "по предложенным папкам" },
+          { title: "Раскладываю видео", detail: "по папкам" },
+          { title: "Пишу правила", detail: "для будущих шаров" },
         ], api("/api/organize/apply", {
           method: "POST",
           body: JSON.stringify({
@@ -589,18 +652,22 @@
         }));
         finishProgress(box, {
           ok: true,
-          title: "Папки созданы",
-          detail: `Списков: ${(data.lists || []).length}`,
+          title: "Классификация сохранена",
+          detail: `Папок: ${(data.lists || []).length} · правил: ${data.rules_saved || 0}`,
         });
-        toast(`Создано списков: ${(data.lists || []).length}`);
-        setTimeout(() => navigate("/lists"), 600);
+        toast(`Сохранено: ${(data.lists || []).length} папок, ${data.rules_saved || 0} правил`);
+        await paintRules();
+        setTimeout(() => navigate("/lists"), 700);
       } catch (e) {
-        finishProgress(box, { ok: false, title: "Не создалось", detail: e.message });
+        finishProgress(box, { ok: false, title: "Не сохранилось", detail: e.message });
         toast(e.message);
       } finally {
         btn.classList.remove("busy");
       }
     };
+
+    await paintRules();
+    await runPropose();
   }
 
   async function renderHome() {
@@ -835,22 +902,40 @@
       </div>`;
     wireNav();
     let previewMeta = null;
-    const showPreview = (meta) => {
+    const showPreview = async (meta) => {
       previewMeta = meta;
       const box = $("#preview");
       box.classList.remove("hidden");
+      let classifyHtml = `<div class="muted" style="margin-top:10px;font-size:13px">Проверяю классификацию…</div>`;
       box.innerHTML = `
         <div class="preview">
           <img src="${escapeHtml(meta.thumb_url)}" alt="" />
           <div>
-            <h3 style="margin:0 0 6px">${escapeHtml(meta.title)}</h3>
+            <h3 style="margin:0 0 6px;color:var(--text)">${escapeHtml(meta.title)}</h3>
             <div class="muted">${escapeHtml(meta.channel_title || "")}${meta.duration_sec != null ? " · " + (meta.duration_label || "") : ""}</div>
+            <div id="classify-preview">${classifyHtml}</div>
             <div class="field" style="margin-top:12px">
               <label>Тег (необязательно)</label>
               <input id="tag-name" placeholder="например: готовка" />
             </div>
           </div>
         </div>`;
+      try {
+        const c = await api("/api/organize/preview-classify", {
+          method: "POST",
+          body: JSON.stringify({
+            title: meta.title,
+            channel_title: meta.channel_title,
+            duration_sec: meta.duration_sec,
+          }),
+        });
+        const matched = c.matched || [];
+        const el = $("#classify-preview");
+        if (!el) return;
+        el.innerHTML = matched.length
+          ? `<div style="margin-top:10px;font-size:13px;color:var(--text)">Попадёт в: <b>${matched.map((m) => escapeHtml(m.list_title)).join(", ")}</b></div>`
+          : `<div class="muted" style="margin-top:10px;font-size:13px">Нет совпадений с сохранённой классификацией — только в очередь. Сначала «Разложить → ОК».</div>`;
+      } catch (_) {}
     };
     $("#resolve-btn").onclick = async () => {
       try {
@@ -869,13 +954,15 @@
         const body = {
           url: $("#yt-url").value.trim(),
           source: shared.url || shared.text ? "share" : "paste",
+          apply_classification: true,
         };
         if (tag) body.tags = [tag];
         const data = await api("/api/videos/save", {
           method: "POST",
           body: JSON.stringify(body),
         });
-        toast("В очереди");
+        const into = (data.classified_into || []).map((x) => x.list_title).filter(Boolean);
+        toast(into.length ? `В очереди · папки: ${into.join(", ")}` : "В очереди");
         navigate(`/v/${data.item.video_id}`);
       } catch (e) {
         toast(e.message);
