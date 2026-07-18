@@ -346,7 +346,7 @@ def create_app() -> Flask:
         source = (body.get("source") or "paste").strip()[:40]
         note = (body.get("note") or "").strip()[:2000]
         status = (body.get("status") or "queue").strip()
-        if status not in ("queue", "watched", "archived"):
+        if status not in ("queue", "in_progress", "watched", "archived"):
             status = "queue"
         try:
             meta = yt.resolve(url)
@@ -612,7 +612,7 @@ def create_app() -> Flask:
         note = body.get("note")
         sets = []
         params: list = []
-        if status in ("queue", "watched", "archived"):
+        if status in ("queue", "in_progress", "watched", "archived"):
             sets.append("status = ?")
             params.append(status)
             if status == "watched":
@@ -624,6 +624,11 @@ def create_app() -> Flask:
                 db.execute(
                     "INSERT INTO watch_events (user_id, video_id, event_type) VALUES (?, ?, ?)",
                     (uid, video_id, "mark_watched"),
+                )
+            elif status == "in_progress":
+                db.execute(
+                    "INSERT INTO watch_events (user_id, video_id, event_type) VALUES (?, ?, ?)",
+                    (uid, video_id, "mark_started"),
                 )
         if note is not None:
             sets.append("note = ?")
@@ -653,12 +658,36 @@ def create_app() -> Flask:
     @app.post("/api/videos/<video_id>/open")
     @require_auth
     def open_video(video_id: str):
+        """Open on YouTube = started (leaves main queue until marked watched / back)."""
         uid = current_user()["user_id"]
         db.execute(
             "INSERT INTO watch_events (user_id, video_id, event_type) VALUES (?, ?, ?)",
             (uid, video_id, "open_yt"),
         )
-        return jsonify({"ok": True, "watch_url": yt.watch_url(video_id)})
+        row = db.fetchone(
+            "SELECT status FROM library_items WHERE user_id = ? AND video_id = ?",
+            (uid, video_id),
+        )
+        moved = False
+        if row and (row.get("status") or "") == "queue":
+            db.execute(
+                "UPDATE library_items SET status = 'in_progress' "
+                "WHERE user_id = ? AND video_id = ?",
+                (uid, video_id),
+            )
+            db.execute(
+                "INSERT INTO watch_events (user_id, video_id, event_type) VALUES (?, ?, ?)",
+                (uid, video_id, "mark_started"),
+            )
+            moved = True
+        return jsonify(
+            {
+                "ok": True,
+                "watch_url": yt.watch_url(video_id),
+                "status": "in_progress" if moved else (row or {}).get("status"),
+                "moved_to_started": moved,
+            }
+        )
 
     @app.get("/api/videos/<video_id>")
     @require_auth
@@ -730,6 +759,10 @@ def create_app() -> Flask:
             "SELECT COUNT(*) AS c FROM library_items WHERE user_id = ? AND status = 'queue'",
             (uid,),
         )
+        started_n = db.fetchone(
+            "SELECT COUNT(*) AS c FROM library_items WHERE user_id = ? AND status = 'in_progress'",
+            (uid,),
+        )
         watched_n = db.fetchone(
             "SELECT COUNT(*) AS c FROM library_items WHERE user_id = ? AND status = 'watched'",
             (uid,),
@@ -743,11 +776,14 @@ def create_app() -> Flask:
                 "ok": True,
                 "counts": {
                     "queue": int((queue_n or {}).get("c") or 0),
+                    "started": int((started_n or {}).get("c") or 0),
                     "watched": int((watched_n or {}).get("c") or 0),
                     "lists": int((lists_n or {}).get("c") or 0),
                 },
                 "rails": [
                     {"id": "queue", "title": "Видео в очереди"},
+                    {"id": "started", "title": "Начатые"},
+                    {"id": "watched", "title": "Просмотренные"},
                     {"id": "from_playlists", "title": "Из твоих плейлистов"},
                     {"id": "channels_you_watch", "title": "По каналам"},
                     {"id": "by_duration", "title": "Под сейчас"},
@@ -845,6 +881,31 @@ def create_app() -> Flask:
             )
             pool = _clean_lib_rows(pool, allow_music=False)
             rows = _diversify_lib_rows(pool, limit) if offset == 0 else pool[offset : offset + limit]
+            return jsonify({"ok": True, "rail": rail_id, "items": _cards_from_lib_rows(rows)})
+
+        if rail_id == "started":
+            rows = db.fetchall(
+                """
+                SELECT v.*, li.status, li.saved_at, li.watched_at, li.source
+                FROM library_items li JOIN videos v ON v.video_id = li.video_id
+                WHERE li.user_id = ? AND li.status = 'in_progress'
+                ORDER BY li.saved_at DESC LIMIT ? OFFSET ?
+                """,
+                (uid, limit, offset),
+            )
+            rows = _clean_lib_rows(rows, allow_music=True, allow_shorts=True)
+            return jsonify({"ok": True, "rail": rail_id, "items": _cards_from_lib_rows(rows)})
+
+        if rail_id == "watched":
+            rows = db.fetchall(
+                """
+                SELECT v.*, li.status, li.saved_at, li.watched_at, li.source
+                FROM library_items li JOIN videos v ON v.video_id = li.video_id
+                WHERE li.user_id = ? AND li.status = 'watched'
+                ORDER BY COALESCE(li.watched_at, li.saved_at) DESC LIMIT ? OFFSET ?
+                """,
+                (uid, limit, offset),
+            )
             return jsonify({"ok": True, "rail": rail_id, "items": _cards_from_lib_rows(rows)})
 
         if rail_id in ("music_topic", "music"):

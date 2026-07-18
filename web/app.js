@@ -595,17 +595,18 @@
       ${topbar("home")}
       <section class="hero">
         <h1>Что посмотреть из своего</h1>
-        <p>В очереди — только нормальные ролики. Клипы и шортсы вынесены отдельно. Каналы — <a href="/channels" data-nav>сюда</a>.</p>
+        <p>Очередь — что ещё не смотрел. Начал на YouTube — уходит в «Начатые». Досмотрел — в «Просмотренные» и больше не в плане.</p>
         <div class="stats">
-          <div class="stat">В очереди: <b>${shell.counts.queue}</b></div>
-          <div class="stat">Посмотрено: <b>${shell.counts.watched}</b></div>
+          <div class="stat">Очередь: <b>${shell.counts.queue}</b></div>
+          <div class="stat">Начатые: <b>${shell.counts.started || 0}</b></div>
+          <div class="stat">Просмотрено: <b>${shell.counts.watched}</b></div>
           <div class="stat">Списков: <b>${shell.counts.lists}</b></div>
         </div>
         <div class="btn-row" style="margin-top:14px">
-          <a class="btn" href="/channels" data-nav>Мои каналы</a>
-          <a class="btn secondary" href="/queue?kind=video" data-nav>Очередь видео</a>
-          <a class="btn ghost" href="/queue?kind=music" data-nav>Музыка</a>
-          <a class="btn ghost" href="/queue?kind=shorts" data-nav>Шортсы</a>
+          <a class="btn" href="/queue?status=queue&kind=video" data-nav>Очередь</a>
+          <a class="btn secondary" href="/queue?status=in_progress" data-nav>Начатые</a>
+          <a class="btn secondary" href="/queue?status=watched" data-nav>Просмотренные</a>
+          <a class="btn ghost" href="/channels" data-nav>Каналы</a>
         </div>
       </section>
       <div id="rails"></div>`;
@@ -617,13 +618,17 @@
       const more =
         rail.id === "channels_you_watch"
           ? `<a href="/channels" data-nav class="muted" style="font-size:13px">Все каналы →</a>`
-          : rail.id === "music_topic" || rail.id === "music"
-            ? `<a href="/queue?kind=music" data-nav class="muted" style="font-size:13px">Вся музыка →</a>`
-            : rail.id === "shorts"
-              ? `<a href="/queue?kind=shorts" data-nav class="muted" style="font-size:13px">Все шортсы →</a>`
-              : rail.id === "queue"
-                ? `<a href="/queue?kind=video" data-nav class="muted" style="font-size:13px">Вся очередь →</a>`
-                : "";
+          : rail.id === "started"
+            ? `<a href="/queue?status=in_progress" data-nav class="muted" style="font-size:13px">Все начатые →</a>`
+            : rail.id === "watched"
+              ? `<a href="/queue?status=watched" data-nav class="muted" style="font-size:13px">Все просмотренные →</a>`
+              : rail.id === "music_topic" || rail.id === "music"
+                ? `<a href="/queue?kind=music" data-nav class="muted" style="font-size:13px">Вся музыка →</a>`
+                : rail.id === "shorts"
+                  ? `<a href="/queue?kind=shorts" data-nav class="muted" style="font-size:13px">Все шортсы →</a>`
+                  : rail.id === "queue"
+                    ? `<a href="/queue?status=queue&kind=video" data-nav class="muted" style="font-size:13px">Вся очередь →</a>`
+                    : "";
       block.innerHTML = `
         <div class="rail-head"><h2>${escapeHtml(rail.title)}</h2>${more}</div>
         <div class="rail-track"><div class="muted" style="padding:12px">Загрузка…</div></div>`;
@@ -648,23 +653,44 @@
   async function renderQueue() {
     const params = new URL(location.href).searchParams;
     let kind = params.get("kind") || "video";
+    let status = params.get("status") || "queue";
+    if (!["queue", "in_progress", "watched", "archived"].includes(status)) status = "queue";
+    // Watched / started: show everything in that bucket (music/shorts too)
+    if (status === "watched" || status === "in_progress") kind = params.get("kind") || "all";
     const channel = params.get("channel") || "";
     const qs = new URLSearchParams({
-      status: "queue",
+      status,
       kind,
       limit: "120",
     });
     if (channel) qs.set("channel", channel);
     const data = await api(`/api/library?${qs}`);
     const items = data.items || [];
+    const statusTitle = {
+      queue: "Очередь",
+      in_progress: "Начатые",
+      watched: "Просмотренные",
+      archived: "Архив",
+    }[status] || "Очередь";
+    const statusHint = {
+      queue: "То, что ещё не начал. Клипы и шортсы — отдельными вкладками ниже.",
+      in_progress: "Открыл на YouTube или отметил «Начал». Сюда не попадает общий план очереди.",
+      watched: "Уже посмотрел — в очереди этих роликов больше нет.",
+      archived: "Скрытые из плана.",
+    }[status];
     app.innerHTML = `
       ${topbar("queue")}
       <section class="hero">
-        <h1>${channel ? escapeHtml(channel) : "Очередь"}</h1>
+        <h1>${channel ? escapeHtml(channel) : statusTitle}</h1>
         <p>${channel
           ? `Видео канала · <a href="/channels" data-nav>все каналы</a>`
-          : `По умолчанию: без клипов и без шортсов. Они — во вкладках рядом.`}</p>
+          : statusHint}</p>
       </section>
+      <div class="filter-chips" id="status-chips">
+        <button type="button" class="chip ${status === "queue" ? "active" : ""}" data-status="queue">Очередь</button>
+        <button type="button" class="chip ${status === "in_progress" ? "active" : ""}" data-status="in_progress">Начатые</button>
+        <button type="button" class="chip ${status === "watched" ? "active" : ""}" data-status="watched">Просмотренные</button>
+      </div>
       <div class="filter-chips" id="kind-chips">
         <button type="button" class="chip ${kind === "video" ? "active" : ""}" data-kind="video">Видео</button>
         <button type="button" class="chip ${kind === "music" ? "active" : ""}" data-kind="music">Музыка</button>
@@ -678,7 +704,7 @@
       </div>
       <div class="muted" style="margin:0 0 12px;font-size:13px">Показано: ${items.length}${channel ? ` · ${escapeHtml(channel)}` : ""}</div>
       <div class="grid" id="queue-grid">
-        ${items.length ? items.map(cardHtml).join("") : `<div class="empty">Пусто в этом фильтре. <a href="/queue?kind=all" data-nav>Показать всё</a> или <a href="/channels" data-nav>каналы</a>.</div>`}
+        ${items.length ? items.map(cardHtml).join("") : `<div class="empty">Пусто. ${status === "queue" ? `<a href="/queue?status=in_progress" data-nav>Начатые</a> · <a href="/channels" data-nav>каналы</a>` : `<a href="/queue?status=queue" data-nav>В очередь</a>`}</div>`}
       </div>`;
     wireNav();
     const paint = (list) => {
@@ -691,18 +717,26 @@
       const q = e.target.value.trim().toLowerCase();
       paint(!q ? items : items.filter((i) => `${i.title} ${i.channel_title}`.toLowerCase().includes(q)));
     };
-    document.querySelectorAll("#kind-chips [data-kind]").forEach((btn) => {
+    const goQueue = (nextStatus, nextKind) => {
+      const next = new URL(location.href);
+      next.searchParams.set("status", nextStatus);
+      next.searchParams.set("kind", nextKind);
+      if (channel) next.searchParams.set("channel", channel);
+      else next.searchParams.delete("channel");
+      navigate(next.pathname + next.search);
+    };
+    document.querySelectorAll("#status-chips [data-status]").forEach((btn) => {
       btn.onclick = () => {
-        const next = new URL(location.href);
-        next.searchParams.set("kind", btn.getAttribute("data-kind"));
-        if (channel) next.searchParams.set("channel", channel);
-        else next.searchParams.delete("channel");
-        navigate(next.pathname + next.search);
+        const st = btn.getAttribute("data-status");
+        goQueue(st, st === "queue" ? (kind === "all" ? "video" : kind) : "all");
       };
+    });
+    document.querySelectorAll("#kind-chips [data-kind]").forEach((btn) => {
+      btn.onclick = () => goQueue(status, btn.getAttribute("data-kind"));
     });
     const clearCh = $("#clear-channel");
     if (clearCh) {
-      clearCh.onclick = () => navigate(`/queue?kind=${encodeURIComponent(kind)}`);
+      clearCh.onclick = () => navigate(`/queue?status=${encodeURIComponent(status)}&kind=${encodeURIComponent(kind)}`);
     }
   }
 
@@ -984,9 +1018,15 @@
           <p class="muted" style="margin-top:14px;line-height:1.5;white-space:pre-wrap">${escapeHtml((item.description || "").slice(0, 600))}</p>
         </div>
         <div class="panel">
+          <div class="muted" style="margin:0 0 10px;font-size:13px">Статус: <b>${
+            item.status === "watched" ? "просмотрено" :
+            item.status === "in_progress" ? "начато" :
+            item.status === "archived" ? "архив" : "в очереди"
+          }</b></div>
           <div class="btn-row" style="flex-direction:column;align-items:stretch">
-            <button class="btn" id="open-yt">Открыть на YouTube</button>
-            <button class="btn secondary" id="mark-watched">${item.status === "watched" ? "Уже в просмотренных" : "Отметить просмотренным"}</button>
+            <button class="btn" id="open-yt">Смотреть на YouTube</button>
+            <button class="btn secondary" id="mark-started"${item.status === "in_progress" ? " disabled" : ""}>${item.status === "in_progress" ? "Уже в начатых" : "Отметить начатым"}</button>
+            <button class="btn secondary" id="mark-watched"${item.status === "watched" ? " disabled" : ""}>${item.status === "watched" ? "Уже в просмотренных" : "Отметить просмотренным"}</button>
             <button class="btn ghost" id="back-queue">Вернуть в очередь</button>
             <button class="btn ghost" id="delete-item">Убрать из библиотеки</button>
           </div>
@@ -1091,16 +1131,26 @@
           body: "{}",
         });
         window.open(r.watch_url || item.watch_url, "_blank", "noopener");
+        if (r.moved_to_started) toast("Ушло в «Начатые» — из очереди убрано");
+        else if (item.status === "queue") toast("Открыто");
       } catch (_) {
         window.open(item.watch_url, "_blank", "noopener");
       }
+    };
+    $("#mark-started").onclick = async () => {
+      await api(`/api/library/${encodeURIComponent(videoId)}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status: "in_progress" }),
+      });
+      toast("В «Начатые» — из очереди убрано");
+      renderVideo(videoId);
     };
     $("#mark-watched").onclick = async () => {
       await api(`/api/library/${encodeURIComponent(videoId)}`, {
         method: "PATCH",
         body: JSON.stringify({ status: "watched" }),
       });
-      toast("Отмечено");
+      toast("Просмотрено — в общем плане больше нет");
       renderVideo(videoId);
     };
     $("#back-queue").onclick = async () => {
@@ -1108,7 +1158,7 @@
         method: "PATCH",
         body: JSON.stringify({ status: "queue" }),
       });
-      toast("В очереди");
+      toast("Снова в очереди");
       renderVideo(videoId);
     };
     $("#delete-item").onclick = async () => {
