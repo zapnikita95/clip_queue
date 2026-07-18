@@ -620,8 +620,14 @@
           { title: "Кластеризую", detail: "темы, длины, каналы" },
           { title: "Черновик папок", detail: "раскладываю видео" },
         ], api("/api/organize/propose", { method: "POST", body: JSON.stringify({ use_llm: false }) }));
-        finishProgress(box, { ok: true, title: "Готово — кликай папки", detail: "" });
+        const purged = data.proposal?.music_purged || 0;
+        finishProgress(box, {
+          ok: true,
+          title: purged ? `Готово · музыку убрал: ${purged}` : "Готово — кликай папки",
+          detail: purged ? "Topic/VEVO/клипы выкинуты из очереди" : "",
+        });
         paintProposal(data.proposal);
+        if (purged) toast(`Музыку убрал из очереди: ${purged}`);
       } catch (e) {
         finishProgress(box, { ok: false, title: "Не собралось", detail: e.message });
       } finally {

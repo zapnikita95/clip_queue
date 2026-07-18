@@ -135,6 +135,7 @@ def heuristic_propose(user_id: int) -> dict[str, Any]:
     music: list[str] = []
     tokens: Counter = Counter()
 
+    music_ids: set[str] = set()
     for r in rows:
         ch = (r.get("channel_title") or "Без канала").strip() or "Без канала"
         vid = r["video_id"]
@@ -144,10 +145,12 @@ def heuristic_propose(user_id: int) -> dict[str, Any]:
             r.get("duration_sec"),
             None,
         )
-        by_status[r.get("status") or "queue"].append(vid)
+        # Music never enters planning folders / unsorted draft.
         if bucket == "music":
             music.append(vid)
+            music_ids.add(vid)
             continue
+        by_status[r.get("status") or "queue"].append(vid)
         by_channel[ch].append(vid)
         dur = r.get("duration_sec")
         if isinstance(dur, int):
@@ -167,22 +170,11 @@ def heuristic_propose(user_id: int) -> dict[str, Any]:
         folders.append(
             _folder(
                 "В очереди / не разобрано",
-                "Черновик: всё ещё в статусе очереди (не правило для новых)",
+                "Без музыки и клипов — только то, что ещё в очереди",
                 queue[:80],
                 rule=None,
                 rows_by_id=rows_by_id,
                 persist=False,
-            )
-        )
-    if music:
-        folders.append(
-            _folder(
-                "Музыка / клипы",
-                "Topic, VEVO и клипы — отдельно от плана длинных роликов",
-                music[:80],
-                rule={"type": "content_kind", "value": "music"},
-                rows_by_id=rows_by_id,
-                persist=True,
             )
         )
     if shortform:
@@ -226,7 +218,12 @@ def heuristic_propose(user_id: int) -> dict[str, Any]:
     for word, cnt in tokens.most_common(16):
         if cnt < 3 or word in _STOP:
             continue
-        vids = [r["video_id"] for r in rows if word in (r.get("title") or "").lower()][:40]
+        vids = [
+            r["video_id"]
+            for r in rows
+            if r["video_id"] not in music_ids
+            and word in (r.get("title") or "").lower()
+        ][:40]
         if len(vids) < 3:
             continue
         folders.append(
@@ -269,11 +266,15 @@ def heuristic_propose(user_id: int) -> dict[str, Any]:
     return {
         "engine": "heuristic",
         "summary": (
-            f"В выборке {len(rows)} видео. Папок с правилами: {persist_n}. "
-            "Нажми папку — увидишь ролики. «ОК» сохранит папки и правила для новых ссылок."
+            f"В выборке {len(rows)} видео · музыка/клипы скрыты: {len(music_ids)}. "
+            f"Папок с правилами: {persist_n}. "
+            "«ОК» сохранит папки и выкинет музыку из очереди планирования."
         ),
         "folders": folders[:18],
+        "music_hidden": len(music_ids),
+        "music_ids": list(music_ids)[:500],
         "limitations": [
+            "Музыка (Topic/VEVO/клипы) не показывается в раскладке",
             "Watch Later и % просмотра Google API не отдаёт",
             "История — через Takeout",
         ],
@@ -340,14 +341,17 @@ def llm_propose(user_id: int) -> dict[str, Any] | None:
 
 def propose_structure(user_id: int, *, use_llm: bool = False) -> dict[str, Any]:
     ensure_classify_tables()
+    # Kick music out of planning queue immediately — don't wait for ОК.
+    purged = purge_music_from_queue(user_id)
     proposal = None
     if use_llm:
         proposal = llm_propose(user_id)
     if not proposal:
         proposal = heuristic_propose(user_id)
+    proposal["music_purged"] = purged
     db.execute(
         "INSERT INTO organize_proposals (user_id, proposal_json) VALUES (?, ?)",
-        (user_id, json.dumps(proposal, ensure_ascii=False)),
+        (user_id, json.dumps({k: v for k, v in proposal.items() if k != "music_ids"}, ensure_ascii=False)),
     )
     row = db.fetchone(
         "SELECT id FROM organize_proposals WHERE user_id = ? ORDER BY id DESC LIMIT 1",
@@ -390,6 +394,33 @@ def _add_list_item(list_id: int, video_id: str, position: int = 0) -> None:
         ),
         (list_id, video_id, position),
     )
+
+
+def purge_music_from_queue(user_id: int, video_ids: list[str] | None = None) -> int:
+    """Kick music/clips out of planning queue → archived."""
+    if video_ids is None:
+        rows = _library_snapshot(user_id, limit=2000)
+        video_ids = [
+            r["video_id"]
+            for r in rows
+            if yt.content_bucket(
+                r.get("title"),
+                r.get("channel_title"),
+                r.get("duration_sec"),
+                None,
+            )
+            == "music"
+            and (r.get("status") or "") in ("queue", "in_progress")
+        ]
+    n = 0
+    for vid in video_ids:
+        db.execute(
+            "UPDATE library_items SET status = 'archived' "
+            "WHERE user_id = ? AND video_id = ? AND status IN ('queue', 'in_progress')",
+            (user_id, vid),
+        )
+        n += 1
+    return n
 
 
 def apply_proposal(user_id: int, proposal: dict) -> dict[str, Any]:
@@ -435,10 +466,25 @@ def apply_proposal(user_id: int, proposal: dict) -> dict[str, Any]:
                 "rule": rule,
             }
         )
+
+    music_purged = purge_music_from_queue(
+        user_id,
+        list(proposal.get("music_ids") or []) or None,
+    )
+    # Keep a rule so future shares of music don't stay in the planning queue
+    music_list_id = _ensure_list(user_id, "Музыка / клипы (скрыто)")
+    db.execute(
+        "INSERT INTO classify_rules (user_id, list_id, rule_type, rule_value, priority) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (user_id, music_list_id, "content_kind", "music", 1),
+    )
+    rules_saved += 1
+
     return {
         "ok": True,
         "lists": created,
         "rules_saved": rules_saved,
+        "music_purged": music_purged,
     }
 
 

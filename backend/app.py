@@ -389,6 +389,19 @@ def create_app() -> Flask:
         uid = current_user()["user_id"]
         vid = meta["video_id"]
 
+        # Music/clips never enter the planning queue
+        if (
+            yt.content_bucket(
+                meta.get("title"),
+                meta.get("channel_title"),
+                meta.get("duration_sec"),
+                meta.get("description"),
+            )
+            == "music"
+            and status == "queue"
+        ):
+            status = "archived"
+
         existing = db.fetchone(
             "SELECT * FROM library_items WHERE user_id = ? AND video_id = ?",
             (uid, vid),
