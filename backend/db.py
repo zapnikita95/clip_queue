@@ -309,7 +309,15 @@ CREATE INDEX IF NOT EXISTS idx_watch_events_user ON watch_events(user_id, at);
 
 
 def init_db() -> None:
+    """Idempotent. Safe under multi-worker race on first boot."""
     schema = SCHEMA_PG if is_postgres() else SCHEMA_SQLITE
-    with connect() as conn:
-        for stmt in _statements(schema):
-            conn.execute(stmt)
+    for stmt in _statements(schema):
+        try:
+            with connect() as conn:
+                conn.execute(stmt)
+        except Exception as e:
+            msg = str(e).lower()
+            # Concurrent CREATE INDEX / TABLE from another worker
+            if "already exists" in msg or "duplicate key" in msg or "pg_class_relname" in msg:
+                continue
+            raise

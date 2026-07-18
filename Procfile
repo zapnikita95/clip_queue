@@ -1,1 +1,1 @@
-web: gunicorn -b 0.0.0.0:${PORT:-8080} -w 2 -k gthread --threads 4 backend.app:app
+web: gunicorn -b 0.0.0.0:${PORT:-8080} -w 1 -k gthread --threads 8 backend.app:app
