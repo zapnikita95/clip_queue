@@ -1361,6 +1361,22 @@ def create_app() -> Flask:
         _add_to_list(uid, list_id, video_id)
         return jsonify({"ok": True})
 
+    @app.delete("/api/lists/<int:list_id>/items/<video_id>")
+    @require_auth
+    def list_remove_item(list_id: int, video_id: str):
+        uid = current_user()["user_id"]
+        lst = db.fetchone(
+            "SELECT id FROM lists WHERE id = ? AND user_id = ?",
+            (list_id, uid),
+        )
+        if not lst:
+            return json_error("Список не найден", 404)
+        db.execute(
+            "DELETE FROM list_items WHERE list_id = ? AND video_id = ?",
+            (list_id, video_id),
+        )
+        return jsonify({"ok": True})
+
     DEFAULT_TAGS = [
         ("готовка", "🍳"),
         ("музыка", "🎵"),

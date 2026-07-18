@@ -3,10 +3,36 @@
 from __future__ import annotations
 
 import json
-from collections import defaultdict
+import re
+from collections import Counter, defaultdict
 from typing import Any
 
 from backend import db, llm, themes, youtube as yt
+
+_TOKEN = re.compile(r"[a-zA-Zа-яА-ЯёЁ0-9]{4,}", re.UNICODE)
+_STOP = {
+    "the",
+    "and",
+    "with",
+    "from",
+    "this",
+    "that",
+    "your",
+    "для",
+    "как",
+    "это",
+    "что",
+    "или",
+    "видео",
+    "video",
+    "official",
+    "full",
+    "watch",
+    "часть",
+    "выпуск",
+    "сериал",
+    "фильм",
+}
 
 
 def ensure_classify_tables() -> None:
@@ -104,7 +130,7 @@ def _folder(
         "count": len(video_ids),
         "rule": rule,
         "persist": persist and bool(rule),
-        "items": _preview_items(rows_by_id, video_ids, 10),
+        "items": _preview_items(rows_by_id, video_ids, 14),
     }
 
 
@@ -178,6 +204,43 @@ def heuristic_propose(user_id: int) -> dict[str, Any]:
     # Biggest themes first
     theme_folders.sort(key=lambda f: -int(f.get("count") or 0))
     folders.extend(theme_folders)
+
+    # Personal keyword themes from THIS user's titles (not only shared taxonomy)
+    token_hits: Counter = Counter()
+    token_vids: dict[str, list[str]] = defaultdict(list)
+    for r in rows:
+        vid = r["video_id"]
+        if vid in music_ids or vid in themed_ids:
+            continue
+        seen_tok = set()
+        for tok in _TOKEN.findall((r.get("title") or "").lower()):
+            if tok in _STOP or tok in seen_tok:
+                continue
+            seen_tok.add(tok)
+            token_hits[tok] += 1
+            if len(token_vids[tok]) < 40:
+                token_vids[tok].append(vid)
+    personal = []
+    for word, cnt in token_hits.most_common(20):
+        vids = token_vids.get(word) or []
+        if cnt < 3 or len(vids) < 3:
+            continue
+        # skip if overlaps a taxonomy theme title word
+        personal.append(
+            _folder(
+                f"Тема: {word}",
+                f"Из твоих названий · {cnt} совпадений (личная тема)",
+                vids,
+                rule={"type": "keyword", "value": word},
+                rows_by_id=rows_by_id,
+                persist=True,
+            )
+        )
+        for v in vids:
+            themed_ids.add(v)
+        if len(personal) >= 5:
+            break
+    folders.extend(personal)
 
     if shortform:
         folders.append(
@@ -263,17 +326,19 @@ def heuristic_propose(user_id: int) -> dict[str, Any]:
     return {
         "engine": "heuristic",
         "summary": (
-            f"В выборке {len(rows)} · тем: {len(theme_folders)} · "
-            f"без темы: {len(unthemed_queue)} · музыка скрыта: {len(music_ids)}. "
-            "Сначала тематики (английский, новости, история…), каналы — ниже. "
-            "«ОК» сохранит правила для новых ссылок."
+            f"В выборке {len(rows)} · общих тем: {len(theme_folders)} · "
+            f"личных тем: {len(personal)} · без темы: {len(unthemed_queue)} · "
+            f"музыка скрыта: {len(music_ids)}. "
+            "Папки под тебя: у другого человека набор будет другим. "
+            "Перетащи ролик или добавь в ещё одну тему, потом «ОК»."
         ),
-        "folders": folders[:20],
+        "folders": folders[:22],
         "music_hidden": len(music_ids),
         "music_ids": list(music_ids)[:500],
+        "personalized": True,
         "limitations": [
-            "Темы — по словам в названии/канале (не идеальный AI)",
-            "Музыка (Topic/VEVO/клипы) скрыта",
+            "Общие ярлыки (новости, английский…) + личные темы из твоих названий",
+            "Музыка скрыта",
             "Watch Later Google API не отдаёт",
         ],
     }

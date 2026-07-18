@@ -513,43 +513,53 @@
     };
   }
 
-  function folderPreviewHtml(folder, idx) {
+  function folderTileHtml(it, folderIdx, folderOptionsHtml) {
+    return `
+      <div class="folder-tile" draggable="true" data-video-id="${escapeHtml(it.video_id)}" data-from-folder="${folderIdx}">
+        <div class="folder-tile-media">
+          <img src="${escapeHtml(it.thumb_url || "")}" alt="" loading="lazy" draggable="false" />
+          ${it.duration_label ? `<span class="badge">${escapeHtml(it.duration_label)}</span>` : ""}
+        </div>
+        <div class="folder-tile-title">${escapeHtml(it.title || "Без названия")}</div>
+        <div class="folder-tile-meta">${escapeHtml(it.channel_title || "")}</div>
+        <div class="folder-tile-actions">
+          <a class="btn ghost" href="/v/${encodeURIComponent(it.video_id)}" data-nav style="min-height:32px;padding:6px 10px;font-size:12px">Открыть</a>
+          <select class="folder-assign" data-assign-video="${escapeHtml(it.video_id)}" data-from-folder="${folderIdx}" title="Ещё в категорию">
+            <option value="">+ ещё в…</option>
+            ${folderOptionsHtml}
+          </select>
+        </div>
+      </div>`;
+  }
+
+  function folderPreviewHtml(folder, idx, allFolders) {
     const items = folder.items || [];
-    const thumbs = items.slice(0, 6).map((it) => `
-      <a class="folder-thumb" href="/v/${encodeURIComponent(it.video_id)}" data-nav title="${escapeHtml(it.title || "")}">
-        <img src="${escapeHtml(it.thumb_url || "")}" alt="" loading="lazy" />
-      </a>`).join("");
+    const opts = (allFolders || [])
+      .map((f, i) => i === idx ? "" : `<option value="${i}">${escapeHtml(f.title || "Папка")}</option>`)
+      .join("");
     const ruleHint = folder.persist && folder.rule
       ? `<span class="folder-rule">правило сохранится</span>`
-      : `<span class="folder-rule muted">только просмотр</span>`;
+      : `<span class="folder-rule muted">черновик</span>`;
     return `
-      <div class="folder-card" data-folder-idx="${idx}">
-        <button type="button" class="folder-head" data-toggle-folder="${idx}">
+      <div class="folder-card" data-folder-idx="${idx}" data-drop-folder="${idx}">
+        <div class="folder-head">
           <div class="folder-head-text">
             <b>${escapeHtml(folder.title || "Папка")}</b>
             <div class="muted">${escapeHtml(folder.reason || "")}</div>
           </div>
           <div class="folder-head-meta">
             ${ruleHint}
-            <span class="count">${folder.count || (folder.video_ids || []).length} →</span>
+            <span class="count">${folder.count || (folder.video_ids || []).length}</span>
           </div>
-        </button>
-        <div class="folder-thumbs">${thumbs || `<div class="muted" style="padding:8px">Нет превью</div>`}</div>
-        <div class="folder-body hidden" id="folder-body-${idx}">
-          <div class="folder-grid">
-            ${(items.length ? items : []).map((it) => `
-              <a class="folder-item" href="/v/${encodeURIComponent(it.video_id)}" data-nav>
-                <img src="${escapeHtml(it.thumb_url || "")}" alt="" loading="lazy" />
-                <div>
-                  <div class="folder-item-title">${escapeHtml(it.title || "")}</div>
-                  <div class="muted" style="font-size:12px">${escapeHtml(it.channel_title || "")}${it.duration_label ? " · " + escapeHtml(it.duration_label) : ""}</div>
-                </div>
-              </a>`).join("") || `<div class="empty">Пусто</div>`}
-          </div>
-          ${(folder.video_ids || []).length > items.length
-            ? `<div class="muted" style="margin-top:8px;font-size:12px">Показаны первые ${items.length} из ${folder.video_ids.length}</div>`
-            : ""}
         </div>
+        <div class="folder-rail">
+          ${items.length
+            ? items.map((it) => folderTileHtml(it, idx, opts)).join("")
+            : `<div class="muted" style="padding:12px">Пусто — перетащи сюда ролик</div>`}
+        </div>
+        ${(folder.video_ids || []).length > items.length
+          ? `<div class="muted" style="padding:0 14px 12px;font-size:12px">Показаны ${items.length} из ${folder.video_ids.length}</div>`
+          : ""}
       </div>`;
   }
 
@@ -558,12 +568,16 @@
       ${topbar("organize")}
       <section class="hero">
         <h1>Разложить по папкам</h1>
-        <p>Сначала тематики (английский, новости, история…). Кликай папку — смотри ролики. «ОК» сохранит правила для новых ссылок.</p>
+        <p>Папки собираются из <b>твоей</b> библиотеки — у другого человека набор тем будет другим. Перетащи ролик в тему или «+ ещё в…». Потом «ОК».</p>
       </section>
       <div class="panel">
         <div class="btn-row">
           <button class="btn" id="propose">Обновить черновик</button>
           <button class="btn secondary hidden" id="apply-proposal">ОК — сохранить классификацию</button>
+          <label class="chip" style="cursor:pointer;display:inline-flex;align-items:center;gap:8px">
+            <input type="checkbox" id="copy-mode" />
+            Не убирать из старой (добавить ещё)
+          </label>
           <a class="btn ghost" href="/lists" data-nav>Мои списки</a>
         </div>
         <div id="active-rules" class="muted" style="margin-top:12px;font-size:13px"></div>
@@ -577,34 +591,94 @@
         const r = await api("/api/organize/rules");
         const rules = r.rules || [];
         $("#active-rules").innerHTML = rules.length
-          ? `Сейчас действует <b style="color:var(--text)">${rules.length}</b> правил после прошлого ОК. Новые шары пойдут по ним.`
-          : `Правил ещё нет — собери черновик и нажми «ОК — сохранить классификацию».`;
+          ? `Твои правила: <b style="color:var(--text)">${rules.length}</b> (личные). Новые шары пойдут по ним.`
+          : `Правил ещё нет — поправь раскладку и нажми «ОК — сохранить классификацию».`;
       } catch (_) {
         $("#active-rules").textContent = "";
       }
     };
 
+    const findItem = (folder, videoId) => {
+      const fromItems = (folder.items || []).find((x) => x.video_id === videoId);
+      if (fromItems) return fromItems;
+      return { video_id: videoId, title: videoId, channel_title: "", thumb_url: "", duration_label: "" };
+    };
+
+    const relocateVideo = (fromIdx, toIdx, videoId, { copy = false } = {}) => {
+      if (!lastProposal?.folders || fromIdx === toIdx) return;
+      const from = lastProposal.folders[fromIdx];
+      const to = lastProposal.folders[toIdx];
+      if (!from || !to) return;
+      const item = findItem(from, videoId);
+      if (!copy) {
+        from.video_ids = (from.video_ids || []).filter((id) => id !== videoId);
+        from.items = (from.items || []).filter((x) => x.video_id !== videoId);
+        from.count = from.video_ids.length;
+      }
+      if (!(to.video_ids || []).includes(videoId)) {
+        to.video_ids = [videoId, ...(to.video_ids || [])];
+        to.items = [item, ...(to.items || [])].slice(0, 14);
+      }
+      to.count = (to.video_ids || []).length;
+      paintProposal(lastProposal);
+      toast(copy
+        ? `Добавлено ещё в «${to.title}»`
+        : `Перенесено в «${to.title}»`);
+    };
+
     const paintProposal = (proposal) => {
       lastProposal = proposal;
-      const folders = (proposal.folders || []).map((f, i) => folderPreviewHtml(f, i)).join("");
+      const list = proposal.folders || [];
+      const folders = list.map((f, i) => folderPreviewHtml(f, i, list)).join("");
       const host = $("#proposal-box");
       host.innerHTML = `
         <p style="margin:0 0 12px;color:var(--text)">${escapeHtml(proposal.summary || "")}</p>
         ${(proposal.limitations || []).map((x) => `<div class="muted" style="font-size:12px">• ${escapeHtml(x)}</div>`).join("")}
+        <p class="muted" style="font-size:13px;margin:10px 0 0">Перетащи карточку в другую тему. Или «+ ещё в…» — тогда ролик будет в двух категориях.</p>
         <div class="folder-list" style="margin-top:14px">${folders || `<div class="empty">Мало данных — сначала синк YouTube</div>`}</div>`;
       wireNav();
-      document.querySelectorAll("[data-toggle-folder]").forEach((btn) => {
-        btn.onclick = () => {
-          const i = btn.getAttribute("data-toggle-folder");
-          const body = $(`#folder-body-${i}`);
-          const card = btn.closest(".folder-card");
-          if (!body) return;
-          const open = body.classList.contains("hidden");
-          body.classList.toggle("hidden", !open);
-          card?.classList.toggle("open", open);
+
+      document.querySelectorAll(".folder-tile").forEach((tile) => {
+        tile.addEventListener("dragstart", (e) => {
+          tile.classList.add("dragging");
+          e.dataTransfer.setData("text/plain", JSON.stringify({
+            videoId: tile.getAttribute("data-video-id"),
+            fromIdx: Number(tile.getAttribute("data-from-folder")),
+          }));
+          e.dataTransfer.effectAllowed = "copyMove";
+        });
+        tile.addEventListener("dragend", () => tile.classList.remove("dragging"));
+      });
+
+      document.querySelectorAll("[data-drop-folder]").forEach((zone) => {
+        zone.addEventListener("dragover", (e) => {
+          e.preventDefault();
+          zone.classList.add("drop-hover");
+        });
+        zone.addEventListener("dragleave", () => zone.classList.remove("drop-hover"));
+        zone.addEventListener("drop", (e) => {
+          e.preventDefault();
+          zone.classList.remove("drop-hover");
+          let payload;
+          try { payload = JSON.parse(e.dataTransfer.getData("text/plain") || "{}"); } catch (_) { return; }
+          const toIdx = Number(zone.getAttribute("data-drop-folder"));
+          const copy = !!$("#copy-mode")?.checked || e.altKey;
+          relocateVideo(payload.fromIdx, toIdx, payload.videoId, { copy });
+        });
+      });
+
+      document.querySelectorAll(".folder-assign").forEach((sel) => {
+        sel.onchange = () => {
+          const toIdx = Number(sel.value);
+          if (Number.isNaN(toIdx)) return;
+          const videoId = sel.getAttribute("data-assign-video");
+          const fromIdx = Number(sel.getAttribute("data-from-folder"));
+          relocateVideo(fromIdx, toIdx, videoId, { copy: true });
+          sel.value = "";
         };
       });
-      $("#apply-proposal").classList.toggle("hidden", !(proposal.folders || []).length);
+
+      $("#apply-proposal").classList.toggle("hidden", !list.length);
     };
 
     const runPropose = async () => {
