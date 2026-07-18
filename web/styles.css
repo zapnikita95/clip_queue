@@ -10,8 +10,9 @@
   --accent-soft: rgba(255, 59, 48, 0.14);
   --ok: #3dd68c;
   --radius: 16px;
-  --font: "IBM Plex Sans", "Helvetica Neue", Helvetica, Arial, sans-serif;
-  --display: "Bricolage Grotesque", var(--font);
+  /* Deliberately not Inter / Roboto / Syne / Plex / Space Grotesk */
+  --font: "Atkinson Hyperlegible", "Lucida Grande", "Segoe UI", sans-serif;
+  --display: "Fraunces", "Iowan Old Style", "Palatino Linotype", Georgia, serif;
   --shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
   --btn-radius: 12px;
   --btn-pad-y: 11px;
@@ -68,10 +69,11 @@ button { cursor: pointer; }
 }
 .brand-name {
   font-family: var(--display);
-  font-weight: 800;
-  letter-spacing: -0.03em;
-  font-size: 1.35rem;
-  line-height: 1.1;
+  font-weight: 700;
+  font-variation-settings: "SOFT" 50, "WONK" 1;
+  letter-spacing: -0.02em;
+  font-size: 1.45rem;
+  line-height: 1.05;
 }
 
 .nav {
@@ -113,10 +115,12 @@ button { cursor: pointer; }
 }
 .hero h1 {
   font-family: var(--display);
-  font-size: clamp(1.8rem, 4vw, 2.6rem);
-  letter-spacing: -0.04em;
+  font-weight: 700;
+  font-variation-settings: "SOFT" 40, "WONK" 1;
+  font-size: clamp(1.9rem, 4.2vw, 2.75rem);
+  letter-spacing: -0.03em;
   margin: 0;
-  line-height: 1.1;
+  line-height: 1.08;
 }
 .hero p { margin: 0; color: var(--muted); max-width: 52ch; line-height: 1.5; }
 
