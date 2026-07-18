@@ -1,0 +1,27 @@
+{
+  "name": "Clip Queue",
+  "short_name": "Clip Queue",
+  "description": "Очередь YouTube-видео из твоих интересов",
+  "start_url": "/home",
+  "display": "standalone",
+  "background_color": "#0b0b0d",
+  "theme_color": "#ff3b30",
+  "share_target": {
+    "action": "/add",
+    "method": "GET",
+    "enctype": "application/x-www-form-urlencoded",
+    "params": {
+      "title": "title",
+      "text": "text",
+      "url": "url"
+    }
+  },
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
