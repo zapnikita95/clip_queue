@@ -19,4 +19,4 @@ COPY docs ./docs
 
 EXPOSE 8080
 
-CMD ["sh", "-c", "gunicorn -b 0.0.0.0:${PORT:-8080} -w 1 -k gthread --threads 8 backend.app:app"]
+CMD ["sh", "-c", "gunicorn -b 0.0.0.0:${PORT:-8080} -w 1 -k gthread --threads 8 --timeout 300 --access-logfile - --error-logfile - --capture-output backend.app:app"]

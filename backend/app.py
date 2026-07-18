@@ -3,17 +3,24 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from datetime import datetime, timezone
 from functools import wraps
 from pathlib import Path
 
 from dotenv import load_dotenv
-from flask import Flask, Response, g, jsonify, redirect, request, send_from_directory, stream_with_context
+from flask import Flask, g, jsonify, redirect, request, send_from_directory
 
-from backend import auth, db, google_oauth, llm, organize, takeout, yt_sync
+from backend import auth, db, google_oauth, llm, organize, sync_jobs, takeout, yt_sync
 from backend import similarity as sim
 from backend import youtube as yt
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+log = logging.getLogger("clip_queue")
 
 ROOT = Path(__file__).resolve().parent.parent
 WEB = ROOT / "web"
@@ -181,33 +188,31 @@ def create_app() -> Flask:
     @app.post("/api/youtube/sync")
     @require_auth
     def youtube_sync():
+        """Start background sync (avoids Railway proxy 502 on long streams)."""
         uid = current_user()["user_id"]
-        # Default: NDJSON progress stream so UI can show live steps
         if (request.args.get("plain") or "").strip() == "1":
             try:
+                log.info("plain sync start user=%s", uid)
                 stats = yt_sync.sync_youtube_library(uid)
+                log.info("plain sync done user=%s", uid)
             except Exception as e:
+                log.exception("plain sync failed user=%s", uid)
                 return json_error(str(e), 502)
             return jsonify({"ok": True, "stats": stats})
 
-        def generate():
-            try:
-                for ev in yt_sync.iter_sync_youtube_library(uid):
-                    yield json.dumps(ev, ensure_ascii=False) + "\n"
-            except Exception as e:
-                yield json.dumps(
-                    {"type": "error", "error": str(e)[:400], "title": "Синк оборвался"},
-                    ensure_ascii=False,
-                ) + "\n"
+        job = sync_jobs.start_youtube_sync(uid)
+        log.info("sync job started user=%s job=%s", uid, job.get("id"))
+        return jsonify({"ok": True, "job": job})
 
-        return Response(
-            stream_with_context(generate()),
-            mimetype="application/x-ndjson",
-            headers={
-                "Cache-Control": "no-cache",
-                "X-Accel-Buffering": "no",
-            },
-        )
+    @app.get("/api/youtube/sync/status")
+    @require_auth
+    def youtube_sync_status():
+        uid = current_user()["user_id"]
+        job_id = (request.args.get("job_id") or "").strip()
+        job = sync_jobs.get_job(job_id) if job_id else sync_jobs.active_job_for_user(uid)
+        if not job or job.get("user_id") != uid:
+            return json_error("Нет задачи синка", 404)
+        return jsonify({"ok": True, "job": job})
 
     @app.post("/api/youtube/takeout")
     @require_auth

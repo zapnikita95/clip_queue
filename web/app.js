@@ -359,26 +359,42 @@
       detail: "Лайки → плейлисты → подписки",
     });
     try {
-      const last = await streamNdjson("/api/youtube/sync", {
-        onEvent: (ev) => {
-          if (ev.type === "error") {
-            finishProgress(box, { ok: false, title: ev.title || "Ошибка", detail: ev.error || "" });
-            return;
-          }
-          if (ev.type === "done") {
-            finishProgress(box, {
-              ok: true,
-              title: ev.title || "YouTube у тебя в Clip Queue",
-              detail: ev.detail || "",
-              elapsed_sec: ev.elapsed_sec,
-            });
-            return;
-          }
-          updateProgress(box, ev);
-        },
-      });
-      if (last?.type === "error") throw new Error(last.error || "Синк оборвался");
-      const s = last?.stats || {};
+      const started = await api("/api/youtube/sync", { method: "POST", body: "{}" });
+      const jobId = started.job?.id;
+      if (!jobId) throw new Error("Сервер не вернул job_id");
+      updateProgress(box, started.job);
+
+      let last = started.job;
+      const t0 = Date.now();
+      while (true) {
+        await new Promise((r) => setTimeout(r, 600));
+        const st = await api(`/api/youtube/sync/status?job_id=${encodeURIComponent(jobId)}`);
+        last = st.job || {};
+        if (last.status === "error" || last.type === "error") {
+          finishProgress(box, {
+            ok: false,
+            title: last.title || "Ошибка",
+            detail: last.error || last.detail || "",
+            elapsed_sec: last.elapsed_sec,
+          });
+          throw new Error(last.error || last.detail || "Синк оборвался");
+        }
+        if (last.status === "done" || last.type === "done") {
+          finishProgress(box, {
+            ok: true,
+            title: last.title || "YouTube у тебя в Clip Queue",
+            detail: last.detail || "",
+            elapsed_sec: last.elapsed_sec,
+          });
+          break;
+        }
+        updateProgress(box, last);
+        if (Date.now() - t0 > 8 * 60 * 1000) {
+          throw new Error("Синк слишком долгий (>8 мин) — смотри логи Railway");
+        }
+      }
+
+      const s = last.stats || {};
       toast(`В библиотеке: +${s.liked_new || 0} лайков, ${s.playlists || 0} плейлистов, ${s.subscriptions || 0} подписок`);
       if (autoGoHome) {
         setTimeout(() => navigate("/home"), 700);

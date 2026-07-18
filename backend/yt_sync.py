@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from typing import Any, Generator, Optional
 
@@ -12,9 +13,11 @@ from backend import db, google_oauth
 from backend import youtube as yt
 
 YT_API = "https://www.googleapis.com/youtube/v3"
+log = logging.getLogger("clip_queue.yt_sync")
 
 
 def _get(access: str, path: str, params: dict) -> dict:
+    log.info("YT GET %s params=%s", path, {k: v for k, v in params.items() if k != "pageToken"})
     r = requests.get(
         f"{YT_API}/{path}",
         params=params,
@@ -22,6 +25,7 @@ def _get(access: str, path: str, params: dict) -> dict:
         timeout=25,
     )
     if r.status_code != 200:
+        log.error("YT GET %s failed %s %s", path, r.status_code, r.text[:400])
         raise RuntimeError(f"YouTube API {path}: {r.status_code} {r.text[:240]}")
     return r.json()
 
