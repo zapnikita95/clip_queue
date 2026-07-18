@@ -161,6 +161,10 @@ def format_duration(sec: Optional[int]) -> str:
 
 # YouTube Shorts are usually ≤60s; keep ≤90 so borderline clips leave the main queue.
 SHORTS_MAX_SEC = 90
+# Planning queue = long-form only. Sub-6min atmospheric/clips go to «Короткие».
+SHORTFORM_MAX_SEC = 6 * 60
+# 10h+ loops / ambient dumps are not something people schedule to watch.
+MARATHON_MIN_SEC = 10 * 3600
 
 _MUSIC_TITLE_RE = re.compile(
     r"("
@@ -185,9 +189,9 @@ _MUSIC_TITLE_RE = re.compile(
     re.I,
 )
 
-# "Artist - Track" / "Artist – Track" typical for clips; keep short–mid length.
+# "Artist - Track" / "Artist–Track" / "song-band" typical for clips.
 _ARTIST_TRACK_RE = re.compile(
-    r"^.+\s[-–—]\s+.+$",
+    r"^.+\s*[-–—]\s*.+$",
 )
 
 
@@ -247,6 +251,16 @@ def is_music_content(
     return False
 
 
+def _duration_sec(duration_sec: int | None) -> int | None:
+    if duration_sec is None:
+        return None
+    try:
+        sec = int(duration_sec)
+    except (TypeError, ValueError):
+        return None
+    return sec if sec > 0 else None
+
+
 def is_short(
     duration_sec: int | None,
     title: str | None = None,
@@ -255,13 +269,25 @@ def is_short(
     blob = f"{title or ''} {description or ''}".lower()
     if "#shorts" in blob or "#short" in blob or "/shorts/" in blob:
         return True
-    if duration_sec is None:
-        return False
-    try:
-        sec = int(duration_sec)
-    except (TypeError, ValueError):
-        return False
-    return 0 < sec <= SHORTS_MAX_SEC
+    sec = _duration_sec(duration_sec)
+    return sec is not None and sec <= SHORTS_MAX_SEC
+
+
+def is_shortform(
+    duration_sec: int | None,
+    title: str | None = None,
+    description: str | None = None,
+) -> bool:
+    """Anything shorter than a real watch session (≤6 min), including Shorts."""
+    if is_short(duration_sec, title=title, description=description):
+        return True
+    sec = _duration_sec(duration_sec)
+    return sec is not None and sec <= SHORTFORM_MAX_SEC
+
+
+def is_marathon(duration_sec: int | None) -> bool:
+    sec = _duration_sec(duration_sec)
+    return sec is not None and sec >= MARATHON_MIN_SEC
 
 
 def content_bucket(
@@ -270,13 +296,18 @@ def content_bucket(
     duration_sec: int | None = None,
     description: str | None = None,
 ) -> str:
-    """Return: unavailable | music | shorts | video."""
+    """Return: unavailable | music | shorts | shortform | marathon | video."""
     if is_unavailable_video(title):
         return "unavailable"
     if is_music_content(title, channel_title, duration_sec):
         return "music"
+    # Classic Shorts first (own tab), then the rest of ≤6min junk.
     if is_short(duration_sec, title=title, description=description):
         return "shorts"
+    if is_marathon(duration_sec):
+        return "marathon"
+    if is_shortform(duration_sec, title=title, description=description):
+        return "shortform"
     return "video"
 
 
@@ -309,7 +340,9 @@ def card_from_video_row(row: dict, extra: Optional[dict] = None) -> dict:
         "watch_url": watch_url(row["video_id"]),
         "is_music_topic": bucket == "music",
         "is_music": bucket == "music",
-        "is_short": bucket == "shorts",
+        "is_short": bucket in ("shorts", "shortform"),
+        "is_shortform": bucket in ("shorts", "shortform"),
+        "is_marathon": bucket == "marathon",
         "content_kind": bucket,
         "is_unavailable": bucket == "unavailable",
     }

@@ -218,6 +218,7 @@
           <button class="nav-btn ${active === "home" ? "active" : ""}" data-route="/home">Главная</button>
           <button class="nav-btn ${active === "queue" ? "active" : ""}" data-route="/queue">Очередь</button>
           <button class="nav-btn ${active === "channels" ? "active" : ""}" data-route="/channels">Каналы</button>
+          <button class="nav-btn ${active === "organize" ? "active" : ""}" data-route="/organize">Разложить</button>
           <button class="nav-btn ${active === "lists" ? "active" : ""}" data-route="/lists">Списки</button>
           <button class="nav-btn ${active === "add" ? "active" : ""}" data-route="/add">Добавить</button>
           <button class="nav-btn ${active === "tags" ? "active" : ""}" data-route="/tags">Теги</button>
@@ -466,18 +467,14 @@
       </div>
       <div class="panel">
         <h2>3. Разложить по папкам</h2>
-        <p class="hint">После синка предложим структуру: темы, каналы, короткие/длинные.</p>
+        <p class="hint">Категоризация библиотеки — на отдельном экране.</p>
         <div class="btn-row">
-          <button class="btn" id="propose">Собрать предложение</button>
-          <button class="btn secondary hidden" id="apply-proposal">Создать папки</button>
+          <a class="btn" href="/organize" data-nav>Открыть «Разложить»</a>
         </div>
-        <div id="proposal-box" style="margin-top:16px"></div>
       </div>`;
     wireNav();
-    let lastProposal = null;
     $("#sync-yt").onclick = () => runYoutubeSync({ autoGoHome: false });
     if (wantAutosync && meData.youtube_connected) {
-      // Immediately pull YouTube — no manual click
       runYoutubeSync({ autoGoHome: true });
     }
     $("#takeout-file").onchange = async (ev) => {
@@ -514,6 +511,25 @@
         toast(e.message);
       }
     };
+  }
+
+  async function renderOrganize() {
+    app.innerHTML = `
+      ${topbar("organize")}
+      <section class="hero">
+        <h1>Разложить по папкам</h1>
+        <p>После синка YouTube соберём черновик папок по темам и каналам. Потом одним кликом создашь списки.</p>
+      </section>
+      <div class="panel">
+        <div class="btn-row">
+          <button class="btn" id="propose">Собрать предложение</button>
+          <button class="btn secondary hidden" id="apply-proposal">Создать папки</button>
+          <a class="btn ghost" href="/lists" data-nav>Мои списки</a>
+        </div>
+        <div id="proposal-box" style="margin-top:16px"></div>
+      </div>`;
+    wireNav();
+    let lastProposal = null;
     $("#propose").onclick = async () => {
       const btn = $("#propose");
       btn.classList.add("busy");
@@ -544,7 +560,7 @@
         wrap.innerHTML = `
           <p style="margin-top:14px">${escapeHtml(lastProposal.summary || "")}</p>
           ${(lastProposal.limitations || []).map((x) => `<div class="muted" style="font-size:12px">• ${escapeHtml(x)}</div>`).join("")}
-          <div style="margin-top:14px">${folders || "<div class='empty'>Мало данных — сначала синк/takeout</div>"}</div>`;
+          <div style="margin-top:14px">${folders || "<div class='empty'>Мало данных — сначала синк YouTube</div>"}</div>`;
         $("#proposal-box").appendChild(wrap);
         $("#apply-proposal").classList.remove("hidden");
       } catch (e) {
@@ -595,7 +611,7 @@
       ${topbar("home")}
       <section class="hero">
         <h1>Что посмотреть из своего</h1>
-        <p>Очередь — что ещё не смотрел. Начал на YouTube — уходит в «Начатые». Досмотрел — в «Просмотренные» и больше не в плане.</p>
+        <p>Очередь — длинные ролики (от 6 мин до 10 ч). Клипы, короткие и 10+ часов вынесены. Папки — кнопкой «Разложить».</p>
         <div class="stats">
           <div class="stat">Очередь: <b>${shell.counts.queue}</b></div>
           <div class="stat">Начатые: <b>${shell.counts.started || 0}</b></div>
@@ -603,10 +619,10 @@
           <div class="stat">Списков: <b>${shell.counts.lists}</b></div>
         </div>
         <div class="btn-row" style="margin-top:14px">
-          <a class="btn" href="/queue?status=queue&kind=video" data-nav>Очередь</a>
+          <a class="btn" href="/organize" data-nav>Разложить по папкам</a>
+          <a class="btn secondary" href="/queue?status=queue&kind=video" data-nav>Очередь</a>
           <a class="btn secondary" href="/queue?status=in_progress" data-nav>Начатые</a>
-          <a class="btn secondary" href="/queue?status=watched" data-nav>Просмотренные</a>
-          <a class="btn ghost" href="/channels" data-nav>Каналы</a>
+          <a class="btn ghost" href="/queue?status=watched" data-nav>Просмотренные</a>
         </div>
       </section>
       <div id="rails"></div>`;
@@ -624,11 +640,13 @@
               ? `<a href="/queue?status=watched" data-nav class="muted" style="font-size:13px">Все просмотренные →</a>`
               : rail.id === "music_topic" || rail.id === "music"
                 ? `<a href="/queue?kind=music" data-nav class="muted" style="font-size:13px">Вся музыка →</a>`
-                : rail.id === "shorts"
-                  ? `<a href="/queue?kind=shorts" data-nav class="muted" style="font-size:13px">Все шортсы →</a>`
-                  : rail.id === "queue"
-                    ? `<a href="/queue?status=queue&kind=video" data-nav class="muted" style="font-size:13px">Вся очередь →</a>`
-                    : "";
+                : rail.id === "shortform" || rail.id === "shorts"
+                  ? `<a href="/queue?kind=shortform" data-nav class="muted" style="font-size:13px">Все короткие →</a>`
+                  : rail.id === "marathon"
+                    ? `<a href="/queue?kind=marathon" data-nav class="muted" style="font-size:13px">Все 10+ ч →</a>`
+                    : rail.id === "queue"
+                      ? `<a href="/queue?status=queue&kind=video" data-nav class="muted" style="font-size:13px">Вся очередь →</a>`
+                      : "";
       block.innerHTML = `
         <div class="rail-head"><h2>${escapeHtml(rail.title)}</h2>${more}</div>
         <div class="rail-track"><div class="muted" style="padding:12px">Загрузка…</div></div>`;
@@ -673,8 +691,8 @@
       archived: "Архив",
     }[status] || "Очередь";
     const statusHint = {
-      queue: "То, что ещё не начал. Клипы и шортсы — отдельными вкладками ниже.",
-      in_progress: "Открыл на YouTube или отметил «Начал». Сюда не попадает общий план очереди.",
+      queue: "Только длинные (6 мин – 10 ч). Короткие, клипы и 10+ часов — вкладками ниже. Папки — «Разложить».",
+      in_progress: "Открыл на YouTube или отметил «Начал». Из общей очереди уже убрано.",
       watched: "Уже посмотрел — в очереди этих роликов больше нет.",
       archived: "Скрытые из плана.",
     }[status];
@@ -685,6 +703,7 @@
         <p>${channel
           ? `Видео канала · <a href="/channels" data-nav>все каналы</a>`
           : statusHint}</p>
+        ${!channel && status === "queue" ? `<div class="btn-row" style="margin-top:12px"><a class="btn" href="/organize" data-nav>Разложить по папкам</a></div>` : ""}
       </section>
       <div class="filter-chips" id="status-chips">
         <button type="button" class="chip ${status === "queue" ? "active" : ""}" data-status="queue">Очередь</button>
@@ -692,11 +711,13 @@
         <button type="button" class="chip ${status === "watched" ? "active" : ""}" data-status="watched">Просмотренные</button>
       </div>
       <div class="filter-chips" id="kind-chips">
-        <button type="button" class="chip ${kind === "video" ? "active" : ""}" data-kind="video">Видео</button>
+        <button type="button" class="chip ${kind === "video" ? "active" : ""}" data-kind="video">Видео 6м–10ч</button>
+        <button type="button" class="chip ${kind === "shortform" || kind === "shorts" ? "active" : ""}" data-kind="shortform">До 6 мин</button>
         <button type="button" class="chip ${kind === "music" ? "active" : ""}" data-kind="music">Музыка</button>
-        <button type="button" class="chip ${kind === "shorts" ? "active" : ""}" data-kind="shorts">Шортсы</button>
+        <button type="button" class="chip ${kind === "marathon" ? "active" : ""}" data-kind="marathon">10+ часов</button>
         <button type="button" class="chip ${kind === "all" ? "active" : ""}" data-kind="all">Всё</button>
         <a class="chip" href="/channels" data-nav>Каналы →</a>
+        <a class="chip" href="/organize" data-nav>Разложить →</a>
         ${channel ? `<button type="button" class="chip" id="clear-channel">Сбросить канал</button>` : ""}
       </div>
       <div class="field" style="max-width:420px">
@@ -1240,6 +1261,7 @@
     if (path === "/" || path === "/home") return renderHome();
     if (path === "/queue") return renderQueue();
     if (path === "/channels") return renderChannels();
+    if (path === "/organize") return renderOrganize();
     if (path === "/add") return renderAdd();
     if (path === "/lists") return renderLists();
     if (path === "/tags") return renderTagsPage();

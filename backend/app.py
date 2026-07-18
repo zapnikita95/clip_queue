@@ -488,12 +488,13 @@ def create_app() -> Flask:
         uid = current_user()["user_id"]
         status = (request.args.get("status") or "queue").strip()
         q = (request.args.get("q") or "").strip().lower()
-        kind = (request.args.get("kind") or "video").strip().lower()  # video | music | shorts | all
+        # video = long-form only (6min–10h). Junk buckets: music | shorts | shortform | marathon
+        kind = (request.args.get("kind") or "video").strip().lower()
         channel = (request.args.get("channel") or "").strip()
         limit = min(int(request.args.get("limit") or 60), 200)
         offset = max(int(request.args.get("offset") or 0), 0)
-        # Over-fetch then filter — music/shorts/stubs otherwise fill the page
-        fetch_n = min(2000, max(limit * 20, 240))
+        # Over-fetch then filter — junk buckets otherwise fill the page
+        fetch_n = min(3000, max(limit * 30, 300))
         rows = db.fetchall(
             """
             SELECT v.*, li.status, li.note, li.source, li.saved_at, li.watched_at
@@ -520,6 +521,10 @@ def create_app() -> Flask:
             if kind == "music" and bucket != "music":
                 continue
             if kind == "shorts" and bucket != "shorts":
+                continue
+            if kind in ("shortform", "short") and bucket not in ("shorts", "shortform"):
+                continue
+            if kind == "marathon" and bucket != "marathon":
                 continue
             if channel and (row.get("channel_title") or "").strip() != channel:
                 continue
@@ -789,7 +794,8 @@ def create_app() -> Flask:
                     {"id": "by_duration", "title": "Под сейчас"},
                     {"id": "continue_vibe", "title": "В том же вайбе"},
                     {"id": "music_topic", "title": "Музыка (отдельно)"},
-                    {"id": "shorts", "title": "Шортсы (отдельно)"},
+                    {"id": "shortform", "title": "До 6 минут (шлак)"},
+                    {"id": "marathon", "title": "10+ часов"},
                     {"id": "for_this_hour", "title": "Обычно в это время"},
                 ],
             }
@@ -800,6 +806,8 @@ def create_app() -> Flask:
         *,
         allow_music: bool = False,
         allow_shorts: bool = False,
+        allow_shortform: bool = False,
+        allow_marathon: bool = False,
     ) -> list[dict]:
         out = []
         for row in rows:
@@ -813,7 +821,11 @@ def create_app() -> Flask:
                 continue
             if bucket == "music" and not allow_music:
                 continue
-            if bucket == "shorts" and not allow_shorts:
+            if bucket == "shorts" and not (allow_shorts or allow_shortform):
+                continue
+            if bucket == "shortform" and not allow_shortform:
+                continue
+            if bucket == "marathon" and not allow_marathon:
                 continue
             out.append(row)
         return out
@@ -932,7 +944,7 @@ def create_app() -> Flask:
             rows = _diversify_lib_rows(rows, limit, max_per_channel=3)
             return jsonify({"ok": True, "rail": rail_id, "items": _cards_from_lib_rows(rows)})
 
-        if rail_id == "shorts":
+        if rail_id in ("shorts", "shortform"):
             pool = db.fetchall(
                 """
                 SELECT v.*, li.status, li.saved_at, li.watched_at, li.source
@@ -941,6 +953,31 @@ def create_app() -> Flask:
                 ORDER BY li.saved_at DESC LIMIT ?
                 """,
                 (uid, max(limit * 16, 200)),
+            )
+            want = {"shorts", "shortform"} if rail_id == "shortform" else {"shorts"}
+            rows = [
+                r
+                for r in pool
+                if yt.content_bucket(
+                    r.get("title"),
+                    r.get("channel_title"),
+                    r.get("duration_sec"),
+                    r.get("description"),
+                )
+                in want
+            ]
+            rows = _diversify_lib_rows(rows, limit, max_per_channel=3)
+            return jsonify({"ok": True, "rail": rail_id, "items": _cards_from_lib_rows(rows)})
+
+        if rail_id == "marathon":
+            pool = db.fetchall(
+                """
+                SELECT v.*, li.status, li.saved_at, li.watched_at, li.source
+                FROM library_items li JOIN videos v ON v.video_id = li.video_id
+                WHERE li.user_id = ? AND li.status = 'queue'
+                ORDER BY li.saved_at DESC LIMIT ?
+                """,
+                (uid, max(limit * 10, 80)),
             )
             rows = [
                 r
@@ -951,9 +988,9 @@ def create_app() -> Flask:
                     r.get("duration_sec"),
                     r.get("description"),
                 )
-                == "shorts"
+                == "marathon"
             ]
-            rows = _diversify_lib_rows(rows, limit, max_per_channel=3)
+            rows = _diversify_lib_rows(rows, limit, max_per_channel=2)
             return jsonify({"ok": True, "rail": rail_id, "items": _cards_from_lib_rows(rows)})
 
         if rail_id == "from_playlists":
@@ -1470,6 +1507,7 @@ def create_app() -> Flask:
     @app.get("/lists")
     @app.get("/tags")
     @app.get("/add")
+    @app.get("/organize")
     @app.get("/onboard")
     @app.get("/auth/callback")
     @app.get("/v/<path:rest>")
