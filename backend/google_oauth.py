@@ -24,11 +24,24 @@ SCOPES = [
 ]
 
 
+def client_id() -> str:
+    return (
+        os.environ.get("GOOGLE_CLIENT_ID")
+        or os.environ.get("GOOGLE_OAUTH_CLIENT_ID")
+        or ""
+    ).strip()
+
+
+def client_secret() -> str:
+    return (
+        os.environ.get("GOOGLE_CLIENT_SECRET")
+        or os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET")
+        or ""
+    ).strip()
+
+
 def configured() -> bool:
-    return bool(
-        (os.environ.get("GOOGLE_CLIENT_ID") or "").strip()
-        and (os.environ.get("GOOGLE_CLIENT_SECRET") or "").strip()
-    )
+    return bool(client_id() and client_secret())
 
 
 def public_origin() -> str:
@@ -59,7 +72,7 @@ def start_url(state: Optional[str] = None) -> str:
             (st, expires),
         )
     params = {
-        "client_id": os.environ["GOOGLE_CLIENT_ID"].strip(),
+        "client_id": client_id(),
         "redirect_uri": redirect_uri(),
         "response_type": "code",
         "scope": " ".join(SCOPES),
@@ -89,8 +102,8 @@ def exchange_code(code: str) -> dict[str, Any]:
         TOKEN_URL,
         data={
             "code": code,
-            "client_id": os.environ["GOOGLE_CLIENT_ID"].strip(),
-            "client_secret": os.environ["GOOGLE_CLIENT_SECRET"].strip(),
+            "client_id": client_id(),
+            "client_secret": client_secret(),
             "redirect_uri": redirect_uri(),
             "grant_type": "authorization_code",
         },
@@ -105,8 +118,8 @@ def refresh_access_token(refresh_token: str) -> dict[str, Any]:
     r = requests.post(
         TOKEN_URL,
         data={
-            "client_id": os.environ["GOOGLE_CLIENT_ID"].strip(),
-            "client_secret": os.environ["GOOGLE_CLIENT_SECRET"].strip(),
+            "client_id": client_id(),
+            "client_secret": client_secret(),
             "refresh_token": refresh_token,
             "grant_type": "refresh_token",
         },
