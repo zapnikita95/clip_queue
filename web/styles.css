@@ -293,6 +293,35 @@ button { cursor: pointer; }
   border: 1px solid rgba(255, 59, 48, 0.3);
   font-size: 12px;
   margin: 0 6px 6px 0;
+  color: var(--text);
+}
+.tag-pill-sm { font-size: 11px; padding: 3px 8px; margin: 6px 4px 0 0; }
+.tag-pill-lg { font-size: 14px; padding: 8px 12px; }
+.tag-pill-btn {
+  cursor: pointer;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid var(--border);
+  font: inherit;
+}
+.tag-pill-btn:hover { border-color: rgba(255, 59, 48, 0.45); }
+.tag-pill-on {
+  background: var(--accent-soft);
+  border-color: rgba(255, 59, 48, 0.5);
+}
+.tag-x {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  padding: 0 0 0 4px;
+}
+.tags-cloud, .tags-row, .card-tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
 }
 
 .empty {

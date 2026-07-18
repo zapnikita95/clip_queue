@@ -45,8 +45,22 @@
       .replace(/"/g, "&quot;");
   }
 
+  function tagPillsHtml(tags, { removable = false, videoId = "" } = {}) {
+    if (!tags?.length) return `<span class="muted" style="font-size:13px">Тегов пока нет</span>`;
+    return tags.map((t) => {
+      const label = `${t.emoji ? t.emoji + " " : ""}${t.name}`;
+      if (removable && videoId) {
+        return `<button type="button" class="tag-pill tag-pill-btn" data-untag="${t.id}" title="Снять тег">${escapeHtml(label)} ×</button>`;
+      }
+      return `<span class="tag-pill">${escapeHtml(label)}</span>`;
+    }).join("");
+  }
+
   function cardHtml(item) {
     const dur = item.duration_label ? `<span class="badge">${escapeHtml(item.duration_label)}</span>` : "";
+    const pills = (item.user_tags || []).slice(0, 3).map((t) =>
+      `<span class="tag-pill tag-pill-sm">${escapeHtml((t.emoji || "") + " " + t.name)}</span>`
+    ).join("");
     return `
       <a class="card" href="/v/${encodeURIComponent(item.video_id)}" data-nav>
         <div class="card-thumb">
@@ -56,6 +70,7 @@
         <div class="card-body">
           <h3 class="card-title">${escapeHtml(item.title)}</h3>
           <div class="card-meta">${escapeHtml(item.channel_title || "YouTube")}</div>
+          ${pills ? `<div class="card-tags">${pills}</div>` : ""}
         </div>
       </a>`;
   }
@@ -76,6 +91,7 @@
           <button class="nav-btn ${active === "queue" ? "active" : ""}" data-route="/queue">Очередь</button>
           <button class="nav-btn ${active === "add" ? "active" : ""}" data-route="/add">Добавить</button>
           <button class="nav-btn ${active === "lists" ? "active" : ""}" data-route="/lists">Списки</button>
+          <button class="nav-btn ${active === "tags" ? "active" : ""}" data-route="/tags">Теги</button>
           <button class="nav-btn ${active === "onboard" ? "active" : ""}" data-route="/onboard">YouTube</button>
           <button class="nav-btn" id="logout-btn" title="${escapeHtml(name)}">Выйти</button>
         </nav>
@@ -530,16 +546,84 @@
     });
   }
 
+  async function renderTagsPage() {
+    let data = await api("/api/tags");
+    if (!(data.tags || []).length) {
+      data = await api("/api/tags/seed-defaults", { method: "POST", body: "{}" });
+      toast(`Созданы базовые теги: ${data.created}`);
+    }
+    app.innerHTML = `
+      ${topbar("tags")}
+      <section class="hero">
+        <h1>Теги</h1>
+        <p>Создай заранее — потом на видео просто тыкаешь готовый тег.</p>
+      </section>
+      <div class="panel" style="margin-bottom:16px">
+        <div class="field">
+          <label>Новый тег</label>
+          <div class="btn-row">
+            <input id="tag-emoji" placeholder="🍳" style="width:64px" maxlength="4" />
+            <input id="tag-name" placeholder="название" style="flex:1" />
+            <button class="btn" id="create-tag">Создать</button>
+          </div>
+        </div>
+        <button class="btn ghost" id="seed-tags">Добавить базовый набор</button>
+      </div>
+      <div id="tags-cloud" class="tags-cloud">
+        ${(data.tags || []).map((t) => `
+          <span class="tag-pill tag-pill-lg">
+            ${escapeHtml((t.emoji || "") + " " + t.name)}
+            <button type="button" class="tag-x" data-del-tag="${t.id}" title="Удалить">×</button>
+          </span>`).join("") || `<div class="empty">Тегов нет</div>`}
+      </div>`;
+    wireNav();
+    $("#create-tag").onclick = async () => {
+      const name = $("#tag-name").value.trim();
+      if (!name) return toast("Напиши название");
+      try {
+        await api("/api/tags", {
+          method: "POST",
+          body: JSON.stringify({ name, emoji: $("#tag-emoji").value.trim() }),
+        });
+        toast("Тег создан");
+        renderTagsPage();
+      } catch (e) {
+        toast(e.message);
+      }
+    };
+    $("#seed-tags").onclick = async () => {
+      await api("/api/tags/seed-defaults", { method: "POST", body: "{}" });
+      renderTagsPage();
+    };
+    document.querySelectorAll("[data-del-tag]").forEach((btn) => {
+      btn.onclick = async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        await api(`/api/tags/${btn.getAttribute("data-del-tag")}`, { method: "DELETE" });
+        renderTagsPage();
+      };
+    });
+  }
+
   async function renderVideo(videoId) {
     const data = await api(`/api/videos/${encodeURIComponent(videoId)}`);
     const item = data.item;
+    let allTags = { tags: [] };
+    try { allTags = await api("/api/tags"); } catch (_) {}
+    if (!(allTags.tags || []).length) {
+      try { allTags = await api("/api/tags/seed-defaults", { method: "POST", body: "{}" }); } catch (_) {}
+    }
     let similar = { items: [] };
     try {
       similar = await api(`/api/videos/${encodeURIComponent(videoId)}/similar`);
     } catch (_) {}
-    const tags = (item.user_tags || []).map((t) =>
-      `<span class="tag-pill">${escapeHtml((t.emoji || "") + " " + t.name)}</span>`
-    ).join("");
+    const assignedIds = new Set((item.user_tags || []).map((t) => t.id));
+    const pickHtml = (allTags.tags || []).map((t) => {
+      const on = assignedIds.has(t.id);
+      const label = `${t.emoji ? t.emoji + " " : ""}${t.name}`;
+      return `<button type="button" class="tag-pill tag-pill-btn ${on ? "tag-pill-on" : ""}" data-toggle-tag="${t.id}" data-tag-name="${escapeHtml(t.name)}">${escapeHtml(label)}${on ? " ✓" : ""}</button>`;
+    }).join("");
+
     app.innerHTML = `
       ${topbar("queue")}
       <div class="video-page">
@@ -549,7 +633,9 @@
           </div>
           <h1 style="font-family:var(--display);letter-spacing:-0.03em;margin:16px 0 8px;font-size:1.6rem">${escapeHtml(item.title)}</h1>
           <div class="muted">${escapeHtml(item.channel_title || "")}${item.duration_label ? " · " + escapeHtml(item.duration_label) : ""}</div>
-          <div style="margin-top:12px">${tags}</div>
+          <div id="assigned-tags" class="tags-row" style="margin-top:12px">
+            ${tagPillsHtml(item.user_tags || [], { removable: true, videoId })}
+          </div>
           <p class="muted" style="margin-top:14px;line-height:1.5;white-space:pre-wrap">${escapeHtml((item.description || "").slice(0, 600))}</p>
         </div>
         <div class="panel">
@@ -559,18 +645,25 @@
             <button class="btn ghost" id="back-queue">Вернуть в очередь</button>
             <button class="btn ghost" id="delete-item">Убрать из библиотеки</button>
           </div>
-          <div class="field" style="margin-top:16px">
-            <label>Тег</label>
-            <input id="new-tag" placeholder="вайб / тема" />
+          <h3 style="margin:18px 0 8px;font-size:15px">Теги</h3>
+          <div id="tag-picker" class="tags-cloud">${pickHtml || `<span class="muted">Сначала создай теги на вкладке «Теги»</span>`}</div>
+          <div class="field" style="margin-top:12px">
+            <label>Или новый тег</label>
+            <div class="btn-row">
+              <input id="new-tag" placeholder="название" style="flex:1" />
+              <button class="btn secondary" id="add-tag">Создать и повесить</button>
+            </div>
           </div>
-          <button class="btn secondary" id="add-tag">Повесить тег</button>
+          <button class="btn ghost" id="ai-tag" style="margin-top:8px;width:100%">Подсказать тему (AI)</button>
+          <pre id="ai-out" class="muted" style="white-space:pre-wrap;font-size:12px;margin-top:8px"></pre>
           <div class="field" style="margin-top:16px">
-            <label>В список (id)</label>
+            <label>В список</label>
             <div class="btn-row">
               <select id="list-select" style="flex:1;border-radius:12px;padding:10px;background:var(--bg-elev-2);color:var(--text);border:1px solid var(--border)"></select>
               <button class="btn secondary" id="add-to-list">Добавить</button>
             </div>
           </div>
+          <a class="muted" href="/tags" data-nav style="display:inline-block;margin-top:10px;font-size:13px">Управлять тегами →</a>
         </div>
       </div>
       <section class="rail" style="margin-top:28px">
@@ -585,6 +678,66 @@
     sel.innerHTML = (lists.lists || []).map((l) =>
       `<option value="${l.id}">${escapeHtml(l.title)}</option>`
     ).join("") || `<option value="">Нет списков</option>`;
+
+    const refreshTags = (nextItem) => {
+      const box = $("#assigned-tags");
+      if (box) box.innerHTML = tagPillsHtml(nextItem.user_tags || [], { removable: true, videoId });
+      wireUntag();
+      // refresh picker state without full reload
+      const ids = new Set((nextItem.user_tags || []).map((t) => t.id));
+      document.querySelectorAll("[data-toggle-tag]").forEach((btn) => {
+        const id = Number(btn.getAttribute("data-toggle-tag"));
+        const on = ids.has(id);
+        btn.classList.toggle("tag-pill-on", on);
+        const name = btn.getAttribute("data-tag-name") || "";
+        btn.textContent = on ? `${name} ✓` : name;
+      });
+    };
+
+    function wireUntag() {
+      document.querySelectorAll("[data-untag]").forEach((btn) => {
+        btn.onclick = async (e) => {
+          e.preventDefault();
+          try {
+            const r = await api(
+              `/api/videos/${encodeURIComponent(videoId)}/tags/${btn.getAttribute("data-untag")}`,
+              { method: "DELETE" }
+            );
+            refreshTags(r.item || { user_tags: [] });
+            toast("Тег снят");
+          } catch (err) {
+            toast(err.message);
+          }
+        };
+      });
+    }
+    wireUntag();
+
+    document.querySelectorAll("[data-toggle-tag]").forEach((btn) => {
+      btn.onclick = async () => {
+        const tagId = Number(btn.getAttribute("data-toggle-tag"));
+        const name = btn.getAttribute("data-tag-name");
+        const on = btn.classList.contains("tag-pill-on");
+        try {
+          if (on) {
+            const r = await api(
+              `/api/videos/${encodeURIComponent(videoId)}/tags/${tagId}`,
+              { method: "DELETE" }
+            );
+            refreshTags(r.item || { user_tags: [] });
+          } else {
+            const r = await api(`/api/videos/${encodeURIComponent(videoId)}/tags`, {
+              method: "POST",
+              body: JSON.stringify({ tag_id: tagId, name }),
+            });
+            refreshTags(r.item || { user_tags: r.user_tags || [] });
+            toast(`Тег: ${name}`);
+          }
+        } catch (err) {
+          toast(err.message);
+        }
+      };
+    });
 
     $("#open-yt").onclick = async () => {
       try {
@@ -620,12 +773,34 @@
     };
     $("#add-tag").onclick = async () => {
       const name = $("#new-tag").value.trim();
-      if (!name) return;
-      await api(`/api/videos/${encodeURIComponent(videoId)}/tags`, {
-        method: "POST",
-        body: JSON.stringify({ name }),
-      });
-      renderVideo(videoId);
+      if (!name) return toast("Напиши тег");
+      try {
+        // create predefined + assign
+        await api("/api/tags", { method: "POST", body: JSON.stringify({ name }) });
+        const r = await api(`/api/videos/${encodeURIComponent(videoId)}/tags`, {
+          method: "POST",
+          body: JSON.stringify({ name }),
+        });
+        toast(`Тег «${name}»`);
+        renderVideo(videoId);
+      } catch (e) {
+        toast(e.message);
+      }
+    };
+    $("#ai-tag").onclick = async () => {
+      $("#ai-out").textContent = "Думаю…";
+      try {
+        const r = await api(`/api/videos/${encodeURIComponent(videoId)}/suggest-themes`, {
+          method: "POST",
+          body: JSON.stringify({ apply: true }),
+        });
+        $("#ai-out").textContent = JSON.stringify(r.suggestion, null, 2);
+        toast(r.suggestion?.tags?.length ? `Теги: ${r.suggestion.tags.join(", ")}` : "Готово");
+        renderVideo(videoId);
+      } catch (e) {
+        $("#ai-out").textContent = e.message;
+        toast(e.message);
+      }
     };
     $("#add-to-list").onclick = async () => {
       const listId = sel.value;
@@ -656,6 +831,7 @@
     if (path === "/queue") return renderQueue();
     if (path === "/add") return renderAdd();
     if (path === "/lists") return renderLists();
+    if (path === "/tags") return renderTagsPage();
     if (path === "/onboard") return renderOnboard();
     if (path === "/login") return renderLogin();
     const m = path.match(/^\/v\/([^/]+)/);

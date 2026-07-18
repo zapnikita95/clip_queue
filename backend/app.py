@@ -11,7 +11,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from flask import Flask, g, jsonify, redirect, request, send_from_directory
 
-from backend import auth, db, google_oauth, organize, takeout, yt_sync
+from backend import auth, db, google_oauth, llm, organize, takeout, yt_sync
 from backend import similarity as sim
 from backend import youtube as yt
 
@@ -55,6 +55,7 @@ def create_app() -> Flask:
                 "version": "0.2.0",
                 "db": "postgres" if db.is_postgres() else "sqlite",
                 "google_oauth": google_oauth.configured(),
+                "llm": llm.available(),
             }
         )
 
@@ -372,7 +373,10 @@ def create_app() -> Flask:
             },
         )
 
-    def _ensure_tag_on_item(uid: int, video_id: str, name: str) -> None:
+    def _ensure_tag_on_item(uid: int, video_id: str, name: str, emoji: str = "") -> dict:
+        name = (name or "").strip()[:60]
+        if not name:
+            raise ValueError("Пустой тег")
         tag = db.fetchone(
             "SELECT * FROM user_tags WHERE user_id = ? AND name = ?",
             (uid, name),
@@ -380,24 +384,21 @@ def create_app() -> Flask:
         if not tag:
             if db.is_postgres():
                 with db.connect() as conn:
-                    with conn.cursor() as cur:
-                        cur.execute(
-                            "INSERT INTO user_tags (user_id, name) VALUES (%s, %s) RETURNING id",
-                            (uid, name),
-                        )
-                        tag_id = cur.fetchone()[0]
+                    cur = conn.execute(
+                        "INSERT INTO user_tags (user_id, name, emoji) VALUES (%s, %s, %s) RETURNING id, name, emoji, color",
+                        (uid, name, (emoji or "")[:8]),
+                    )
+                    tag = dict(cur.fetchone())
             else:
                 db.execute(
-                    "INSERT INTO user_tags (user_id, name) VALUES (?, ?)",
-                    (uid, name),
+                    "INSERT INTO user_tags (user_id, name, emoji) VALUES (?, ?, ?)",
+                    (uid, name, (emoji or "")[:8]),
                 )
                 tag = db.fetchone(
                     "SELECT * FROM user_tags WHERE user_id = ? AND name = ?",
                     (uid, name),
                 )
-                tag_id = int(tag["id"])
-        else:
-            tag_id = int(tag["id"])
+        tag_id = int(tag["id"])
         db.execute(
             "INSERT INTO item_tags (user_id, video_id, tag_id) VALUES (?, ?, ?) "
             + (
@@ -407,6 +408,12 @@ def create_app() -> Flask:
             ),
             (uid, video_id, tag_id),
         )
+        return {
+            "id": tag_id,
+            "name": tag.get("name") or name,
+            "emoji": tag.get("emoji") or "",
+            "color": tag.get("color") or "#ff3b30",
+        }
 
     def _add_to_list(uid: int, list_id: int, video_id: str) -> None:
         lst = db.fetchone(
@@ -446,6 +453,15 @@ def create_app() -> Flask:
         )
         items = []
         for row in rows:
+            tags = db.fetchall(
+                """
+                SELECT t.id, t.name, t.emoji, t.color
+                FROM item_tags it
+                JOIN user_tags t ON t.id = it.tag_id
+                WHERE it.user_id = ? AND it.video_id = ?
+                """,
+                (uid, row["video_id"]),
+            )
             card = yt.card_from_video_row(
                 row,
                 {
@@ -454,6 +470,7 @@ def create_app() -> Flask:
                     "source": row.get("source"),
                     "saved_at": str(row.get("saved_at") or ""),
                     "watched_at": str(row.get("watched_at") or "") or None,
+                    "user_tags": tags,
                 },
             )
             if q:
@@ -936,6 +953,19 @@ def create_app() -> Flask:
         _add_to_list(uid, list_id, video_id)
         return jsonify({"ok": True})
 
+    DEFAULT_TAGS = [
+        ("готовка", "🍳"),
+        ("музыка", "🎵"),
+        ("обучение", "📚"),
+        ("обзоры", "🔎"),
+        ("игры", "🎮"),
+        ("новости", "📰"),
+        ("подкаст", "🎙"),
+        ("юмор", "😂"),
+        ("спорт", "⚽️"),
+        ("кино", "🎬"),
+    ]
+
     @app.get("/api/tags")
     @require_auth
     def get_tags():
@@ -944,7 +974,7 @@ def create_app() -> Flask:
             "SELECT * FROM user_tags WHERE user_id = ? ORDER BY name",
             (uid,),
         )
-        return jsonify({"ok": True, "tags": rows})
+        return jsonify({"ok": True, "tags": rows, "llm": llm.available()})
 
     @app.post("/api/tags")
     @require_auth
@@ -955,18 +985,67 @@ def create_app() -> Flask:
         if not name:
             return json_error("Нужно имя тега")
         emoji = (body.get("emoji") or "").strip()[:8]
-        try:
+        existing = db.fetchone(
+            "SELECT * FROM user_tags WHERE user_id = ? AND name = ?",
+            (uid, name),
+        )
+        if existing:
+            return jsonify({"ok": True, "tag": existing, "created": False})
+        if db.is_postgres():
+            with db.connect() as conn:
+                cur = conn.execute(
+                    "INSERT INTO user_tags (user_id, name, emoji) VALUES (%s, %s, %s) "
+                    "RETURNING id, user_id, name, emoji, color",
+                    (uid, name, emoji),
+                )
+                row = dict(cur.fetchone())
+        else:
             db.execute(
                 "INSERT INTO user_tags (user_id, name, emoji) VALUES (?, ?, ?)",
                 (uid, name, emoji),
             )
-        except Exception:
-            pass
-        row = db.fetchone(
-            "SELECT * FROM user_tags WHERE user_id = ? AND name = ?",
-            (uid, name),
+            row = db.fetchone(
+                "SELECT * FROM user_tags WHERE user_id = ? AND name = ?",
+                (uid, name),
+            )
+        return jsonify({"ok": True, "tag": row, "created": True})
+
+    @app.post("/api/tags/seed-defaults")
+    @require_auth
+    def seed_default_tags():
+        uid = current_user()["user_id"]
+        created = 0
+        for name, emoji in DEFAULT_TAGS:
+            exists = db.fetchone(
+                "SELECT id FROM user_tags WHERE user_id = ? AND name = ?",
+                (uid, name),
+            )
+            if exists:
+                continue
+            db.execute(
+                "INSERT INTO user_tags (user_id, name, emoji) VALUES (?, ?, ?)",
+                (uid, name, emoji),
+            )
+            created += 1
+        rows = db.fetchall(
+            "SELECT * FROM user_tags WHERE user_id = ? ORDER BY name",
+            (uid,),
         )
-        return jsonify({"ok": True, "tag": row})
+        return jsonify({"ok": True, "created": created, "tags": rows})
+
+    @app.delete("/api/tags/<int:tag_id>")
+    @require_auth
+    def delete_tag(tag_id: int):
+        uid = current_user()["user_id"]
+        row = db.fetchone(
+            "SELECT * FROM user_tags WHERE id = ? AND user_id = ?",
+            (tag_id, uid),
+        )
+        if not row:
+            return json_error("Тег не найден", 404)
+        db.execute("DELETE FROM item_tags WHERE user_id = ? AND tag_id = ?", (uid, tag_id))
+        db.execute("DELETE FROM user_tags WHERE id = ? AND user_id = ?", (tag_id, uid))
+        return jsonify({"ok": True})
 
     @app.post("/api/videos/<video_id>/tags")
     @require_auth
@@ -974,10 +1053,108 @@ def create_app() -> Flask:
         uid = current_user()["user_id"]
         body = request.get_json(silent=True) or {}
         name = (body.get("name") or "").strip()
+        tag_id = body.get("tag_id")
+        if tag_id and not name:
+            tag = db.fetchone(
+                "SELECT * FROM user_tags WHERE id = ? AND user_id = ?",
+                (int(tag_id), uid),
+            )
+            if not tag:
+                return json_error("Тег не найден", 404)
+            name = tag["name"]
         if not name:
             return json_error("Нужен тег")
-        _ensure_tag_on_item(uid, video_id, name)
+        # video must be in library
+        if not db.fetchone(
+            "SELECT video_id FROM library_items WHERE user_id = ? AND video_id = ?",
+            (uid, video_id),
+        ):
+            return json_error("Сначала добавь видео в библиотеку", 400)
+        try:
+            tag = _ensure_tag_on_item(uid, video_id, name, emoji=(body.get("emoji") or ""))
+        except ValueError as e:
+            return json_error(str(e), 400)
+        item = _library_card(uid, video_id)
+        return jsonify({"ok": True, "tag": tag, "item": item, "user_tags": (item or {}).get("user_tags")})
+
+    @app.delete("/api/videos/<video_id>/tags/<int:tag_id>")
+    @require_auth
+    def untag_video(video_id: str, tag_id: int):
+        uid = current_user()["user_id"]
+        db.execute(
+            "DELETE FROM item_tags WHERE user_id = ? AND video_id = ? AND tag_id = ?",
+            (uid, video_id, tag_id),
+        )
         return jsonify({"ok": True, "item": _library_card(uid, video_id)})
+
+    @app.post("/api/videos/<video_id>/suggest-themes")
+    @require_auth
+    def suggest_themes(video_id: str):
+        uid = current_user()["user_id"]
+        row = db.fetchone("SELECT * FROM videos WHERE video_id = ?", (video_id,))
+        if not row:
+            return json_error("Нет видео", 404)
+        tags = db.fetchall(
+            "SELECT name FROM user_tags WHERE user_id = ? ORDER BY name",
+            (uid,),
+        )
+        lists = db.fetchall(
+            "SELECT title FROM lists WHERE user_id = ? ORDER BY title",
+            (uid,),
+        )
+        suggestion = llm.suggest_video_themes(
+            title=row.get("title") or "",
+            channel=row.get("channel_title") or "",
+            description=row.get("description") or "",
+            existing_tags=[t["name"] for t in tags],
+            existing_lists=[l["title"] for l in lists],
+        )
+        apply = bool((request.get_json(silent=True) or {}).get("apply"))
+        applied = {"tags": [], "list_id": None}
+        if apply:
+            for name in suggestion.get("tags") or []:
+                try:
+                    applied["tags"].append(
+                        _ensure_tag_on_item(uid, video_id, name)
+                    )
+                except Exception:
+                    pass
+            list_title = suggestion.get("list_title")
+            if list_title:
+                existing = db.fetchone(
+                    "SELECT id FROM lists WHERE user_id = ? AND title = ?",
+                    (uid, list_title),
+                )
+                if existing:
+                    list_id = int(existing["id"])
+                elif db.is_postgres():
+                    with db.connect() as conn:
+                        cur = conn.execute(
+                            "INSERT INTO lists (user_id, title) VALUES (%s, %s) RETURNING id",
+                            (uid, list_title),
+                        )
+                        list_id = int(cur.fetchone()["id"])
+                else:
+                    db.execute(
+                        "INSERT INTO lists (user_id, title) VALUES (?, ?)",
+                        (uid, list_title),
+                    )
+                    list_id = int(
+                        db.fetchone(
+                            "SELECT id FROM lists WHERE user_id = ? AND title = ?",
+                            (uid, list_title),
+                        )["id"]
+                    )
+                _add_to_list(uid, list_id, video_id)
+                applied["list_id"] = list_id
+        return jsonify(
+            {
+                "ok": True,
+                "suggestion": suggestion,
+                "applied": applied if apply else None,
+                "item": _library_card(uid, video_id),
+            }
+        )
 
     # ----- Static SPA -----
 
@@ -985,6 +1162,7 @@ def create_app() -> Flask:
     @app.get("/home")
     @app.get("/queue")
     @app.get("/lists")
+    @app.get("/tags")
     @app.get("/add")
     @app.get("/onboard")
     @app.get("/auth/callback")

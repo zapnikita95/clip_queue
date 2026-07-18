@@ -3,14 +3,11 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 from collections import Counter, defaultdict
 from typing import Any
 
-import requests
-
-from backend import db
+from backend import db, llm
 
 _TOKEN = re.compile(r"[a-zA-Zа-яА-ЯёЁ0-9]{3,}", re.UNICODE)
 
@@ -138,8 +135,7 @@ def heuristic_propose(user_id: int) -> dict[str, Any]:
 
 
 def llm_propose(user_id: int) -> dict[str, Any] | None:
-    key = (os.environ.get("OPENAI_API_KEY") or "").strip()
-    if not key:
+    if not llm.available():
         return None
     rows = _library_snapshot(user_id, limit=120)
     if len(rows) < 3:
@@ -154,65 +150,38 @@ def llm_propose(user_id: int) -> dict[str, Any] | None:
         }
         for r in rows
     ]
-    prompt = {
-        "role": "user",
-        "content": (
-            "Ты помогаешь разобрать личную библиотеку YouTube-видео пользователя. "
-            "Предложи 6–12 папок (списков). Не выдумывай video id — только из списка. "
-            "Ответ строго JSON: {\"summary\": string, \"folders\": [{\"title\", \"reason\", \"video_ids\": []}]}.\n\n"
-            + json.dumps(compact, ensure_ascii=False)
+    data = llm.chat_json(
+        system=(
+            "Ты помогаешь разобрать личную библиотеку YouTube-видео. "
+            "Ответ JSON: {\"summary\": string, \"folders\": [{\"title\", \"reason\", \"video_ids\": []}]}. "
+            "6–12 папок. video_ids только из входного списка."
         ),
-    }
-    model = (os.environ.get("OPENAI_MODEL") or "gpt-4o-mini").strip()
-    try:
-        r = requests.post(
-            (os.environ.get("OPENAI_BASE_URL") or "https://api.openai.com/v1").rstrip("/")
-            + "/chat/completions",
-            headers={
-                "Authorization": f"Bearer {key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": model,
-                "temperature": 0.3,
-                "response_format": {"type": "json_object"},
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": "Отвечай только валидным JSON без markdown.",
-                    },
-                    prompt,
-                ],
-            },
-            timeout=60,
-        )
-        if r.status_code != 200:
-            return None
-        content = (((r.json().get("choices") or [{}])[0].get("message") or {}).get("content")) or "{}"
-        data = json.loads(content)
-        valid_ids = {x["id"] for x in compact}
-        folders = []
-        for f in data.get("folders") or []:
-            vids = [v for v in (f.get("video_ids") or []) if v in valid_ids]
-            if not vids:
-                continue
-            folders.append(
-                {
-                    "title": str(f.get("title") or "Папка")[:120],
-                    "reason": str(f.get("reason") or "")[:300],
-                    "video_ids": vids[:50],
-                }
-            )
-        return {
-            "engine": "llm",
-            "summary": str(data.get("summary") or "")[:800],
-            "folders": folders[:16],
-            "limitations": [
-                "Нет официального доступа к Watch Later и Continue Watching",
-            ],
-        }
-    except Exception:
+        user=json.dumps(compact, ensure_ascii=False),
+        temperature=0.3,
+    )
+    if not data:
         return None
+    valid_ids = {x["id"] for x in compact}
+    folders = []
+    for f in data.get("folders") or []:
+        vids = [v for v in (f.get("video_ids") or []) if v in valid_ids]
+        if not vids:
+            continue
+        folders.append(
+            {
+                "title": str(f.get("title") or "Папка")[:120],
+                "reason": str(f.get("reason") or "")[:300],
+                "video_ids": vids[:50],
+            }
+        )
+    return {
+        "engine": "llm",
+        "summary": str(data.get("summary") or "")[:800],
+        "folders": folders[:16],
+        "limitations": [
+            "Нет официального доступа к Watch Later и Continue Watching",
+        ],
+    }
 
 
 def propose_structure(user_id: int) -> dict[str, Any]:
