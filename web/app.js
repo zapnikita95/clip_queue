@@ -76,6 +76,7 @@
           <button class="nav-btn ${active === "queue" ? "active" : ""}" data-route="/queue">Очередь</button>
           <button class="nav-btn ${active === "add" ? "active" : ""}" data-route="/add">Добавить</button>
           <button class="nav-btn ${active === "lists" ? "active" : ""}" data-route="/lists">Списки</button>
+          <button class="nav-btn ${active === "onboard" ? "active" : ""}" data-route="/onboard">YouTube</button>
           <button class="nav-btn" id="logout-btn" title="${escapeHtml(name)}">Выйти</button>
         </nav>
       </header>`;
@@ -123,42 +124,52 @@
   }
 
   async function renderLogin() {
+    const status = await fetch("/api/auth/google/status").then((r) => r.json()).catch(() => ({}));
+    const err = new URL(location.href).searchParams.get("error");
     app.innerHTML = `
       <div class="login-wrap">
-        <div class="panel" style="width:min(420px,100%)">
+        <div class="panel" style="width:min(460px,100%)">
           <h2>Clip Queue</h2>
-          <p class="hint">Сохраняй YouTube-видео в свою очередь — и разбирайся среди своих интересов, а не в ленте.</p>
-          <div class="field">
-            <label>Email</label>
-            <input id="email" type="email" placeholder="you@mail.com" autocomplete="email" />
-          </div>
-          <div class="field hidden" id="code-field">
-            <label>Код из письма / логов сервера</label>
-            <input id="code" inputmode="numeric" placeholder="123456" />
-          </div>
-          <div class="btn-row">
-            <button class="btn" id="send-code">Получить код</button>
-            <button class="btn secondary hidden" id="verify-code">Войти</button>
+          <p class="hint">Войди через Google — подтянем лайки, плейлисты и подписки с YouTube. Дальше разложим по папкам.</p>
+          ${err ? `<p class="hint" style="color:#ff8a80">Ошибка входа: ${escapeHtml(err)}</p>` : ""}
+          <div class="btn-row" style="flex-direction:column;align-items:stretch">
+            ${status.configured
+              ? `<a class="btn" href="/api/auth/google/start" style="text-align:center">Войти через Google / YouTube</a>`
+              : `<div class="empty">Google OAuth ещё не настроен (GOOGLE_CLIENT_ID / SECRET на сервере). Пока можно dev-вход.</div>`}
             <button class="btn ghost" id="dev-login">Быстрый вход (dev)</button>
           </div>
-          <p class="sister">Сестра <a href="https://movie-planner.ru" target="_blank" rel="noopener">Movie Planner</a> — отдельный сервис, отдельные аккаунты.</p>
+          <details style="margin-top:18px">
+            <summary class="muted" style="cursor:pointer">Вход по email (запасной)</summary>
+            <div style="margin-top:12px">
+              <div class="field">
+                <label>Email</label>
+                <input id="email" type="email" placeholder="you@mail.com" autocomplete="email" />
+              </div>
+              <div class="field hidden" id="code-field">
+                <label>Код</label>
+                <input id="code" inputmode="numeric" placeholder="123456" />
+              </div>
+              <div class="btn-row">
+                <button class="btn secondary" id="send-code">Получить код</button>
+                <button class="btn secondary hidden" id="verify-code">Войти</button>
+              </div>
+            </div>
+          </details>
+          <p class="sister">Сестра <a href="https://movie-planner.ru" target="_blank" rel="noopener">Movie Planner</a>. Watch Later/историю Google API не отдаёт — для истории есть Takeout на экране онбординга.</p>
         </div>
       </div>`;
     $("#send-code").onclick = async () => {
-      const email = $("#email").value.trim();
       try {
         const data = await api("/api/auth/magic-link", {
           method: "POST",
-          body: JSON.stringify({ email }),
+          body: JSON.stringify({ email: $("#email").value.trim() }),
         });
         $("#code-field").classList.remove("hidden");
         $("#verify-code").classList.remove("hidden");
         if (data.dev_code) {
           $("#code").value = data.dev_code;
           toast(`Dev-код: ${data.dev_code}`);
-        } else {
-          toast("Код создан — смотри логи сервера");
-        }
+        } else toast("Код в логах сервера");
       } catch (e) {
         toast(e.message);
       }
@@ -174,8 +185,7 @@
         });
         setToken(data.token);
         me = data.user;
-        toast("Вошли");
-        navigate("/home");
+        navigate("/onboard");
       } catch (e) {
         toast(e.message);
       }
@@ -185,7 +195,123 @@
         const data = await api("/api/auth/dev-login", { method: "POST", body: "{}" });
         setToken(data.token);
         me = data.user;
-        navigate("/home");
+        navigate("/onboard");
+      } catch (e) {
+        toast(e.message);
+      }
+    };
+  }
+
+  async function renderAuthCallback() {
+    const t = new URL(location.href).searchParams.get("token");
+    if (!t) {
+      toast("Нет токена");
+      return navigate("/login", true);
+    }
+    setToken(t);
+    await ensureAuth();
+    toast("Google подключён");
+    navigate("/onboard", true);
+  }
+
+  async function renderOnboard() {
+    const meData = await api("/api/me");
+    app.innerHTML = `
+      ${topbar("onboard")}
+      <section class="hero">
+        <h1>Подтянуть YouTube</h1>
+        <p>Сначала синк того, что Google отдаёт официально. Потом — опционально Takeout. В конце предложим структуру папок.</p>
+      </section>
+      <div class="panel" style="margin-bottom:16px">
+        <h2>1. Синк через Google</h2>
+        <p class="hint">Лайки, твои плейлисты, подписки. <b>Watch Later и история через API недоступны</b> — это ограничение Google, не бага.</p>
+        <p class="muted">YouTube: ${meData.youtube_connected ? "подключён" : "не подключён — войди через Google"}</p>
+        <div class="btn-row">
+          <button class="btn" id="sync-yt" ${meData.youtube_connected ? "" : "disabled"}>Синхронизировать</button>
+          ${!meData.youtube_connected && meData.google_oauth_configured
+            ? `<a class="btn secondary" href="/api/auth/google/start">Подключить Google</a>` : ""}
+        </div>
+        <pre id="sync-out" class="muted" style="white-space:pre-wrap;margin-top:12px;font-size:13px"></pre>
+      </div>
+      <div class="panel" style="margin-bottom:16px">
+        <h2>2. История из Google Takeout</h2>
+        <p class="hint">takeout.google.com → YouTube → history → watch-history.json. Залей файл — получим то, что реально смотрел.</p>
+        <input type="file" id="takeout-file" accept=".json,application/json" />
+        <pre id="takeout-out" class="muted" style="white-space:pre-wrap;margin-top:12px;font-size:13px"></pre>
+      </div>
+      <div class="panel">
+        <h2>3. Предложить структуру</h2>
+        <p class="hint">Разложим видео по папкам: темы, каналы, короткие/длинные, очередь vs уже смотрел.</p>
+        <div class="btn-row">
+          <button class="btn" id="propose">Собрать предложение</button>
+          <button class="btn secondary hidden" id="apply-proposal">Создать папки</button>
+          <a class="btn ghost" href="/home" data-nav>На главную</a>
+        </div>
+        <div id="proposal-box" style="margin-top:16px"></div>
+      </div>`;
+    wireNav();
+    let lastProposal = null;
+    $("#sync-yt").onclick = async () => {
+      $("#sync-out").textContent = "Синхронизация…";
+      try {
+        const data = await api("/api/youtube/sync", { method: "POST", body: "{}" });
+        $("#sync-out").textContent = JSON.stringify(data.stats, null, 2);
+        toast("Синк готов");
+      } catch (e) {
+        $("#sync-out").textContent = e.message;
+        toast(e.message);
+      }
+    };
+    $("#takeout-file").onchange = async (ev) => {
+      const file = ev.target.files?.[0];
+      if (!file) return;
+      try {
+        const text = await file.text();
+        const json = JSON.parse(text);
+        $("#takeout-out").textContent = "Импорт…";
+        const data = await api("/api/youtube/takeout", {
+          method: "POST",
+          body: JSON.stringify(json),
+        });
+        $("#takeout-out").textContent = JSON.stringify(data.stats, null, 2);
+        toast("Takeout загружен");
+      } catch (e) {
+        $("#takeout-out").textContent = e.message;
+        toast(e.message);
+      }
+    };
+    $("#propose").onclick = async () => {
+      $("#proposal-box").innerHTML = `<p class="muted">Думаем…</p>`;
+      try {
+        const data = await api("/api/organize/propose", { method: "POST", body: "{}" });
+        lastProposal = data.proposal;
+        const folders = (lastProposal.folders || []).map((f) => `
+          <div style="border:1px solid var(--border);border-radius:12px;padding:12px;margin-bottom:10px">
+            <b>${escapeHtml(f.title)}</b>
+            <div class="muted" style="font-size:13px;margin:4px 0">${escapeHtml(f.reason || "")}</div>
+            <div class="muted" style="font-size:12px">${(f.video_ids || []).length} видео · engine: ${escapeHtml(lastProposal.engine)}</div>
+          </div>`).join("");
+        $("#proposal-box").innerHTML = `
+          <p>${escapeHtml(lastProposal.summary || "")}</p>
+          ${(lastProposal.limitations || []).map((x) => `<div class="muted" style="font-size:12px">• ${escapeHtml(x)}</div>`).join("")}
+          <div style="margin-top:14px">${folders || "<div class='empty'>Мало данных — сначала синк/takeout</div>"}</div>`;
+        $("#apply-proposal").classList.remove("hidden");
+      } catch (e) {
+        $("#proposal-box").innerHTML = `<p class="muted">${escapeHtml(e.message)}</p>`;
+      }
+    };
+    $("#apply-proposal").onclick = async () => {
+      if (!lastProposal) return;
+      try {
+        const data = await api("/api/organize/apply", {
+          method: "POST",
+          body: JSON.stringify({
+            proposal: lastProposal,
+            proposal_id: lastProposal.proposal_id,
+          }),
+        });
+        toast(`Создано списков: ${(data.lists || []).length}`);
+        navigate("/lists");
       } catch (e) {
         toast(e.message);
       }
@@ -520,6 +646,7 @@
 
   async function route() {
     const path = location.pathname;
+    if (path === "/auth/callback") return renderAuthCallback();
     const needAuth = path !== "/login";
     if (needAuth) {
       const ok = await ensureAuth();
@@ -529,6 +656,7 @@
     if (path === "/queue") return renderQueue();
     if (path === "/add") return renderAdd();
     if (path === "/lists") return renderLists();
+    if (path === "/onboard") return renderOnboard();
     if (path === "/login") return renderLogin();
     const m = path.match(/^\/v\/([^/]+)/);
     if (m) return renderVideo(decodeURIComponent(m[1]));

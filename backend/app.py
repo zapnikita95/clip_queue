@@ -9,9 +9,9 @@ from functools import wraps
 from pathlib import Path
 
 from dotenv import load_dotenv
-from flask import Flask, g, jsonify, request, send_from_directory
+from flask import Flask, g, jsonify, redirect, request, send_from_directory
 
-from backend import auth, db
+from backend import auth, db, google_oauth, organize, takeout, yt_sync
 from backend import similarity as sim
 from backend import youtube as yt
 
@@ -52,8 +52,9 @@ def create_app() -> Flask:
             {
                 "ok": True,
                 "service": "clip_queue",
-                "version": "0.1.0",
+                "version": "0.2.0",
                 "db": "postgres" if db.is_postgres() else "sqlite",
+                "google_oauth": google_oauth.configured(),
             }
         )
 
@@ -109,6 +110,8 @@ def create_app() -> Flask:
                     "email": u["email"],
                     "name": u["name"],
                 },
+                "google_oauth_configured": google_oauth.configured(),
+                "youtube_connected": google_oauth.youtube_connected(u["user_id"]),
             }
         )
 
@@ -117,6 +120,94 @@ def create_app() -> Flask:
     def logout():
         auth.destroy_session(current_user()["token"])
         return jsonify({"ok": True})
+
+    @app.get("/api/auth/google/status")
+    def google_status():
+        return jsonify(
+            {
+                "ok": True,
+                "configured": google_oauth.configured(),
+                "redirect_uri": google_oauth.redirect_uri() if google_oauth.configured() else None,
+            }
+        )
+
+    @app.get("/api/auth/google/start")
+    def google_start():
+        try:
+            url = google_oauth.start_url()
+        except Exception as e:
+            return json_error(str(e), 503)
+        return redirect(url)
+
+    @app.get("/api/auth/google/callback")
+    def google_callback():
+        err = request.args.get("error")
+        if err:
+            return redirect(f"/login?error={err}")
+        code = request.args.get("code") or ""
+        state = request.args.get("state") or ""
+        try:
+            session = google_oauth.login_with_code(code, state)
+        except Exception as e:
+            return redirect(f"/login?error={str(e)[:120]}")
+        # SPA picks token from query
+        return redirect(f"/auth/callback?token={session['token']}")
+
+    @app.post("/api/youtube/sync")
+    @require_auth
+    def youtube_sync():
+        uid = current_user()["user_id"]
+        try:
+            stats = yt_sync.sync_youtube_library(uid)
+        except Exception as e:
+            return json_error(str(e), 502)
+        return jsonify({"ok": True, "stats": stats})
+
+    @app.post("/api/youtube/takeout")
+    @require_auth
+    def youtube_takeout():
+        uid = current_user()["user_id"]
+        body = request.get_json(silent=True)
+        if body is None:
+            return json_error("Нужен JSON тела (watch-history)")
+        try:
+            stats = takeout.import_watch_history(uid, body)
+        except ValueError as e:
+            return json_error(str(e), 400)
+        except Exception as e:
+            return json_error(str(e), 500)
+        return jsonify({"ok": True, "stats": stats})
+
+    @app.post("/api/organize/propose")
+    @require_auth
+    def organize_propose():
+        uid = current_user()["user_id"]
+        proposal = organize.propose_structure(uid)
+        return jsonify({"ok": True, "proposal": proposal})
+
+    @app.post("/api/organize/apply")
+    @require_auth
+    def organize_apply():
+        uid = current_user()["user_id"]
+        body = request.get_json(silent=True) or {}
+        proposal = body.get("proposal")
+        if not proposal and body.get("proposal_id"):
+            row = db.fetchone(
+                "SELECT * FROM organize_proposals WHERE id = ? AND user_id = ?",
+                (int(body["proposal_id"]), uid),
+            )
+            if not row:
+                return json_error("Предложение не найдено", 404)
+            proposal = json.loads(row["proposal_json"])
+        if not proposal:
+            return json_error("Нужен proposal")
+        result = organize.apply_proposal(uid, proposal)
+        if body.get("proposal_id"):
+            db.execute(
+                "UPDATE organize_proposals SET applied = 1 WHERE id = ? AND user_id = ?",
+                (int(body["proposal_id"]), uid),
+            )
+        return jsonify(result)
 
     # ----- Videos -----
 
@@ -895,6 +986,8 @@ def create_app() -> Flask:
     @app.get("/queue")
     @app.get("/lists")
     @app.get("/add")
+    @app.get("/onboard")
+    @app.get("/auth/callback")
     @app.get("/v/<path:rest>")
     @app.get("/login")
     def spa(rest: str = ""):

@@ -307,11 +307,103 @@ CREATE INDEX IF NOT EXISTS idx_library_user_status ON library_items(user_id, sta
 CREATE INDEX IF NOT EXISTS idx_watch_events_user ON watch_events(user_id, at);
 """
 
+EXTRA_SQLITE = """
+CREATE TABLE IF NOT EXISTS oauth_states (
+  state TEXT PRIMARY KEY,
+  expires_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS google_tokens (
+  user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  access_token TEXT NOT NULL,
+  refresh_token TEXT NOT NULL DEFAULT '',
+  expires_at TEXT NOT NULL,
+  scope TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS subscriptions (
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  channel_id TEXT NOT NULL,
+  channel_title TEXT NOT NULL DEFAULT '',
+  PRIMARY KEY (user_id, channel_id)
+);
+CREATE TABLE IF NOT EXISTS sync_runs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'ok',
+  stats_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS organize_proposals (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  proposal_json TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  applied INTEGER NOT NULL DEFAULT 0
+);
+"""
+
+EXTRA_PG = """
+CREATE TABLE IF NOT EXISTS oauth_states (
+  state TEXT PRIMARY KEY,
+  expires_at TIMESTAMPTZ NOT NULL
+);
+CREATE TABLE IF NOT EXISTS google_tokens (
+  user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  access_token TEXT NOT NULL,
+  refresh_token TEXT NOT NULL DEFAULT '',
+  expires_at TIMESTAMPTZ NOT NULL,
+  scope TEXT NOT NULL DEFAULT '',
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS subscriptions (
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  channel_id TEXT NOT NULL,
+  channel_title TEXT NOT NULL DEFAULT '',
+  PRIMARY KEY (user_id, channel_id)
+);
+CREATE TABLE IF NOT EXISTS sync_runs (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'ok',
+  stats_json TEXT NOT NULL DEFAULT '{}',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS organize_proposals (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  proposal_json TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  applied INTEGER NOT NULL DEFAULT 0
+);
+"""
+
+
+def _migrate_columns() -> None:
+    alters = [
+        "ALTER TABLE users ADD COLUMN google_sub TEXT",
+    ]
+    for stmt in alters:
+        try:
+            with connect() as conn:
+                conn.execute(stmt)
+        except Exception as e:
+            msg = str(e).lower()
+            if "duplicate" in msg or "already exists" in msg or "exists" in msg:
+                continue
+            # sqlite: "duplicate column name"
+            if "column" in msg and "exists" in msg:
+                continue
+            if "duplicate column" in msg:
+                continue
+
 
 def init_db() -> None:
     """Idempotent. Safe under multi-worker race on first boot."""
     schema = SCHEMA_PG if is_postgres() else SCHEMA_SQLITE
-    for stmt in _statements(schema):
+    extra = EXTRA_PG if is_postgres() else EXTRA_SQLITE
+    for stmt in _statements(schema) + _statements(extra):
         try:
             with connect() as conn:
                 conn.execute(stmt)
@@ -321,3 +413,4 @@ def init_db() -> None:
             if "already exists" in msg or "duplicate key" in msg or "pg_class_relname" in msg:
                 continue
             raise
+    _migrate_columns()
