@@ -322,7 +322,10 @@ def iter_sync_youtube_library(user_id: int) -> Generator[dict[str, Any], None, N
             f"{pi + 1} из {len(work_pls)} · качаю ролики",
         )
         stats["playlists"] += 1
-        items = _iter_playlist_items(access, pl_id, limit=300)
+        # Custom playlists can be large (e.g. WL copy ~800+). Cap via env.
+        pl_limit = int(os.environ.get("YT_PLAYLIST_SYNC_LIMIT", "2000") or 2000)
+        pl_limit = max(300, min(pl_limit, 5000))
+        items = _iter_playlist_items(access, pl_id, limit=pl_limit)
         ids = [x["video_id"] for x in items]
         _enrich_durations(access, ids)
         list_id = _ensure_list(user_id, f"YT: {title}"[:120])
