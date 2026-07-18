@@ -440,7 +440,7 @@
       <div class="panel" style="margin-bottom:16px">
         <h2>1. Что уже в Clip Queue из YouTube</h2>
         <p class="hint">
-          <b>Качаем:</b> лайки, все твои плейлисты, подписки.<br>
+          <b>Качаем:</b> до ~5000 лайков, все твои плейлисты, подписки.<br>
           <b>Не качается через API:</b> системный «Посмотреть позже» / Watch Later и история — запрет Google.<br>
           Если отложка у тебя лежит в своём плейлисте (например <b>Listen later</b>) — она уже в разделе «Списки». История — файлом Takeout ниже.
         </p>
@@ -595,7 +595,7 @@
       ${topbar("home")}
       <section class="hero">
         <h1>Что посмотреть из своего</h1>
-        <p>Видео без YouTube Music. Музыка — отдельной лентой внизу. Каналы — <a href="/channels" data-nav>сюда</a>.</p>
+        <p>В очереди — только нормальные ролики. Клипы и шортсы вынесены отдельно. Каналы — <a href="/channels" data-nav>сюда</a>.</p>
         <div class="stats">
           <div class="stat">В очереди: <b>${shell.counts.queue}</b></div>
           <div class="stat">Посмотрено: <b>${shell.counts.watched}</b></div>
@@ -605,6 +605,7 @@
           <a class="btn" href="/channels" data-nav>Мои каналы</a>
           <a class="btn secondary" href="/queue?kind=video" data-nav>Очередь видео</a>
           <a class="btn ghost" href="/queue?kind=music" data-nav>Музыка</a>
+          <a class="btn ghost" href="/queue?kind=shorts" data-nav>Шортсы</a>
         </div>
       </section>
       <div id="rails"></div>`;
@@ -616,11 +617,13 @@
       const more =
         rail.id === "channels_you_watch"
           ? `<a href="/channels" data-nav class="muted" style="font-size:13px">Все каналы →</a>`
-          : rail.id === "music_topic"
+          : rail.id === "music_topic" || rail.id === "music"
             ? `<a href="/queue?kind=music" data-nav class="muted" style="font-size:13px">Вся музыка →</a>`
-            : rail.id === "queue"
-              ? `<a href="/queue?kind=video" data-nav class="muted" style="font-size:13px">Вся очередь →</a>`
-              : "";
+            : rail.id === "shorts"
+              ? `<a href="/queue?kind=shorts" data-nav class="muted" style="font-size:13px">Все шортсы →</a>`
+              : rail.id === "queue"
+                ? `<a href="/queue?kind=video" data-nav class="muted" style="font-size:13px">Вся очередь →</a>`
+                : "";
       block.innerHTML = `
         <div class="rail-head"><h2>${escapeHtml(rail.title)}</h2>${more}</div>
         <div class="rail-track"><div class="muted" style="padding:12px">Загрузка…</div></div>`;
@@ -660,11 +663,12 @@
         <h1>${channel ? escapeHtml(channel) : "Очередь"}</h1>
         <p>${channel
           ? `Видео канала · <a href="/channels" data-nav>все каналы</a>`
-          : `По умолчанию без YouTube Music. Музыка — отдельной вкладкой.`}</p>
+          : `По умолчанию: без клипов и без шортсов. Они — во вкладках рядом.`}</p>
       </section>
       <div class="filter-chips" id="kind-chips">
         <button type="button" class="chip ${kind === "video" ? "active" : ""}" data-kind="video">Видео</button>
         <button type="button" class="chip ${kind === "music" ? "active" : ""}" data-kind="music">Музыка</button>
+        <button type="button" class="chip ${kind === "shorts" ? "active" : ""}" data-kind="shorts">Шортсы</button>
         <button type="button" class="chip ${kind === "all" ? "active" : ""}" data-kind="all">Всё</button>
         <a class="chip" href="/channels" data-nav>Каналы →</a>
         ${channel ? `<button type="button" class="chip" id="clear-channel">Сбросить канал</button>` : ""}
@@ -716,6 +720,7 @@
       <div class="filter-chips">
         <button type="button" class="chip ${kind === "video" ? "active" : ""}" data-kind="video">Видео</button>
         <button type="button" class="chip ${kind === "music" ? "active" : ""}" data-kind="music">Музыка</button>
+        <button type="button" class="chip ${kind === "shorts" ? "active" : ""}" data-kind="shorts">Шортсы</button>
         <button type="button" class="chip ${kind === "all" ? "active" : ""}" data-kind="all">Всё</button>
       </div>
       <div class="channel-list">

@@ -488,12 +488,12 @@ def create_app() -> Flask:
         uid = current_user()["user_id"]
         status = (request.args.get("status") or "queue").strip()
         q = (request.args.get("q") or "").strip().lower()
-        kind = (request.args.get("kind") or "video").strip().lower()  # video | music | all
+        kind = (request.args.get("kind") or "video").strip().lower()  # video | music | shorts | all
         channel = (request.args.get("channel") or "").strip()
         limit = min(int(request.args.get("limit") or 60), 200)
         offset = max(int(request.args.get("offset") or 0), 0)
-        # Over-fetch then filter — Topic music / stubs otherwise fill the page
-        fetch_n = min(800, max(limit * 12, 120))
+        # Over-fetch then filter — music/shorts/stubs otherwise fill the page
+        fetch_n = min(2000, max(limit * 20, 240))
         rows = db.fetchall(
             """
             SELECT v.*, li.status, li.note, li.source, li.saved_at, li.watched_at
@@ -507,12 +507,19 @@ def create_app() -> Flask:
         )
         items = []
         for row in rows:
-            if yt.is_unavailable_video(row.get("title")):
+            bucket = yt.content_bucket(
+                row.get("title"),
+                row.get("channel_title"),
+                row.get("duration_sec"),
+                row.get("description"),
+            )
+            if bucket == "unavailable":
                 continue
-            is_music = yt.is_music_topic_channel(row.get("channel_title"))
-            if kind == "video" and is_music:
+            if kind == "video" and bucket != "video":
                 continue
-            if kind == "music" and not is_music:
+            if kind == "music" and bucket != "music":
+                continue
+            if kind == "shorts" and bucket != "shorts":
                 continue
             if channel and (row.get("channel_title") or "").strip() != channel:
                 continue
@@ -571,10 +578,13 @@ def create_app() -> Flask:
             title = r.get("channel_title") or "Без канала"
             if yt.is_unavailable_video(title):
                 continue
-            is_music = yt.is_music_topic_channel(title)
+            is_music = yt.is_music_channel(title)
             if kind == "video" and is_music:
                 continue
             if kind == "music" and not is_music:
+                continue
+            # shorts: keep all non-music channels (short clips live under video channels too)
+            if kind == "shorts" and is_music:
                 continue
             out.append(
                 {
@@ -582,6 +592,7 @@ def create_app() -> Flask:
                     "channel_title": title,
                     "count": int(r.get("c") or 0),
                     "is_music_topic": is_music,
+                    "is_music": is_music,
                 }
             )
         return jsonify({"ok": True, "channels": out, "kind": kind})
@@ -742,17 +753,31 @@ def create_app() -> Flask:
                     {"id": "by_duration", "title": "Под сейчас"},
                     {"id": "continue_vibe", "title": "В том же вайбе"},
                     {"id": "music_topic", "title": "Музыка (отдельно)"},
+                    {"id": "shorts", "title": "Шортсы (отдельно)"},
                     {"id": "for_this_hour", "title": "Обычно в это время"},
                 ],
             }
         )
 
-    def _clean_lib_rows(rows: list[dict], *, allow_music: bool = False) -> list[dict]:
+    def _clean_lib_rows(
+        rows: list[dict],
+        *,
+        allow_music: bool = False,
+        allow_shorts: bool = False,
+    ) -> list[dict]:
         out = []
         for row in rows:
-            if yt.is_unavailable_video(row.get("title")):
+            bucket = yt.content_bucket(
+                row.get("title"),
+                row.get("channel_title"),
+                row.get("duration_sec"),
+                row.get("description"),
+            )
+            if bucket == "unavailable":
                 continue
-            if not allow_music and yt.is_music_topic_channel(row.get("channel_title")):
+            if bucket == "music" and not allow_music:
+                continue
+            if bucket == "shorts" and not allow_shorts:
                 continue
             out.append(row)
         return out
@@ -822,7 +847,7 @@ def create_app() -> Flask:
             rows = _diversify_lib_rows(pool, limit) if offset == 0 else pool[offset : offset + limit]
             return jsonify({"ok": True, "rail": rail_id, "items": _cards_from_lib_rows(rows)})
 
-        if rail_id == "music_topic":
+        if rail_id in ("music_topic", "music"):
             pool = db.fetchall(
                 """
                 SELECT v.*, li.status, li.saved_at, li.watched_at, li.source
@@ -830,13 +855,42 @@ def create_app() -> Flask:
                 WHERE li.user_id = ? AND li.status = 'queue'
                 ORDER BY li.saved_at DESC LIMIT ?
                 """,
-                (uid, max(limit * 10, 120)),
+                (uid, max(limit * 16, 200)),
             )
             rows = [
                 r
                 for r in pool
-                if yt.is_music_topic_channel(r.get("channel_title"))
-                and not yt.is_unavailable_video(r.get("title"))
+                if yt.content_bucket(
+                    r.get("title"),
+                    r.get("channel_title"),
+                    r.get("duration_sec"),
+                    r.get("description"),
+                )
+                == "music"
+            ]
+            rows = _diversify_lib_rows(rows, limit, max_per_channel=3)
+            return jsonify({"ok": True, "rail": rail_id, "items": _cards_from_lib_rows(rows)})
+
+        if rail_id == "shorts":
+            pool = db.fetchall(
+                """
+                SELECT v.*, li.status, li.saved_at, li.watched_at, li.source
+                FROM library_items li JOIN videos v ON v.video_id = li.video_id
+                WHERE li.user_id = ? AND li.status = 'queue'
+                ORDER BY li.saved_at DESC LIMIT ?
+                """,
+                (uid, max(limit * 16, 200)),
+            )
+            rows = [
+                r
+                for r in pool
+                if yt.content_bucket(
+                    r.get("title"),
+                    r.get("channel_title"),
+                    r.get("duration_sec"),
+                    r.get("description"),
+                )
+                == "shorts"
             ]
             rows = _diversify_lib_rows(rows, limit, max_per_channel=3)
             return jsonify({"ok": True, "rail": rail_id, "items": _cards_from_lib_rows(rows)})
@@ -872,10 +926,12 @@ def create_app() -> Flask:
                 SELECT v.*, li.status, li.saved_at, li.watched_at
                 FROM library_items li JOIN videos v ON v.video_id = li.video_id
                 WHERE li.user_id = ? AND li.status = 'queue' AND {pred}
-                ORDER BY li.saved_at DESC LIMIT ? OFFSET ?
+                ORDER BY li.saved_at DESC LIMIT ?
                 """,
-                (uid, limit, offset),
+                (uid, max(limit * 12, 120)),
             )
+            rows = _clean_lib_rows(rows, allow_music=False, allow_shorts=False)
+            rows = rows[offset : offset + limit]
             return jsonify(
                 {
                     "ok": True,
@@ -900,7 +956,7 @@ def create_app() -> Flask:
             channels = [
                 ch
                 for ch in channels
-                if not yt.is_music_topic_channel(ch.get("channel_title"))
+                if not yt.is_music_channel(ch.get("channel_title"))
                 and not yt.is_unavailable_video(ch.get("channel_title"))
             ][:10]
             items = []
@@ -962,6 +1018,7 @@ def create_app() -> Flask:
                 """,
                 (uid,),
             )
+            pool = _clean_lib_rows(pool, allow_music=False, allow_shorts=False)
             pool_cards = []
             for r in pool:
                 c = yt.card_from_video_row(r, {"status": r.get("status")})
@@ -1022,8 +1079,9 @@ def create_app() -> Flask:
                     WHERE li.user_id = ? AND li.status = 'queue'
                     ORDER BY li.saved_at DESC LIMIT ?
                     """,
-                    (uid, limit),
+                    (uid, max(limit * 12, 80)),
                 )
+            rows = _clean_lib_rows(rows, allow_music=False, allow_shorts=False)[:limit]
             return jsonify({"ok": True, "rail": rail_id, "items": _cards_from_lib_rows(rows)})
 
         return json_error("Неизвестный rail", 404)

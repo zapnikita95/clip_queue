@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 from typing import Any, Generator, Optional
 
@@ -264,7 +265,10 @@ def iter_sync_youtube_library(user_id: int) -> Generator[dict[str, Any], None, N
 
     if likes_pl:
         yield emit(14, "Тяну лайки", "Загружаю список понравившихся видео")
-        liked = _iter_playlist_items(access, likes_pl, limit=500)
+        # Pull a deep likes history for recommendations (API paginates; was capped at 500).
+        likes_limit = int(os.environ.get("YT_LIKES_SYNC_LIMIT", "5000") or 5000)
+        likes_limit = max(500, min(likes_limit, 15000))
+        liked = _iter_playlist_items(access, likes_pl, limit=likes_limit)
         stats["liked_total"] = len(liked)
         ids = [x["video_id"] for x in liked]
         yield emit(
