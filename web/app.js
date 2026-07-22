@@ -19,7 +19,7 @@
     const headers = Object.assign({ "Content-Type": "application/json" }, opts.headers || {});
     const t = token();
     if (t) headers.Authorization = `Bearer ${t}`;
-    const res = await fetch(path, { ...opts, headers });
+    const res = await fetch(path, { ...opts, headers, credentials: "include" });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
       const err = new Error(data.error || `HTTP ${res.status}`);
@@ -300,15 +300,43 @@
   }
 
   async function ensureAuth() {
-    if (!token()) return false;
+    // Cookie session can keep you in even if localStorage was wiped mid-redeploy
+    if (!token()) {
+      try {
+        const data = await api("/api/me");
+        me = data.user;
+        return true;
+      } catch (e) {
+        if (e.status === 401) return false;
+        return false;
+      }
+    }
     try {
       const data = await api("/api/me");
       me = data.user;
       return true;
-    } catch (_) {
-      setToken("");
-      me = null;
-      return false;
+    } catch (e) {
+      // Only wipe login on real 401. Redeploy 502/timeout must NOT kick you out.
+      if (e.status === 401) {
+        setToken("");
+        me = null;
+        return false;
+      }
+      if (me) return true;
+      try {
+        await new Promise((r) => setTimeout(r, 800));
+        const data = await api("/api/me");
+        me = data.user;
+        return true;
+      } catch (e2) {
+        if (e2.status === 401) {
+          setToken("");
+          me = null;
+          return false;
+        }
+        // Token still in localStorage — stay optimistic during blips
+        return !!token();
+      }
     }
   }
 
@@ -391,20 +419,22 @@
     };
   }
 
-  async function runYoutubeSync({ autoGoHome = false } = {}) {
-    const btn = $("#sync-yt");
+  async function runYoutubeSync({ autoGoHome = false, full = false } = {}) {
     const out = $("#sync-out");
     if (!out) return null;
-    if (btn) {
-      btn.classList.add("busy");
-      btn.disabled = true;
-    }
+    document.querySelectorAll("#sync-yt, #sync-yt-full").forEach((b) => {
+      b.classList.add("busy");
+      b.disabled = true;
+    });
     const box = mountProgress(out, {
-      title: "Забираю твой YouTube",
-      detail: "Лайки → плейлисты → подписки",
+      title: full ? "Полный синк YouTube" : "Дельта: только новое",
+      detail: full ? "Глубокий обход" : "Уже известное пропускаю",
     });
     try {
-      const started = await api("/api/youtube/sync", { method: "POST", body: "{}" });
+      const started = await api("/api/youtube/sync", {
+        method: "POST",
+        body: JSON.stringify({ full: full ? 1 : 0 }),
+      });
       const jobId = started.job?.id;
       if (!jobId) throw new Error("Сервер не вернул job_id");
       updateProgress(box, started.job);
@@ -440,7 +470,8 @@
       }
 
       const s = last.stats || {};
-      toast(`В библиотеке: +${s.liked_new || 0} лайков, ${s.playlists || 0} плейлистов, ${s.subscriptions || 0} подписок`);
+      const mode = s.mode === "full" ? "полный" : "дельта";
+      toast(`${mode}: +${s.liked_new || 0} лайков, +${s.playlist_items_new || 0} из плейлистов`);
       if (autoGoHome) {
         setTimeout(() => navigate("/home"), 700);
       }
@@ -450,10 +481,10 @@
       toast(e.message);
       return null;
     } finally {
-      if (btn) {
-        btn.classList.remove("busy");
-        btn.disabled = false;
-      }
+      document.querySelectorAll("#sync-yt, #sync-yt-full").forEach((b) => {
+        b.classList.remove("busy");
+        b.disabled = false;
+      });
     }
   }
 
@@ -465,32 +496,42 @@
       return navigate("/login", true);
     }
     setToken(t);
-    await ensureAuth();
-    toast("Google подключён — тяну YouTube");
-    navigate("/onboard?autosync=1", true);
+    const ok = await ensureAuth();
+    let lib = 0;
+    try {
+      const meData = await api("/api/me");
+      lib = meData.library_count || 0;
+    } catch (_) {}
+    const wantAutosync = params.get("autosync") === "1" && lib === 0;
+    if (wantAutosync) {
+      toast("Первый вход — тяну YouTube");
+      return navigate("/settings?autosync=1", true);
+    }
+    toast(ok ? "Снова в аккаунте" : "Токен сохранён");
+    return navigate("/home", true);
   }
 
   async function renderOnboard() {
     const meData = await api("/api/me");
     const wantAutosync =
-      new URL(location.href).searchParams.get("autosync") === "1" ||
-      (meData.youtube_connected && !(meData.library_count > 0));
+      new URL(location.href).searchParams.get("autosync") === "1" &&
+      !(meData.library_count > 0);
     app.innerHTML = `
       ${topbar("settings")}
       <section class="hero">
         <h1>Настройки</h1>
-        <p>Синк с YouTube, Takeout и аккаунт. Системный «Смотреть позже» Google API не отдаёт — копируй в обычный плейлист.</p>
+        <p>Онбординг (первый синк + разложить) — один раз. Дальше живёшь на главной; сюда — дельта или Takeout.</p>
       </section>
       <div class="panel" style="margin-bottom:16px">
         <h2>YouTube</h2>
         <p class="hint">
-          <b>Качаем:</b> лайки + обычные плейлисты + подписки.<br>
-          <b>Не качается:</b> официальный Watch Later (<code>list=WL</code>).<br>
-          Копия WL в свой плейлист → «Обновить из YouTube».
+          По умолчанию <b>дельта</b>: только новое. Полный обход — если что-то пропустил.<br>
+          Watch Later API не отдаёт — копируй в обычный плейлист.
         </p>
-        <p class="muted">Статус: ${meData.youtube_connected ? "Google подключён" : "нужен вход через Google"} · в библиотеке сейчас: ${meData.library_count || 0}</p>
+        <p class="muted">Статус: ${meData.youtube_connected ? "Google подключён" : "нужен вход через Google"} · в библиотеке: ${meData.library_count || 0}</p>
         <div class="btn-row">
-          <button class="btn" id="sync-yt" ${meData.youtube_connected ? "" : "disabled"}>Обновить из YouTube</button>
+          <button class="btn" id="sync-yt" ${meData.youtube_connected ? "" : "disabled"}>Обновить (дельта)</button>
+          <button class="btn secondary" id="sync-yt-full" ${meData.youtube_connected ? "" : "disabled"}>Полный синк</button>
           ${!meData.youtube_connected && meData.google_oauth_configured
             ? `<a class="btn secondary" href="/api/auth/google/start">Войти через Google</a>` : ""}
           <a class="btn ghost" href="/home" data-nav>На главную</a>
@@ -516,9 +557,16 @@
         </div>
       </div>`;
     wireNav();
-    $("#sync-yt").onclick = () => runYoutubeSync({ autoGoHome: false });
+    $("#sync-yt").onclick = () => runYoutubeSync({ autoGoHome: false, full: false });
+    const fullBtn = $("#sync-yt-full");
+    if (fullBtn) {
+      fullBtn.onclick = () => {
+        if (!confirm("Полный синк заново обойдёт лайки/плейлисты. Обычно хватает дельты. Продолжить?")) return;
+        runYoutubeSync({ autoGoHome: false, full: true });
+      };
+    }
     if (wantAutosync && meData.youtube_connected) {
-      runYoutubeSync({ autoGoHome: true });
+      runYoutubeSync({ autoGoHome: true, full: true });
     }
     $("#takeout-file").onchange = async (ev) => {
       const file = ev.target.files?.[0];
@@ -824,23 +872,34 @@
   async function renderHome() {
     const [shell, structure] = await Promise.all([
       api("/api/home/shell").catch(() => ({ counts: {}, rails: [] })),
-      api("/api/organize/structure").catch(() => ({ has_structure: false, folders: [] })),
+      api("/api/organize/structure").catch(() => ({ has_structure: false, folders: [], recent: [], growing: [] })),
     ]);
     const folders = structure.folders || [];
+    const recent = structure.recent || [];
+    const growing = structure.growing || [];
     const has = !!structure.has_structure && folders.length;
+
+    const growingHtml = growing.length
+      ? `<div class="growing-row">${growing.map((g) => `
+          <div class="growing-chip">
+            <b>${escapeHtml(g.title)}</b>
+            <span class="muted">+${g.added} за 2 нед.</span>
+          </div>`).join("")}</div>`
+      : "";
 
     app.innerHTML = `
       ${topbar("home")}
       <section class="hero">
-        <h1>${has ? "Твои категории" : "Сначала разложи видео"}</h1>
+        <h1>${has ? "Что посмотреть" : "Сначала разложи видео"}</h1>
         <p>${has
-          ? "То, что сохранил в «Разложить». Листай карусели мышкой, открывай ролик."
-          : "Главная — это результат группировки. Зайди в «Разложить», собери папки и нажми «Сохранить»."}</p>
+          ? "Твои темы после раскладки. Новые шары сами попадают в категории. Быстро растущие темы — сверху."
+          : "Онбординг: синк → Разложить → Сохранить. Потом главная — центр продукта."}</p>
         <div class="stats">
           <div class="stat">Папок: <b>${folders.length}</b></div>
           <div class="stat">Очередь: <b>${shell.counts?.queue ?? "—"}</b></div>
           <div class="stat">Начатые: <b>${shell.counts?.started || 0}</b></div>
         </div>
+        ${growingHtml}
         <div class="btn-row" style="margin-top:14px">
           <a class="btn" href="/organize" data-nav>${has ? "Править раскладку" : "Разложить"}</a>
           <a class="btn secondary" href="/queue?status=queue&kind=video" data-nav>Очередь</a>
@@ -850,20 +909,40 @@
       <div id="rails"></div>`;
     wireNav();
     const host = $("#rails");
-    if (!has) {
+    if (!has && !recent.length) {
       host.innerHTML = `
         <div class="panel">
-          <div class="empty">Пока пусто на главной — сохрани раскладку один раз, и категории появятся здесь.</div>
+          <div class="empty">Пока пусто — сохрани раскладку один раз, и категории появятся здесь.</div>
         </div>`;
       return;
     }
-    for (const folder of folders) {
+    if (recent.length) {
+      const block = document.createElement("section");
+      block.className = "rail";
+      block.innerHTML = `
+        <div class="rail-head">
+          <h2>Недавно добавил</h2>
+          <span class="muted" style="font-size:13px">${recent.length}</span>
+        </div>
+        <div class="rail-track drag-scroll">
+          ${recent.map((it) => cardHtml(it)).join("")}
+        </div>`;
+      host.appendChild(block);
+    }
+    // Growing themes first among folders
+    const growTitles = new Set(growing.map((g) => (g.title || "").toLowerCase()));
+    const ordered = [
+      ...folders.filter((f) => growTitles.has((f.title || "").toLowerCase())),
+      ...folders.filter((f) => !growTitles.has((f.title || "").toLowerCase())),
+    ];
+    for (const folder of ordered) {
       const block = document.createElement("section");
       block.className = "rail";
       const items = folder.items || [];
+      const hot = growTitles.has((folder.title || "").toLowerCase());
       block.innerHTML = `
         <div class="rail-head">
-          <h2>${escapeHtml(folder.title)}</h2>
+          <h2>${hot ? "🔥 " : ""}${escapeHtml(folder.title)}</h2>
           <span class="muted" style="font-size:13px">${folder.count || items.length} видео</span>
         </div>
         <div class="rail-track drag-scroll">

@@ -35,6 +35,34 @@ def create_app() -> Flask:
     def json_error(msg: str, status: int = 400):
         return jsonify({"ok": False, "error": msg}), status
 
+    def session_response(session: dict):
+        """JSON + httpOnly cookie so redeploys / cleared Bearer still keep login."""
+        resp = jsonify({"ok": True, **session})
+        token = session.get("token") or ""
+        if token:
+            resp.set_cookie(
+                "cq_session",
+                token,
+                max_age=60 * 24 * 3600,
+                httponly=True,
+                secure=True,
+                samesite="Lax",
+                path="/",
+            )
+        return resp
+
+    def clear_session_cookie(resp):
+        resp.set_cookie(
+            "cq_session",
+            "",
+            max_age=0,
+            httponly=True,
+            secure=True,
+            samesite="Lax",
+            path="/",
+        )
+        return resp
+
     def current_user():
         return getattr(g, "user", None)
 
@@ -96,7 +124,7 @@ def create_app() -> Flask:
             )
         except ValueError as e:
             return json_error(str(e), 400)
-        return jsonify({"ok": True, **session})
+        return session_response(session)
 
     @app.post("/api/auth/dev-login")
     def dev_login():
@@ -104,7 +132,16 @@ def create_app() -> Flask:
             return json_error("DEV_LOGIN выключен", 403)
         user = auth.ensure_dev_user()
         session = auth.create_session(int(user["id"]))
-        return jsonify({"ok": True, **session})
+        return session_response(session)
+
+    @app.post("/api/auth/logout")
+    def logout():
+        header = request.headers.get("Authorization") or ""
+        token = header or request.cookies.get("cq_session") or ""
+        if token:
+            auth.destroy_session(token)
+        resp = jsonify({"ok": True})
+        return clear_session_cookie(resp)
 
     @app.get("/api/me")
     @require_auth
@@ -147,12 +184,6 @@ def create_app() -> Flask:
             }
         )
 
-    @app.post("/api/auth/logout")
-    @require_auth
-    def logout():
-        auth.destroy_session(current_user()["token"])
-        return jsonify({"ok": True})
-
     @app.get("/api/auth/google/status")
     def google_status():
         return jsonify(
@@ -182,28 +213,47 @@ def create_app() -> Flask:
             session = google_oauth.login_with_code(code, state)
         except Exception as e:
             return redirect(f"/login?error={str(e)[:120]}")
-        # SPA picks token and immediately streams YouTube sync
-        return redirect(f"/auth/callback?token={session['token']}&autosync=1")
+        uid = int(session["user"]["id"])
+        lib = db.fetchone(
+            "SELECT COUNT(*) AS c FROM library_items WHERE user_id = ?",
+            (uid,),
+        )
+        # Autosync only on empty library (onboarding). Returning users → home.
+        autosync = 0 if int((lib or {}).get("c") or 0) > 0 else 1
+        resp = redirect(f"/auth/callback?token={session['token']}&autosync={autosync}")
+        resp.set_cookie(
+            "cq_session",
+            session["token"],
+            max_age=60 * 24 * 3600,
+            httponly=True,
+            secure=True,
+            samesite="Lax",
+            path="/",
+        )
+        return resp
 
     @app.post("/api/youtube/sync")
     @require_auth
     def youtube_sync():
-        """Start background sync (avoids Railway proxy 502 on long streams)."""
+        """Start background sync (delta by default; full=1 for deep crawl)."""
         uid = current_user()["user_id"]
+        body = request.get_json(silent=True) or {}
+        full = (
+            str(request.args.get("full") or body.get("full") or "").strip() in ("1", "true", "yes")
+        )
         if (request.args.get("plain") or "").strip() == "1":
             try:
-                log.info("plain sync start user=%s", uid)
-                stats = yt_sync.sync_youtube_library(uid)
+                log.info("plain sync start user=%s full=%s", uid, full)
+                stats = yt_sync.sync_youtube_library(uid, full=full)
                 log.info("plain sync done user=%s", uid)
             except Exception as e:
                 log.exception("plain sync failed user=%s", uid)
                 return json_error(str(e), 502)
             return jsonify({"ok": True, "stats": stats})
 
-        job = sync_jobs.start_youtube_sync(uid)
-        log.info("sync job started user=%s job=%s", uid, job.get("id"))
+        job = sync_jobs.start_youtube_sync(uid, full=full)
+        log.info("sync job started user=%s job=%s full=%s", uid, job.get("id"), full)
         return jsonify({"ok": True, "job": job})
-
     @app.get("/api/youtube/sync/status")
     @require_auth
     def youtube_sync_status():
@@ -241,9 +291,9 @@ def create_app() -> Flask:
     @app.get("/api/organize/structure")
     @require_auth
     def organize_structure():
-        """Last saved folders — what home and organize should show by default."""
+        """Last saved folders + recent + growing themes for home."""
         uid = current_user()["user_id"]
-        return jsonify({"ok": True, **organize.saved_structure(uid)})
+        return jsonify({"ok": True, **organize.home_feed(uid)})
 
     @app.get("/api/organize/rules")
     @require_auth
@@ -437,19 +487,22 @@ def create_app() -> Flask:
                 if name:
                     _ensure_tag_on_item(uid, vid, name)
 
-        # Apply saved classification from last «Разложить → ОК»
+        # Apply saved classification; if no rule match — tiny LLM into existing folders
         apply_class = body.get("apply_classification")
         if apply_class is None:
             apply_class = True
         matched = []
+        classify_meta = {"engine": "none", "reason": ""}
         if apply_class:
-            matched = organize.apply_rules_to_video(
+            classify_meta = organize.classify_new_video(
                 uid,
                 vid,
                 title=meta.get("title"),
                 channel_title=meta.get("channel_title"),
                 duration_sec=meta.get("duration_sec"),
+                description=meta.get("description"),
             )
+            matched = classify_meta.get("matched") or []
 
         item = _library_card(uid, vid)
         return jsonify(
@@ -460,6 +513,8 @@ def create_app() -> Flask:
                     {"list_id": m["list_id"], "list_title": m.get("list_title")}
                     for m in matched
                 ],
+                "classify_engine": classify_meta.get("engine"),
+                "classify_reason": classify_meta.get("reason"),
             }
         )
 

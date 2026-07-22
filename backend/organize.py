@@ -867,3 +867,177 @@ def apply_rules_to_video(
     for m in matched:
         _add_list_item(int(m["list_id"]), video_id, 0)
     return matched
+
+
+def classify_new_video(
+    user_id: int,
+    video_id: str,
+    *,
+    title: str | None = None,
+    channel_title: str | None = None,
+    duration_sec: int | None = None,
+    description: str | None = None,
+) -> dict[str, Any]:
+    """Rules first, then tiny LLM picks among existing saved folders."""
+    row = db.fetchone("SELECT * FROM videos WHERE video_id = ?", (video_id,))
+    if row:
+        title = title if title is not None else row.get("title")
+        channel_title = channel_title if channel_title is not None else row.get("channel_title")
+        duration_sec = duration_sec if duration_sec is not None else row.get("duration_sec")
+        description = description if description is not None else row.get("description")
+
+    matched = apply_rules_to_video(
+        user_id,
+        video_id,
+        title=title,
+        channel_title=channel_title,
+        duration_sec=duration_sec,
+    )
+    if matched:
+        return {
+            "matched": matched,
+            "engine": "rules",
+            "reason": "Совпадение с сохранёнными правилами",
+        }
+
+    rules = [
+        r
+        for r in list_rules(user_id)
+        if (r.get("list_title") or "")
+        and "скрыто" not in (r.get("list_title") or "").lower()
+        and r.get("rule_type") != "content_kind"
+    ]
+    existing_lists = []
+    seen_titles = set()
+    for r in rules:
+        t = (r.get("list_title") or "").strip()
+        if t and t.lower() not in seen_titles:
+            seen_titles.add(t.lower())
+            existing_lists.append(t)
+    if not existing_lists:
+        return {"matched": [], "engine": "none", "reason": "Нет сохранённых категорий — сначала Разложить"}
+
+    suggestion = llm.suggest_video_themes(
+        title or "",
+        channel_title or "",
+        description or "",
+        existing_tags=[],
+        existing_lists=existing_lists,
+    )
+    pick = (suggestion.get("list_title") or "").strip()
+    if not pick:
+        return {
+            "matched": [],
+            "engine": suggestion.get("engine") or "llm",
+            "reason": suggestion.get("reason") or "Не нашлось категории",
+        }
+
+    # Match suggested title to an existing list (exact / contains)
+    pick_l = pick.lower()
+    chosen = None
+    for r in rules:
+        title_l = (r.get("list_title") or "").lower()
+        if title_l == pick_l or pick_l in title_l or title_l in pick_l:
+            chosen = r
+            break
+    if not chosen:
+        return {
+            "matched": [],
+            "engine": suggestion.get("engine") or "llm",
+            "reason": f"LLM предложил «{pick}», но такой папки нет",
+            "suggestion": pick,
+        }
+
+    _add_list_item(int(chosen["list_id"]), video_id, 0)
+    return {
+        "matched": [chosen],
+        "engine": suggestion.get("engine") or "llm",
+        "reason": suggestion.get("reason") or f"В «{chosen.get('list_title')}»",
+        "suggestion": pick,
+    }
+
+
+def home_feed(user_id: int) -> dict[str, Any]:
+    """Home spine: saved folders + recent adds + fastest-growing themes."""
+    structure = saved_structure(user_id, items_per_folder=16)
+    recent_rows = db.fetchall(
+        """
+        SELECT v.video_id, v.title, v.channel_title, v.duration_sec, v.thumb_url, li.saved_at
+        FROM library_items li
+        JOIN videos v ON v.video_id = li.video_id
+        WHERE li.user_id = ?
+          AND li.status IN ('queue', 'in_progress')
+        ORDER BY li.saved_at DESC
+        LIMIT 24
+        """,
+        (user_id,),
+    )
+    recent = []
+    for r in recent_rows:
+        if yt.is_unavailable_video(r.get("title")):
+            continue
+        bucket = yt.content_bucket(r.get("title"), r.get("channel_title"), r.get("duration_sec"), None)
+        if bucket in ("music", "shorts", "shortform", "unavailable"):
+            continue
+        vid = r["video_id"]
+        recent.append(
+            {
+                "video_id": vid,
+                "title": r.get("title") or vid,
+                "channel_title": r.get("channel_title") or "",
+                "duration_sec": r.get("duration_sec"),
+                "duration_label": yt.format_duration(r.get("duration_sec")),
+                "thumb_url": r.get("thumb_url") or yt.thumb_url(vid),
+                "watch_url": f"https://www.youtube.com/watch?v={vid}",
+                "saved_at": str(r.get("saved_at") or ""),
+            }
+        )
+
+    if db.is_postgres():
+        growing_rows = db.fetchall(
+            """
+            SELECT l.id, l.title, COUNT(*)::int AS added
+            FROM list_items x
+            JOIN lists l ON l.id = x.list_id
+            WHERE l.user_id = ?
+              AND x.added_at > NOW() - INTERVAL '14 days'
+            GROUP BY l.id, l.title
+            HAVING COUNT(*) >= 2
+            ORDER BY COUNT(*) DESC
+            LIMIT 10
+            """,
+            (user_id,),
+        )
+    else:
+        growing_rows = db.fetchall(
+            """
+            SELECT l.id, l.title, COUNT(*) AS added
+            FROM list_items x
+            JOIN lists l ON l.id = x.list_id
+            WHERE l.user_id = ?
+              AND datetime(x.added_at) > datetime('now', '-14 days')
+            GROUP BY l.id, l.title
+            HAVING COUNT(*) >= 2
+            ORDER BY COUNT(*) DESC
+            LIMIT 10
+            """,
+            (user_id,),
+        )
+    growing = []
+    for r in growing_rows:
+        title = (r.get("title") or "").strip()
+        if _is_sync_dump_list(title) or "скрыто" in title.lower():
+            continue
+        growing.append(
+            {
+                "list_id": r["id"],
+                "title": title,
+                "added": int(r.get("added") or 0),
+            }
+        )
+
+    return {
+        **structure,
+        "recent": recent[:18],
+        "growing": growing[:8],
+    }
