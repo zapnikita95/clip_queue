@@ -386,6 +386,8 @@ def _migrate_columns() -> None:
     alters = [
         "ALTER TABLE users ADD COLUMN google_sub TEXT",
         "ALTER TABLE subscriptions ADD COLUMN thumb_url TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE library_items ADD COLUMN interest INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE lists ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 1000",
     ]
     for stmt in alters:
         try:

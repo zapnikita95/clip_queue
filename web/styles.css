@@ -143,7 +143,8 @@ button { cursor: pointer; }
 .rail { margin: 28px 0; }
 .rail-head {
   display: flex;
-  align-items: baseline;
+  align-items: center;
+  gap: 10px;
   justify-content: space-between;
   margin-bottom: 12px;
 }
@@ -166,14 +167,122 @@ button { cursor: pointer; }
 }
 
 .card {
+  position: relative;
   flex: 0 0 260px;
   scroll-snap-align: start;
   background: var(--bg-elev);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  overflow: hidden;
+  overflow: visible;
   transition: transform 0.15s ease, border-color 0.15s ease;
   color: var(--text);
+  display: flex;
+  flex-direction: column;
+}
+.card-main {
+  display: block;
+  color: inherit;
+  text-decoration: none;
+  overflow: hidden;
+  border-radius: var(--radius) var(--radius) 0 0;
+}
+.card-actions {
+  display: flex;
+  gap: 8px;
+  padding: 0 12px 12px;
+  align-items: center;
+}
+.card-actions .play-btn {
+  min-width: 44px;
+  padding: 8px 12px;
+}
+.card-actions .eye-btn {
+  min-width: 44px;
+  padding: 8px 10px;
+  opacity: 0.85;
+}
+.card-menu {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 5;
+}
+.card-menu-btn {
+  appearance: none;
+  border: none;
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  backdrop-filter: blur(6px);
+}
+.card-menu-pop {
+  position: absolute;
+  top: 36px;
+  right: 0;
+  min-width: 200px;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  padding: 6px;
+  display: grid;
+  gap: 2px;
+  z-index: 20;
+}
+.card-menu-pop.hidden { display: none; }
+.card-menu-pop button {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.card-menu-pop button:hover { background: rgba(255, 255, 255, 0.06); }
+.card-menu-pop button.danger { color: #ff8a80; }
+.card-boost {
+  position: absolute;
+  left: 8px;
+  top: 8px;
+  font-size: 12px;
+}
+.rail-head-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.rail-handle {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--muted);
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  cursor: grab;
+  font-size: 14px;
+  line-height: 1;
+  flex-shrink: 0;
+  touch-action: none;
+}
+.rail-handle:active { cursor: grabbing; }
+.rail.rail-dragging {
+  opacity: 0.55;
+  outline: 1px dashed rgba(255, 59, 48, 0.55);
+}
+.rail.rail-drop-target {
+  outline: 2px solid rgba(255, 59, 48, 0.45);
+  border-radius: 12px;
 }
 /* <button class="card"> inherits UA black text — force theme colors */
 button.card {
@@ -221,14 +330,14 @@ button.card .card-meta {
 .card-title {
   font-size: 14px;
   font-weight: 650;
-  line-height: 1.3;
+  line-height: 1.35;
   margin: 0 0 6px;
   color: var(--text);
   display: -webkit-box;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   overflow: hidden;
-  min-height: 2.6em;
+  min-height: 4.05em;
 }
 .card-meta {
   color: var(--muted);
@@ -837,6 +946,7 @@ a.btn.ghost:hover {
   scroll-snap-type: x mandatory;
 }
 .folder-tile {
+  position: relative;
   flex: 0 0 200px;
   scroll-snap-align: start;
   border-radius: 12px;
@@ -844,7 +954,7 @@ a.btn.ghost:hover {
   background: var(--bg-elev-2);
   color: var(--text);
   cursor: grab;
-  overflow: hidden;
+  overflow: visible;
   display: flex;
   flex-direction: column;
 }
@@ -860,17 +970,18 @@ a.btn.ghost:hover {
   object-fit: cover;
   display: block;
 }
+.folder-tile .card-menu { top: 6px; right: 6px; }
 .folder-tile-title {
   padding: 10px 10px 4px;
   font-size: 13px;
   font-weight: 700;
-  line-height: 1.3;
+  line-height: 1.35;
   color: var(--text);
   display: -webkit-box;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   overflow: hidden;
-  min-height: 2.6em;
+  min-height: 4.05em;
 }
 .folder-tile-meta {
   padding: 0 10px;

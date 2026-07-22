@@ -5,8 +5,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
-# Each theme: title shown to user, keywords (title/channel), optional channel substrings.
-# First matching theme wins when scoring (higher score = better).
+# Order matters for display defaults; scoring decides assignment.
+# Prefer specific themes (driving) over vague ones (travel via «город»).
 THEMES: list[dict[str, Any]] = [
     {
         "id": "english",
@@ -48,108 +48,124 @@ THEMES: list[dict[str, Any]] = [
             r"\bgerman\b",
             r"\bchinese\b",
             r"\bjapanese\b",
-            r"испанск",
-            r"французск",
-            r"немецк",
-            r"китайск",
-            r"японск",
-            r"полиглот",
-            r"изучени[ея]\s+язык",
         ],
-        "channels": ["easy languages", "language"],
+        "channels": [],
+    },
+    {
+        "id": "driving",
+        "title": "Вождение и ПДД",
+        "keywords": [
+            r"вождени",
+            r"на\s+вождени",
+            r"автошкол",
+            r"\bпдд\b",
+            r"экзамен.*вод",
+            r"сдача.*вод",
+            r"сдам\s+на\s+права",
+            r"акпп",
+            r"мкпп",
+            r"механик[аеуи]",
+            r"передач[уиае]",
+            r"перед\s+поворотом",
+            r"поворот",
+            r"парковк",
+            r"права\b",
+            r"водительск",
+            r"автодром",
+            r"гибдд",
+            r"грубая ошибк",
+            r"инструктор",
+            r"уроки?\s+вожд",
+            r"езд[аыуе].*город",
+            r"город.*езд",
+            r"за\s+рул[еёя]",
+            r"рул[еёя]",
+            # EN — titles often English even for RU driving schools
+            r"\bdriving\b",
+            r"\bdriver'?s?\s+license\b",
+            r"\bdriving\s+exam\b",
+            r"\bgear\b",
+            r"\bshift(ing)?\b",
+            r"\bclutch\b",
+            r"\bmanual\s+transmission\b",
+            r"\bautomatic\s+transmission\b",
+            r"\bparking\b",
+            r"\binstructor\b",
+            r"behind\s+the\s+wheel",
+        ],
+        "channels": [
+            "автошкола",
+            "автошкола red",
+            "novokshonov",
+            "новокшонов",
+            "пдд",
+            "автоинструктор",
+        ],
+        "negatives": [],
+        "weight": 3,  # stronger than generic themes
     },
     {
         "id": "news",
         "title": "Новости",
         "keywords": [
-            r"\bnews\b",
             r"новост",
-            r"редакци",
-            r"выпуск\s+новост",
-            r"\bнеделя\b",
+            r"\bnews\b",
+            r"сегодня",
             r"сводка",
             r"политик",
-            r"войн[аеуы]",
-            r"санкци",
             r"выборы",
         ],
-        "channels": [
-            "редакция",
-            "дождь",
-            "bbc news",
-            "dw на русском",
-            "current time",
-            "настоящее время",
-            "руслан усачев",
-            "вдудь",
-        ],
+        "channels": ["редакция", "вдудь", "дождь", "bbc", "cnn"],
     },
     {
         "id": "history",
         "title": "История",
         "keywords": [
             r"истори",
-            r"\bhistory\b",
-            r"древн",
             r"средневек",
-            r"ссср",
-            r"\bwii\b",
-            r"втор(ая|ой)\s+миров",
-            r"революци",
+            r"древн",
             r"импери",
-            r"архив",
-            r"документальн.*истори",
+            r"войн[аыуе]",
+            r"\bhistory\b",
+            r"археолог",
         ],
-        "channels": [
-            "история",
-            "history",
-            "егор язов",
-            "миньон истории",
-            "simple history",
-        ],
+        "channels": ["arzamas", "история", "кликклак", "по чёрному", "по черному"],
+        "negatives": [r"зашкварн.*истори"],  # clickbait «stories» not history
     },
     {
         "id": "science",
         "title": "Наука",
         "keywords": [
             r"наук",
-            r"\bscience\b",
             r"физик",
             r"хими",
-            r"биолог",
+            r"биологи",
             r"космос",
-            r"\bspace\b",
-            r"астрон",
-            r"эволюци",
-            r"нейро",
-            r"квант",
+            r"\bscience\b",
+            r"эксперимент",
         ],
-        "channels": ["veritasium", "vsauce", "kurzgesagt", "постнаука", "наука"],
+        "channels": ["veritasium", "vsauce", "наука"],
     },
     {
         "id": "tech",
         "title": "Технологии",
         "keywords": [
             r"технолог",
-            r"\btech\b",
-            r"\bai\b",
-            r"искусственн.*интеллект",
-            r"нейросет",
-            r"программ",
-            r"\bcoding\b",
-            r"\bpython\b",
             r"гаджет",
             r"смартфон",
-            r"apple",
-            r"google",
-            r"стартап",
+            r"\bihone\b",
+            r"iphone",
+            r"android",
+            r"нейросет",
+            r"\bai\b",
+            r"chatgpt",
+            r"обзор.*(телефон|ноутбук|наушник)",
         ],
         "channels": [
-            "wylsacom",
-            "rozetked",
             "the verge",
             "marques brownlee",
             "михаил климов",
+            "wylsacom",
         ],
     },
     {
@@ -166,25 +182,48 @@ THEMES: list[dict[str, Any]] = [
             r"\bcinema\b",
             r"кинопоиск",
             r"обзор.*фильм",
+            r"\bобзор\b",
+            r"\breview\b",
             r"трейлер",
+            r"\bmarvel\b",
+            r"\bthor\b",
+            r"тор\s*\d",
+            r"кинокритик",
+            r"премьер",
         ],
         "channels": ["кинопоиск", "badcomedian", "кино", "letterboxd"],
+        "weight": 3,
     },
     {
         "id": "travel",
         "title": "Путешествия",
         "keywords": [
-            r"путешеств",
+            r"путешестви[еяй]",
             r"\btravel\b",
-            r"поездк",
-            r"город[аеу]",
-            r"страна",
             r"туризм",
             r"отель",
             r"аэропорт",
-            r"влог.*город",
+            r"влог.*(город|стран|отпуск)",
+            r"отпуск",
+            r"backpack",
+            r"куда\s+поехать",
         ],
-        "channels": ["travel", "путешеств", "indygogo"],
+        "channels": ["travel", "indygogo", "поехавший"],
+        # «путешествие в отмену», вождение «в городе» — не travel
+        "negatives": [
+            r"отмен[уеа]",
+            r"cancel",
+            r"cancellation",
+            r"\bjourney\s+into\b",  # metaphor, not tourism
+            r"вождени",
+            r"автошкол",
+            r"экзамен",
+            r"пдд",
+            r"передач",
+            r"акпп",
+            r"инструктор",
+            r"права\b",
+        ],
     },
     {
         "id": "food",
@@ -192,14 +231,24 @@ THEMES: list[dict[str, Any]] = [
         "keywords": [
             r"готовк",
             r"рецепт",
-            r"кухн",
+            r"кухн[яи]",
             r"\bcook\b",
             r"\brecipe\b",
-            r"еда",
             r"ресторан",
-            r"кафе",
+            r"шеф.?повар",
+            r"ивл[её]в",
+            r"бургер",
+            r"десерт",
         ],
-        "channels": ["bon appétit", "tasty", "готовка"],
+        "channels": ["bon appétit", "tasty", "готовка", "ивл"],
+        "negatives": [
+            r"передач",
+            r"акпп",
+            r"вождени",
+            r"автошкол",
+            r"поворот",
+            r"механик",
+        ],
     },
     {
         "id": "psychology",
@@ -210,7 +259,6 @@ THEMES: list[dict[str, Any]] = [
             r"тревог",
             r"депресс",
             r"самооценк",
-            r"отношени",
             r"\btherapy\b",
             r"мотивац",
         ],
@@ -227,7 +275,6 @@ THEMES: list[dict[str, Any]] = [
             r"стартап",
             r"предпринимат",
             r"\bstartup\b",
-            r"акци",
             r"крипт",
         ],
         "channels": ["бизнес"],
@@ -242,9 +289,24 @@ THEMES: list[dict[str, Any]] = [
             r"комик",
             r"прикол",
             r"смешн",
+            r"\bfunny\b",
             r"\bcomedy\b",
+            r"угарн",
         ],
         "channels": ["кшиштовск", "standup", "labelcom", "чбд"],
+        "weight": 3,
+        "negatives": [
+            r"обзор.*(фильм|кино|сериал|тор)",
+            r"\bthor\b",
+            r"\breview\b",
+            r"кинопоиск",
+            r"автошкол",
+            r"экзамен.*вод",
+            r"\bпдд\b",
+            r"передач[уиае]",
+            r"\bgear\b",
+            r"\bshift(ing)?\b",
+        ],
     },
     {
         "id": "documentary",
@@ -267,8 +329,6 @@ THEMES: list[dict[str, Any]] = [
             r"хоккей",
             r"теннис",
             r"\bnba\b",
-            r"тренировк",
-            r"фитнес",
         ],
         "channels": [],
     },
@@ -276,7 +336,6 @@ THEMES: list[dict[str, Any]] = [
         "id": "games",
         "title": "Игры",
         "keywords": [
-            r"\bgameplay\b",
             r"\bgaming\b",
             r"игра[хю]?",
             r"прохожден",
@@ -293,6 +352,7 @@ def _compile_theme(theme: dict[str, Any]) -> dict[str, Any]:
         **theme,
         "_kw": [re.compile(p, re.I) for p in theme.get("keywords") or []],
         "_ch": [c.lower() for c in (theme.get("channels") or [])],
+        "_neg": [re.compile(p, re.I) for p in theme.get("negatives") or []],
     }
 
 
@@ -304,42 +364,83 @@ def theme_by_id(theme_id: str) -> dict[str, Any] | None:
     return _BY_ID.get(theme_id)
 
 
-def score_theme(theme: dict[str, Any], title: str, channel: str) -> int:
-    blob = f"{title or ''} {channel or ''}"
+def score_theme(theme: dict[str, Any], title: str, channel: str, description: str = "") -> int:
+    blob = f"{title or ''} {channel or ''} {(description or '')[:400]}"
     ch_l = (channel or "").lower()
     score = 0
+    for neg in theme.get("_neg") or []:
+        if neg.search(blob):
+            return 0
+    kw_w = int(theme.get("weight") or 2)
     for ch in theme.get("_ch") or []:
         if ch and ch in ch_l:
-            score += 5
+            score += 6
     for rx in theme.get("_kw") or []:
         if rx.search(blob):
-            score += 2
+            score += kw_w
     # English theme should not steal pure "languages" unless english-specific
-    if theme["id"] == "languages" and score_theme(_BY_ID["english"], title, channel) >= 4:
+    if theme["id"] == "languages" and score_theme(_BY_ID["english"], title, channel, description) >= 4:
         score = max(0, score - 3)
+    # Cinema beats comedy when both fire on film reviews
+    if theme["id"] == "comedy":
+        cine = score_theme(_BY_ID["cinema"], title, channel, description)
+        if cine >= 4:
+            score = max(0, score - 4)
+    # Driving must beat travel/food on exam/city-driving titles
+    if theme["id"] in ("travel", "food"):
+        drive = score_theme(_BY_ID["driving"], title, channel, description)
+        if drive >= 3:
+            score = 0
+    # Instructional driving ≠ comedy; funny-while-driving can stay multi-theme
+    if theme["id"] == "comedy":
+        drive = score_theme(_BY_ID["driving"], title, channel, description)
+        if drive >= 3:
+            funny = bool(
+                re.search(r"смешн|прикол|funny|угар|compilation\s+of\s+funny", blob, re.I)
+            )
+            if not funny:
+                score = 0
     return score
 
 
-def detect_themes(title: str | None, channel_title: str | None, *, min_score: int = 2) -> list[dict[str, Any]]:
+def detect_themes(
+    title: str | None,
+    channel_title: str | None,
+    *,
+    description: str | None = None,
+    min_score: int = 3,
+) -> list[dict[str, Any]]:
     """Return themes sorted by score desc (may be empty)."""
     title = title or ""
     channel = channel_title or ""
+    desc = description or ""
     scored = []
     for theme in _COMPILED:
-        sc = score_theme(theme, title, channel)
+        sc = score_theme(theme, title, channel, desc)
         if sc >= min_score:
             scored.append((sc, theme))
     scored.sort(key=lambda x: (-x[0], x[1]["title"]))
     return [t for _, t in scored]
 
 
-def primary_theme(title: str | None, channel_title: str | None) -> dict[str, Any] | None:
-    themes = detect_themes(title, channel_title, min_score=2)
+def primary_theme(
+    title: str | None,
+    channel_title: str | None,
+    *,
+    description: str | None = None,
+) -> dict[str, Any] | None:
+    themes = detect_themes(title, channel_title, description=description, min_score=3)
     return themes[0] if themes else None
 
 
-def matches_theme(theme_id: str, title: str | None, channel_title: str | None) -> bool:
+def matches_theme(
+    theme_id: str,
+    title: str | None,
+    channel_title: str | None,
+    *,
+    description: str | None = None,
+) -> bool:
     theme = theme_by_id(theme_id)
     if not theme:
         return False
-    return score_theme(theme, title or "", channel_title or "") >= 2
+    return score_theme(theme, title or "", channel_title or "", description or "") >= 3

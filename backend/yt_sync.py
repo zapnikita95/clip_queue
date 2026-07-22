@@ -113,12 +113,13 @@ def _upsert_video_from_snippet(video_id: str, sn: dict, duration_sec: Optional[i
 
 
 def _ensure_library(user_id: int, video_id: str, source: str, status: str = "queue") -> bool:
-    """Return True if inserted new."""
+    """Return True if inserted new. Never resurrects dismissed (rejected) videos."""
     existing = db.fetchone(
-        "SELECT video_id FROM library_items WHERE user_id = ? AND video_id = ?",
+        "SELECT video_id, status FROM library_items WHERE user_id = ? AND video_id = ?",
         (user_id, video_id),
     )
     if existing:
+        # Keep rejected/hidden out of queue forever — sync must not bring them back
         return False
     db.execute(
         "INSERT INTO library_items (user_id, video_id, status, source) VALUES (?, ?, ?, ?)",

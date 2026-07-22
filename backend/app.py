@@ -347,6 +347,65 @@ def create_app() -> Flask:
             )
         return jsonify(result)
 
+    @app.post("/api/lists/reorder")
+    @require_auth
+    def lists_reorder():
+        uid = current_user()["user_id"]
+        body = request.get_json(silent=True) or {}
+        order = body.get("order") or body.get("list_ids") or []
+        if not isinstance(order, list) or not order:
+            return json_error("Нужен order: [list_id, ...]")
+        n = 0
+        for i, lid in enumerate(order):
+            try:
+                list_id = int(lid)
+            except (TypeError, ValueError):
+                continue
+            db.execute(
+                "UPDATE lists SET sort_order = ? WHERE id = ? AND user_id = ?",
+                (i * 10, list_id, uid),
+            )
+            n += 1
+        return jsonify({"ok": True, "count": n, "updated": n})
+
+    @app.post("/api/library/<video_id>/interest")
+    @require_auth
+    def set_interest(video_id: str):
+        uid = current_user()["user_id"]
+        body = request.get_json(silent=True) or {}
+        try:
+            level = int(body.get("interest") or 0)
+        except (TypeError, ValueError):
+            level = 0
+        level = max(0, min(2, level))  # 0 normal, 1 interesting, 2 very
+        row = db.fetchone(
+            "SELECT video_id FROM library_items WHERE user_id = ? AND video_id = ?",
+            (uid, video_id),
+        )
+        if not row:
+            return json_error("Нет в библиотеке", 404)
+        db.execute(
+            "UPDATE library_items SET interest = ? WHERE user_id = ? AND video_id = ?",
+            (level, uid, video_id),
+        )
+        return jsonify({"ok": True, "interest": level})
+
+    @app.post("/api/library/<video_id>/dismiss")
+    @require_auth
+    def dismiss_video(video_id: str):
+        """Hide forever — sync will not bring it back."""
+        uid = current_user()["user_id"]
+        db.execute(
+            "UPDATE library_items SET status = 'dismissed' WHERE user_id = ? AND video_id = ?",
+            (uid, video_id),
+        )
+        db.execute(
+            "DELETE FROM list_items WHERE video_id = ? AND list_id IN "
+            "(SELECT id FROM lists WHERE user_id = ?)",
+            (video_id, uid),
+        )
+        return jsonify({"ok": True})
+
     # ----- Videos -----
 
     def upsert_video(meta: dict) -> None:
@@ -856,7 +915,7 @@ def create_app() -> Flask:
         note = body.get("note")
         sets = []
         params: list = []
-        if status in ("queue", "in_progress", "watched", "archived"):
+        if status in ("queue", "in_progress", "watched", "archived", "dismissed"):
             sets.append("status = ?")
             params.append(status)
             if status == "watched":
@@ -874,6 +933,20 @@ def create_app() -> Flask:
                     "INSERT INTO watch_events (user_id, video_id, event_type) VALUES (?, ?, ?)",
                     (uid, video_id, "mark_started"),
                 )
+            elif status == "dismissed":
+                # Soft-delete: out of all user lists, sync won't bring it back
+                db.execute(
+                    "DELETE FROM list_items WHERE video_id = ? AND list_id IN "
+                    "(SELECT id FROM lists WHERE user_id = ?)",
+                    (video_id, uid),
+                )
+        if "interest" in body:
+            try:
+                interest = max(0, min(2, int(body.get("interest"))))
+            except (TypeError, ValueError):
+                interest = 0
+            sets.append("interest = ?")
+            params.append(interest)
         if note is not None:
             sets.append("note = ?")
             params.append(str(note)[:2000])

@@ -185,23 +185,118 @@
     }).join("");
   }
 
-  function cardHtml(item) {
+  function watchUrl(item) {
+    return item.watch_url || `https://www.youtube.com/watch?v=${item.video_id}`;
+  }
+
+  function cardMenuHtml(item, { listId = "", draftFolder = false } = {}) {
+    return `
+      <div class="card-menu">
+        <button type="button" class="card-menu-btn" data-menu-toggle aria-label="Ещё">⋯</button>
+        <div class="card-menu-pop hidden">
+          <button type="button" data-act="boost1">Интересно</button>
+          <button type="button" data-act="boost2">Очень интересно</button>
+          <button type="button" data-act="watched">Просмотрено</button>
+          ${listId ? `<button type="button" data-act="remove-cat">Убрать из категории</button>` : ""}
+          ${draftFolder ? `<button type="button" data-act="remove-draft">Убрать из категории</button>` : ""}
+          <button type="button" data-act="dismiss" class="danger">Удалить из Clip Queue</button>
+        </div>
+      </div>`;
+  }
+
+  function cardHtml(item, opts = {}) {
+    const listId = opts.listId || "";
     const dur = item.duration_label ? `<span class="badge">${escapeHtml(item.duration_label)}</span>` : "";
+    const boost = Number(item.interest || 0);
+    const boostMark = boost >= 2 ? "🔥🔥" : boost === 1 ? "🔥" : "";
     const pills = (item.user_tags || []).slice(0, 3).map((t) =>
       `<span class="tag-pill tag-pill-sm">${escapeHtml((t.emoji || "") + " " + t.name)}</span>`
     ).join("");
     return `
-      <a class="card" href="/v/${encodeURIComponent(item.video_id)}" data-nav>
-        <div class="card-thumb">
-          <img src="${escapeHtml(item.thumb_url)}" alt="" loading="lazy" />
-          ${dur}
+      <div class="card" data-video-id="${escapeHtml(item.video_id)}" data-list-id="${escapeHtml(String(listId || ""))}">
+        ${cardMenuHtml(item, { listId })}
+        <a class="card-main" href="/v/${encodeURIComponent(item.video_id)}" data-nav>
+          <div class="card-thumb">
+            <img src="${escapeHtml(item.thumb_url)}" alt="" loading="lazy" />
+            ${dur}
+            ${boostMark ? `<span class="card-boost">${boostMark}</span>` : ""}
+          </div>
+          <div class="card-body">
+            <h3 class="card-title">${escapeHtml(item.title)}</h3>
+            <div class="card-meta">${escapeHtml(item.channel_title || "YouTube")}</div>
+            ${pills ? `<div class="card-tags">${pills}</div>` : ""}
+          </div>
+        </a>
+        <div class="card-actions">
+          <a class="btn play-btn" href="${escapeHtml(watchUrl(item))}" target="_blank" rel="noopener" title="Смотреть на YouTube">▶</a>
+          <button type="button" class="btn ghost eye-btn" data-act="watched" title="Просмотрено">👁</button>
         </div>
-        <div class="card-body">
-          <h3 class="card-title">${escapeHtml(item.title)}</h3>
-          <div class="card-meta">${escapeHtml(item.channel_title || "YouTube")}</div>
-          ${pills ? `<div class="card-tags">${pills}</div>` : ""}
-        </div>
-      </a>`;
+      </div>`;
+  }
+
+  async function runCardAction(act, videoId, listId) {
+    if (!videoId || !act) return;
+    try {
+      if (act === "boost1" || act === "boost2") {
+        await api(`/api/library/${encodeURIComponent(videoId)}`, {
+          method: "PATCH",
+          body: JSON.stringify({ interest: act === "boost2" ? 2 : 1 }),
+        });
+        toast(act === "boost2" ? "Очень интересно — выше в теме" : "Интересно");
+      } else if (act === "watched") {
+        await api(`/api/library/${encodeURIComponent(videoId)}`, {
+          method: "PATCH",
+          body: JSON.stringify({ status: "watched" }),
+        });
+        toast("Отмечено просмотренным");
+        document.querySelectorAll(`.card[data-video-id="${CSS.escape(videoId)}"]`).forEach((el) => el.remove());
+      } else if (act === "dismiss") {
+        if (!confirm("Убрать из Clip Queue? При синке больше не вернётся.")) return;
+        await api(`/api/library/${encodeURIComponent(videoId)}`, {
+          method: "PATCH",
+          body: JSON.stringify({ status: "dismissed" }),
+        });
+        toast("Удалено");
+        document.querySelectorAll(`.card[data-video-id="${CSS.escape(videoId)}"]`).forEach((el) => el.remove());
+      } else if (act === "remove-cat" && listId) {
+        await api(`/api/lists/${encodeURIComponent(listId)}/items/${encodeURIComponent(videoId)}`, {
+          method: "DELETE",
+        });
+        toast("Убрано из категории");
+        document.querySelectorAll(`.card[data-video-id="${CSS.escape(videoId)}"][data-list-id="${CSS.escape(String(listId))}"]`).forEach((el) => el.remove());
+      }
+    } catch (e) {
+      toast(e.message);
+    }
+  }
+
+  function wireCardMenus(root = document) {
+    root.querySelectorAll(".card").forEach((card) => {
+      if (card.dataset.wired === "1") return;
+      card.dataset.wired = "1";
+      const vid = card.getAttribute("data-video-id");
+      const listId = card.getAttribute("data-list-id") || "";
+      const toggle = card.querySelector("[data-menu-toggle]");
+      const pop = card.querySelector(".card-menu-pop");
+      if (toggle && pop) {
+        toggle.onclick = (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          document.querySelectorAll(".card-menu-pop").forEach((p) => {
+            if (p !== pop) p.classList.add("hidden");
+          });
+          pop.classList.toggle("hidden");
+        };
+      }
+      card.querySelectorAll("[data-act]").forEach((btn) => {
+        btn.onclick = (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          if (pop) pop.classList.add("hidden");
+          runCardAction(btn.getAttribute("data-act"), vid, listId);
+        };
+      });
+    });
   }
 
   function topbar(active) {
@@ -218,7 +313,6 @@
           <button class="nav-btn ${active === "home" ? "active" : ""}" data-route="/home">Главная</button>
           <button class="nav-btn ${active === "queue" ? "active" : ""}" data-route="/queue">Очередь</button>
           <button class="nav-btn ${active === "channels" ? "active" : ""}" data-route="/channels">Каналы</button>
-          <button class="nav-btn ${active === "organize" ? "active" : ""}" data-route="/organize">Разложить</button>
           <button class="nav-btn ${active === "settings" ? "active" : ""}" data-route="/settings">Настройки</button>
           <button class="nav-btn" id="logout-btn" title="${escapeHtml(name)}">Выйти</button>
         </nav>
@@ -297,6 +391,7 @@
       b.classList.toggle("active", on);
     });
     enableDragScroll(app);
+    wireCardMenus(app);
   }
 
   async function ensureAuth() {
@@ -550,10 +645,10 @@
         <div id="takeout-out"></div>
       </div>
       <div class="panel">
-        <h2>3. Разложить по папкам</h2>
-        <p class="hint">Категоризация библиотеки — на отдельном экране.</p>
+        <h2>Умная категоризация</h2>
+        <p class="hint">Один раз разложи библиотеку по темам — дальше категории живут на главной. Новые видео подхватываются правилами.</p>
         <div class="btn-row">
-          <a class="btn" href="/organize" data-nav>Открыть «Разложить»</a>
+          <a class="btn" href="/organize" data-nav>Открыть</a>
         </div>
       </div>`;
     wireNav();
@@ -606,17 +701,21 @@
 
   function folderTileHtml(it, folderIdx, folderOptionsHtml) {
     return `
-      <div class="folder-tile" draggable="true" data-video-id="${escapeHtml(it.video_id)}" data-from-folder="${folderIdx}">
-        <div class="folder-tile-media">
-          <img src="${escapeHtml(it.thumb_url || "")}" alt="" loading="lazy" draggable="false" />
-          ${it.duration_label ? `<span class="badge">${escapeHtml(it.duration_label)}</span>` : ""}
-        </div>
-        <div class="folder-tile-title">${escapeHtml(it.title || "Без названия")}</div>
-        <div class="folder-tile-meta">${escapeHtml(it.channel_title || "")}</div>
-        <div class="folder-tile-actions">
-          <a class="btn ghost" href="/v/${encodeURIComponent(it.video_id)}" data-nav style="min-height:32px;padding:6px 10px;font-size:12px">Открыть</a>
+      <div class="folder-tile card" draggable="true" data-video-id="${escapeHtml(it.video_id)}" data-from-folder="${folderIdx}">
+        ${cardMenuHtml(it, { draftFolder: true })}
+        <a class="card-main" href="/v/${encodeURIComponent(it.video_id)}" data-nav>
+          <div class="folder-tile-media card-thumb">
+            <img src="${escapeHtml(it.thumb_url || "")}" alt="" loading="lazy" draggable="false" />
+            ${it.duration_label ? `<span class="badge">${escapeHtml(it.duration_label)}</span>` : ""}
+          </div>
+          <div class="folder-tile-title card-title">${escapeHtml(it.title || "Без названия")}</div>
+          <div class="folder-tile-meta card-meta">${escapeHtml(it.channel_title || "")}</div>
+        </a>
+        <div class="folder-tile-actions card-actions">
+          <a class="btn play-btn" href="${escapeHtml(watchUrl(it))}" target="_blank" rel="noopener" title="YouTube">▶</a>
+          <button type="button" class="btn ghost eye-btn" data-act="watched" title="Просмотрено">👁</button>
           <select class="folder-assign" data-assign-video="${escapeHtml(it.video_id)}" data-from-folder="${folderIdx}" title="Ещё в категорию">
-            <option value="">+ ещё в…</option>
+            <option value="">+ ещё</option>
             ${folderOptionsHtml}
           </select>
         </div>
@@ -628,18 +727,14 @@
     const opts = (allFolders || [])
       .map((f, i) => i === idx ? "" : `<option value="${i}">${escapeHtml(f.title || "Папка")}</option>`)
       .join("");
-    const ruleHint = folder.persist && folder.rule
-      ? `<span class="folder-rule">правило сохранится</span>`
-      : `<span class="folder-rule muted">черновик</span>`;
     return `
       <div class="folder-card" data-folder-idx="${idx}" data-drop-folder="${idx}">
         <div class="folder-head">
           <div class="folder-head-text">
             <b>${escapeHtml(folder.title || "Папка")}</b>
-            <div class="muted">${escapeHtml(folder.reason || "")}</div>
+            <div class="muted">${folder.count || (folder.video_ids || []).length} видео</div>
           </div>
           <div class="folder-head-meta">
-            ${ruleHint}
             <span class="count">${folder.count || (folder.video_ids || []).length}</span>
           </div>
         </div>
@@ -658,8 +753,8 @@
     app.innerHTML = `
       ${topbar("organize")}
       <section class="hero">
-        <h1>Твои папки</h1>
-        <p>Один раз разложил — сохранил. Дальше живёшь с этими категориями: перетащи ролик или нажми «Сохранить». С нуля — только кнопкой ниже.</p>
+        <h1>Умная категоризация</h1>
+        <p>Собери темы один раз и нажми «Сохранить» — они появятся на главной. Перетащи ролики между темами. С нуля — только кнопкой ниже.</p>
       </section>
       <div class="panel">
         <div class="btn-row">
@@ -770,6 +865,23 @@
 
       $("#apply-proposal").classList.toggle("hidden", !list.length);
       enableDragScroll(host);
+      wireCardMenus(host);
+      host.querySelectorAll('[data-act="remove-draft"]').forEach((btn) => {
+        btn.onclick = (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const card = btn.closest(".card");
+          const videoId = card?.getAttribute("data-video-id");
+          const fromIdx = Number(card?.getAttribute("data-from-folder"));
+          if (!lastProposal?.folders?.[fromIdx] || !videoId) return;
+          const from = lastProposal.folders[fromIdx];
+          from.video_ids = (from.video_ids || []).filter((id) => id !== videoId);
+          from.items = (from.items || []).filter((x) => x.video_id !== videoId);
+          from.count = from.video_ids.length;
+          paintProposal(lastProposal);
+          toast(`Убрано из «${from.title || "темы"}»`);
+        };
+      });
     };
 
     const runPropose = async () => {
@@ -812,41 +924,59 @@
       }
       runPropose();
     };
-    $("#apply-proposal").onclick = async () => {
-      if (!lastProposal) return;
+    const doSave = async () => {
+      if (!lastProposal || !(lastProposal.folders || []).length) {
+        toast("Нечего сохранять — сначала собери или открой раскладку");
+        return;
+      }
       const btn = $("#apply-proposal");
-      btn.classList.add("busy");
+      if (btn) {
+        btn.classList.add("busy");
+        btn.disabled = true;
+        btn.textContent = "Сохраняю…";
+      }
+      toast("Сохраняю категории…");
       const box = mountProgress($("#proposal-box"), {
         title: "Сохраняю",
         detail: "Папки + правила для новых видео",
       });
       try {
-        const data = await runBusySteps(box, [
-          { title: "Обновляю папки", detail: "списки" },
-          { title: "Раскладываю видео", detail: "по папкам" },
-          { title: "Пишу правила", detail: "для будущих шаров" },
-        ], api("/api/organize/apply", {
-          method: "POST",
-          body: JSON.stringify({
-            proposal: lastProposal,
+        const payload = {
+          proposal: {
+            summary: lastProposal.summary || "",
             proposal_id: lastProposal.proposal_id,
-          }),
-        }));
+            folders: (lastProposal.folders || []).map((f) => ({
+              title: f.title,
+              theme_id: f.theme_id,
+              video_ids: f.video_ids || (f.items || []).map((x) => x.video_id),
+              rules: f.rules || [],
+            })),
+          },
+          proposal_id: lastProposal.proposal_id,
+        };
+        const data = await api("/api/organize/apply", {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
         finishProgress(box, {
           ok: true,
           title: "Сохранено",
           detail: `Папок: ${(data.lists || []).length} · правил: ${data.rules_saved || 0}`,
         });
-        toast(`Сохранено: ${(data.lists || []).length} папок`);
-        await paintRules();
-        setTimeout(() => navigate("/home"), 500);
+        toast(`Готово: ${(data.lists || []).length} категорий на главной`);
+        setTimeout(() => navigate("/home"), 400);
       } catch (e) {
         finishProgress(box, { ok: false, title: "Не сохранилось", detail: e.message });
-        toast(e.message);
+        toast(e.message || "Ошибка сохранения");
       } finally {
-        btn.classList.remove("busy");
+        if (btn) {
+          btn.classList.remove("busy");
+          btn.disabled = false;
+          btn.textContent = "Сохранить";
+        }
       }
     };
+    $("#apply-proposal").onclick = () => doSave();
 
     await paintRules();
     try {
@@ -892,8 +1022,8 @@
       <section class="hero">
         <h1>${has ? "Что посмотреть" : "Сначала разложи видео"}</h1>
         <p>${has
-          ? "Твои темы после раскладки. Новые шары сами попадают в категории. Быстро растущие темы — сверху."
-          : "Онбординг: синк → Разложить → Сохранить. Потом главная — центр продукта."}</p>
+          ? "Твои темы. Перетащи ⋮⋮ у названия, чтобы поменять порядок. Новые шары сами попадают в категории."
+          : "Онбординг: синк → умная категоризация → Сохранить. Потом главная — центр продукта."}</p>
         <div class="stats">
           <div class="stat">Папок: <b>${folders.length}</b></div>
           <div class="stat">Очередь: <b>${shell.counts?.queue ?? "—"}</b></div>
@@ -901,9 +1031,9 @@
         </div>
         ${growingHtml}
         <div class="btn-row" style="margin-top:14px">
-          <a class="btn" href="/organize" data-nav>${has ? "Править раскладку" : "Разложить"}</a>
           <a class="btn secondary" href="/queue?status=queue&kind=video" data-nav>Очередь</a>
           <a class="btn ghost" href="/channels" data-nav>Каналы</a>
+          <a class="btn ghost" href="/settings" data-nav>Настройки</a>
         </div>
       </section>
       <div id="rails"></div>`;
@@ -912,7 +1042,10 @@
     if (!has && !recent.length) {
       host.innerHTML = `
         <div class="panel">
-          <div class="empty">Пока пусто — сохрани раскладку один раз, и категории появятся здесь.</div>
+          <div class="empty">Пока пусто — в Настройках открой «Умную категоризацию», сохрани темы один раз.</div>
+          <div class="btn-row" style="margin-top:12px">
+            <a class="btn" href="/organize" data-nav>Умная категоризация</a>
+          </div>
         </div>`;
       return;
     }
@@ -929,20 +1062,19 @@
         </div>`;
       host.appendChild(block);
     }
-    // Growing themes first among folders
-    const growTitles = new Set(growing.map((g) => (g.title || "").toLowerCase()));
-    const ordered = [
-      ...folders.filter((f) => growTitles.has((f.title || "").toLowerCase())),
-      ...folders.filter((f) => !growTitles.has((f.title || "").toLowerCase())),
-    ];
-    for (const folder of ordered) {
+    for (const folder of folders) {
       const block = document.createElement("section");
       block.className = "rail";
+      const listId = folder.list_id != null ? String(folder.list_id) : "";
+      if (listId) block.setAttribute("data-list-id", listId);
       const items = folder.items || [];
-      const hot = growTitles.has((folder.title || "").toLowerCase());
+      const hot = growing.some((g) => (g.title || "").toLowerCase() === (folder.title || "").toLowerCase());
       block.innerHTML = `
         <div class="rail-head">
-          <h2>${hot ? "🔥 " : ""}${escapeHtml(folder.title)}</h2>
+          <div class="rail-head-left">
+            ${listId ? `<button type="button" class="rail-handle" title="Перетащить категорию" aria-label="Перетащить">⋮⋮</button>` : ""}
+            <h2>${hot ? "🔥 " : ""}${escapeHtml(folder.title)}</h2>
+          </div>
           <span class="muted" style="font-size:13px">${folder.count || items.length} видео</span>
         </div>
         <div class="rail-track drag-scroll">
@@ -950,13 +1082,57 @@
             ? items.map((it) => cardHtml({
                 ...it,
                 watch_url: it.watch_url || `https://www.youtube.com/watch?v=${it.video_id}`,
-              })).join("")
+              }, { listId })).join("")
             : `<div class="empty" style="min-width:260px">Пусто</div>`}
         </div>`;
       host.appendChild(block);
     }
     enableDragScroll(host);
+    wireCardMenus(host);
     wireNav();
+
+    // Category row reorder via grip handle
+    let dragRail = null;
+    host.querySelectorAll(".rail[data-list-id]").forEach((rail) => {
+      const handle = rail.querySelector(".rail-handle");
+      if (!handle) return;
+      handle.addEventListener("dragstart", (e) => {
+        dragRail = rail;
+        rail.classList.add("rail-dragging");
+        e.dataTransfer.effectAllowed = "move";
+        e.dataTransfer.setData("text/plain", rail.getAttribute("data-list-id") || "");
+      });
+      handle.addEventListener("dragend", () => {
+        rail.classList.remove("rail-dragging");
+        host.querySelectorAll(".rail-drop-target").forEach((el) => el.classList.remove("rail-drop-target"));
+        dragRail = null;
+      });
+      handle.setAttribute("draggable", "true");
+      rail.addEventListener("dragover", (e) => {
+        if (!dragRail || dragRail === rail) return;
+        e.preventDefault();
+        rail.classList.add("rail-drop-target");
+        const rect = rail.getBoundingClientRect();
+        const before = e.clientY < rect.top + rect.height / 2;
+        if (before) host.insertBefore(dragRail, rail);
+        else host.insertBefore(dragRail, rail.nextSibling);
+      });
+      rail.addEventListener("dragleave", () => rail.classList.remove("rail-drop-target"));
+      rail.addEventListener("drop", async (e) => {
+        e.preventDefault();
+        rail.classList.remove("rail-drop-target");
+        const order = [...host.querySelectorAll(".rail[data-list-id]")].map((el) => el.getAttribute("data-list-id"));
+        try {
+          await api("/api/lists/reorder", {
+            method: "POST",
+            body: JSON.stringify({ order }),
+          });
+          toast("Порядок категорий сохранён");
+        } catch (err) {
+          toast(err.message || "Не удалось сохранить порядок");
+        }
+      });
+    });
   }
 
   async function renderQueue() {
@@ -982,7 +1158,7 @@
       archived: "Архив",
     }[status] || "Очередь";
     const statusHint = {
-      queue: "Только длинные (6 мин – 10 ч). Короткие, клипы и 10+ часов — вкладками ниже. Папки — «Разложить».",
+      queue: "Только длинные (6 мин – 10 ч). Короткие, клипы и 10+ часов — вкладками ниже.",
       in_progress: "Открыл на YouTube или отметил «Начал». Из общей очереди уже убрано.",
       watched: "Уже посмотрел — в очереди этих роликов больше нет.",
       archived: "Скрытые из плана.",
@@ -994,7 +1170,6 @@
         <p>${channel
           ? `Видео канала · <a href="/channels" data-nav>все каналы</a>`
           : statusHint}</p>
-        ${!channel && status === "queue" ? `<div class="btn-row" style="margin-top:12px"><a class="btn" href="/organize" data-nav>Разложить по папкам</a></div>` : ""}
       </section>
       <div class="filter-chips" id="status-chips">
         <button type="button" class="chip ${status === "queue" ? "active" : ""}" data-status="queue">Очередь</button>
@@ -1008,7 +1183,6 @@
         <button type="button" class="chip ${kind === "marathon" ? "active" : ""}" data-kind="marathon">10+ часов</button>
         <button type="button" class="chip ${kind === "all" ? "active" : ""}" data-kind="all">Всё</button>
         <a class="chip" href="/channels" data-nav>Каналы →</a>
-        <a class="chip" href="/organize" data-nav>Разложить →</a>
         ${channel ? `<button type="button" class="chip" id="clear-channel">Сбросить канал</button>` : ""}
       </div>
       <div class="field" style="max-width:420px">
@@ -1019,11 +1193,13 @@
         ${items.length ? items.map(cardHtml).join("") : `<div class="empty">Пусто. ${status === "queue" ? `<a href="/queue?status=in_progress" data-nav>Начатые</a> · <a href="/channels" data-nav>каналы</a>` : `<a href="/queue?status=queue" data-nav>В очередь</a>`}</div>`}
       </div>`;
     wireNav();
+    wireCardMenus(app);
     const paint = (list) => {
       $("#queue-grid").innerHTML = list.length
         ? list.map(cardHtml).join("")
         : `<div class="empty">Ничего не нашлось</div>`;
       wireNav();
+      wireCardMenus($("#queue-grid"));
     };
     $("#q-filter").oninput = (e) => {
       const q = e.target.value.trim().toLowerCase();
@@ -1133,6 +1309,7 @@
           : `<div class="empty">Ничего не нашлось — сбрось фильтры или сделай синк в Настройках</div>`}
       </div>`;
     wireNav();
+    wireCardMenus(app);
 
     const go = (next = {}) => {
       const u = new URL(location.href);

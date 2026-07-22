@@ -85,11 +85,12 @@ def ensure_classify_tables() -> None:
 def _library_snapshot(user_id: int, limit: int = 400) -> list[dict]:
     return db.fetchall(
         """
-        SELECT v.video_id, v.title, v.channel_title, v.duration_sec, v.thumb_url,
+        SELECT v.video_id, v.title, v.channel_title, v.duration_sec, v.thumb_url, v.description,
                li.status, li.source
         FROM library_items li
         JOIN videos v ON v.video_id = li.video_id
         WHERE li.user_id = ?
+          AND li.status NOT IN ('dismissed', 'archived')
         ORDER BY li.saved_at DESC
         LIMIT ?
         """,
@@ -186,7 +187,7 @@ def heuristic_propose(user_id: int) -> dict[str, Any]:
     watched = by_status.get("watched") or []
     started = by_status.get("in_progress") or []
 
-    # --- Themes first (what the user actually wants to browse) ---
+    # --- Themes first (multi-theme OK if scores are close) ---
     by_theme: dict[str, list[str]] = defaultdict(list)
     themed_ids: set[str] = set()
     for r in rows:
@@ -195,10 +196,29 @@ def heuristic_propose(user_id: int) -> dict[str, Any]:
             continue
         if yt.is_unavailable_video(r.get("title")):
             continue
-        primary = themes.primary_theme(r.get("title"), r.get("channel_title"))
-        if not primary:
+        found = themes.detect_themes(
+            r.get("title"),
+            r.get("channel_title"),
+            description=r.get("description"),
+            min_score=3,
+        )
+        if not found:
             continue
-        by_theme[primary["id"]].append(vid)
+        # Primary always; second theme if score within 2 of primary and >= 4
+        top = found[:1]
+        if len(found) > 1:
+            # re-score to compare
+            s0 = themes.score_theme(
+                found[0], r.get("title") or "", r.get("channel_title") or "", r.get("description") or ""
+            )
+            s1 = themes.score_theme(
+                found[1], r.get("title") or "", r.get("channel_title") or "", r.get("description") or ""
+            )
+            if s1 >= 4 and s0 - s1 <= 2:
+                top = found[:2]
+        for th in top:
+            if vid not in by_theme[th["id"]]:
+                by_theme[th["id"]].append(vid)
         themed_ids.add(vid)
 
     theme_folders = []
@@ -565,12 +585,16 @@ def apply_proposal(user_id: int, proposal: dict) -> dict[str, Any]:
     created = []
     rules_saved = 0
     priority = 10
-    for folder in proposal.get("folders") or []:
+    for fi, folder in enumerate(proposal.get("folders") or []):
         title = (folder.get("title") or "").strip()[:120]
         vids = folder.get("video_ids") or []
         if not title or not vids:
             continue
         list_id = _ensure_list(user_id, title)
+        db.execute(
+            "UPDATE lists SET sort_order = ? WHERE id = ? AND user_id = ?",
+            (fi * 10, list_id, user_id),
+        )
         # Replace membership so edits (move between folders) stick
         db.execute("DELETE FROM list_items WHERE list_id = ?", (list_id,))
         n = 0
@@ -656,7 +680,7 @@ def saved_structure(user_id: int, *, items_per_folder: int = 24) -> dict[str, An
             }
 
     lists = db.fetchall(
-        "SELECT * FROM lists WHERE user_id = ? ORDER BY id ASC",
+        "SELECT * FROM lists WHERE user_id = ? ORDER BY sort_order ASC, id ASC",
         (user_id,),
     )
     folders: list[dict[str, Any]] = []
@@ -680,14 +704,18 @@ def saved_structure(user_id: int, *, items_per_folder: int = 24) -> dict[str, An
 
         rows = db.fetchall(
             """
-            SELECT v.video_id, v.title, v.channel_title, v.duration_sec, v.thumb_url
+            SELECT v.video_id, v.title, v.channel_title, v.duration_sec, v.thumb_url,
+                   COALESCE(li.interest, 0) AS interest
             FROM list_items x
             JOIN videos v ON v.video_id = x.video_id
+            LEFT JOIN library_items li
+              ON li.video_id = x.video_id AND li.user_id = ?
             WHERE x.list_id = ?
-            ORDER BY x.position ASC, x.added_at DESC
+              AND COALESCE(li.status, 'queue') NOT IN ('dismissed', 'rejected')
+            ORDER BY COALESCE(li.interest, 0) DESC, x.position ASC, x.added_at DESC
             LIMIT ?
             """,
-            (lid, max(items_per_folder, 80)),
+            (user_id, lid, max(items_per_folder, 80)),
         )
         video_ids = []
         items = []
@@ -704,6 +732,8 @@ def saved_structure(user_id: int, *, items_per_folder: int = 24) -> dict[str, An
                     "duration_sec": r.get("duration_sec"),
                     "duration_label": yt.format_duration(r.get("duration_sec")),
                     "thumb_url": r.get("thumb_url") or yt.thumb_url(vid),
+                    "interest": int(r.get("interest") or 0),
+                    "watch_url": f"https://www.youtube.com/watch?v={vid}",
                 }
             )
         if not video_ids:
