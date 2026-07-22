@@ -215,9 +215,10 @@
     return `
       <div class="card" data-video-id="${escapeHtml(item.video_id)}" data-list-id="${escapeHtml(String(listId || ""))}">
         ${cardMenuHtml(item, { listId })}
-        <a class="card-main" href="/v/${encodeURIComponent(item.video_id)}" data-nav>
+        <a class="card-main" href="/v/${encodeURIComponent(item.video_id)}" data-nav draggable="false">
           <div class="card-thumb">
-            <img src="${escapeHtml(item.thumb_url)}" alt="" loading="lazy" />
+            <img src="${escapeHtml(item.thumb_url)}" alt="" loading="lazy" draggable="false" />
+            <button type="button" class="thumb-eye" data-act="watched" title="Просмотрено" aria-label="Просмотрено">👁</button>
             ${dur}
             ${boostMark ? `<span class="card-boost">${boostMark}</span>` : ""}
           </div>
@@ -228,8 +229,7 @@
           </div>
         </a>
         <div class="card-actions">
-          <a class="btn play-btn" href="${escapeHtml(watchUrl(item))}" target="_blank" rel="noopener" title="Смотреть на YouTube">▶</a>
-          <button type="button" class="btn ghost eye-btn" data-act="watched" title="Просмотрено">👁</button>
+          <a class="btn play-btn" href="${escapeHtml(watchUrl(item))}" target="_blank" rel="noopener" title="Смотреть на YouTube" draggable="false">▶</a>
         </div>
       </div>`;
   }
@@ -401,36 +401,76 @@
     root.querySelectorAll(".rail-track, .folder-rail, .drag-scroll").forEach((el) => {
       if (el.dataset.dragScroll === "1") return;
       el.dataset.dragScroll = "1";
+      el.classList.add("drag-scroll-ready");
       let down = false;
       let startX = 0;
+      let startY = 0;
       let startScroll = 0;
       let moved = false;
-      el.addEventListener("mousedown", (e) => {
-        if (e.button !== 0) return;
-        if (e.target.closest("a, button, select, input, .folder-tile")) return;
+
+      const isControl = (target) =>
+        !!target.closest(
+          "button, select, input, textarea, label, .card-menu, .play-btn, .thumb-eye, .eye-btn, .rail-handle, .folder-assign, a.btn"
+        );
+
+      el.addEventListener("pointerdown", (e) => {
+        if (e.pointerType === "mouse" && e.button !== 0) return;
+        if (isControl(e.target)) return;
         down = true;
         moved = false;
-        startX = e.pageX;
+        startX = e.clientX;
+        startY = e.clientY;
         startScroll = el.scrollLeft;
-        el.classList.add("is-dragging");
+        try {
+          el.setPointerCapture(e.pointerId);
+        } catch (_) {}
       });
-      window.addEventListener("mouseup", () => {
+
+      el.addEventListener("pointermove", (e) => {
+        if (!down) return;
+        const dx = e.clientX - startX;
+        const dy = e.clientY - startY;
+        if (!moved) {
+          if (Math.abs(dx) < 5 && Math.abs(dy) < 5) return;
+          // Vertical intent → let page scroll; horizontal → rail
+          if (Math.abs(dy) > Math.abs(dx) + 4) {
+            down = false;
+            el.classList.remove("is-dragging");
+            return;
+          }
+          moved = true;
+          el.classList.add("is-dragging");
+        }
+        el.scrollLeft = startScroll - dx;
+        e.preventDefault();
+      });
+
+      const endDrag = () => {
         down = false;
         el.classList.remove("is-dragging");
+      };
+      el.addEventListener("pointerup", endDrag);
+      el.addEventListener("pointercancel", endDrag);
+      el.addEventListener("lostpointercapture", endDrag);
+
+      // After a drag, kill the click that would open the card
+      el.addEventListener(
+        "click",
+        (e) => {
+          if (moved) {
+            e.preventDefault();
+            e.stopPropagation();
+            moved = false;
+          }
+        },
+        true
+      );
+
+      el.addEventListener("dragstart", (e) => {
+        // Organize draft tiles still use HTML5 DnD between folders
+        if (e.target.closest(".folder-tile[draggable='true']")) return;
+        if (e.target.closest("img, a.card-main, .card")) e.preventDefault();
       });
-      window.addEventListener("mousemove", (e) => {
-        if (!down) return;
-        const dx = e.pageX - startX;
-        if (Math.abs(dx) > 4) moved = true;
-        el.scrollLeft = startScroll - dx;
-      });
-      el.addEventListener("click", (e) => {
-        if (moved) {
-          e.preventDefault();
-          e.stopPropagation();
-          moved = false;
-        }
-      }, true);
     });
   }
 
@@ -781,17 +821,17 @@
     return `
       <div class="folder-tile card" draggable="true" data-video-id="${escapeHtml(it.video_id)}" data-from-folder="${folderIdx}">
         ${cardMenuHtml(it, { draftFolder: true })}
-        <a class="card-main" href="/v/${encodeURIComponent(it.video_id)}" data-nav>
+        <a class="card-main" href="/v/${encodeURIComponent(it.video_id)}" data-nav draggable="false">
           <div class="folder-tile-media card-thumb">
             <img src="${escapeHtml(it.thumb_url || "")}" alt="" loading="lazy" draggable="false" />
+            <button type="button" class="thumb-eye" data-act="watched" title="Просмотрено" aria-label="Просмотрено">👁</button>
             ${it.duration_label ? `<span class="badge">${escapeHtml(it.duration_label)}</span>` : ""}
           </div>
           <div class="folder-tile-title card-title">${escapeHtml(it.title || "Без названия")}</div>
           <div class="folder-tile-meta card-meta">${escapeHtml(it.channel_title || "")}</div>
         </a>
         <div class="folder-tile-actions card-actions">
-          <a class="btn play-btn" href="${escapeHtml(watchUrl(it))}" target="_blank" rel="noopener" title="YouTube">▶</a>
-          <button type="button" class="btn ghost eye-btn" data-act="watched" title="Просмотрено">👁</button>
+          <a class="btn play-btn" href="${escapeHtml(watchUrl(it))}" target="_blank" rel="noopener" title="YouTube" draggable="false">▶</a>
           <select class="folder-assign" data-assign-video="${escapeHtml(it.video_id)}" data-from-folder="${folderIdx}" title="Ещё в категорию">
             <option value="">+ ещё</option>
             ${folderOptionsHtml}
@@ -1468,7 +1508,7 @@
           <h2>Добавить</h2>
           <button type="button" class="btn ghost" id="add-close">Закрыть</button>
         </div>
-        <p class="hint">Ссылка или пачка ссылок — через пробел, запятую или с новой строки.</p>
+        <p class="hint">Ctrl/⌘+V → Enter. Несколько ссылок — с новой строки (Ctrl/⌘+Enter).</p>
         <div class="field">
           <textarea id="yt-urls" rows="4" placeholder="https://youtu.be/…">${escapeHtml(prefill)}</textarea>
         </div>
@@ -1482,16 +1522,9 @@
       </div>`;
     document.body.appendChild(overlay);
     const close = () => overlay.remove();
-    $("#add-close").onclick = close;
-    overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
-    $("#urls-file").onchange = async (ev) => {
-      const f = ev.target.files?.[0];
-      if (!f) return;
-      const text = await f.text();
-      $("#yt-urls").value = (($("#yt-urls").value || "") + "\n" + text).trim();
-    };
-    $("#save-urls").onclick = async () => {
-      const urls = parseUrlBlob($("#yt-urls").value);
+    const ta = $("#yt-urls");
+    const doSave = async () => {
+      const urls = parseUrlBlob(ta.value);
       if (!urls.length) return toast("Вставь хотя бы одну ссылку");
       const out = $("#add-out");
       out.textContent = `Добавляю ${urls.length}…`;
@@ -1509,6 +1542,37 @@
       toast(`Добавлено: ${ok}`);
       if (ok) setTimeout(close, 600);
     };
+    $("#add-close").onclick = close;
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+    $("#urls-file").onchange = async (ev) => {
+      const f = ev.target.files?.[0];
+      if (!f) return;
+      const text = await f.text();
+      ta.value = ((ta.value || "") + "\n" + text).trim();
+      ta.focus();
+    };
+    $("#save-urls").onclick = () => doSave();
+    ta.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter") return;
+      if (e.ctrlKey || e.metaKey) {
+        // Ctrl/⌘+Enter → newline
+        e.preventDefault();
+        const start = ta.selectionStart;
+        const end = ta.selectionEnd;
+        const v = ta.value;
+        ta.value = `${v.slice(0, start)}\n${v.slice(end)}`;
+        ta.selectionStart = ta.selectionEnd = start + 1;
+        return;
+      }
+      e.preventDefault();
+      doSave();
+    });
+    // Focus immediately so Ctrl+V → Enter works without extra click
+    requestAnimationFrame(() => {
+      ta.focus();
+      const len = ta.value.length;
+      ta.setSelectionRange(len, len);
+    });
   }
 
   async function renderAdd() {

@@ -240,6 +240,27 @@ button { cursor: pointer; }
   padding-bottom: 8px;
   scroll-snap-type: x mandatory;
 }
+.rail-track.drag-scroll-ready,
+.folder-rail.drag-scroll-ready,
+.drag-scroll.drag-scroll-ready {
+  cursor: grab;
+  -webkit-user-select: none;
+  user-select: none;
+  touch-action: pan-y;
+}
+.rail-track.is-dragging,
+.folder-rail.is-dragging,
+.drag-scroll.is-dragging {
+  cursor: grabbing;
+  scroll-snap-type: none;
+}
+.rail-track img,
+.folder-rail img,
+.drag-scroll img {
+  -webkit-user-drag: none;
+  user-drag: none;
+  pointer-events: auto;
+}
 .rail-track::-webkit-scrollbar { height: 6px; }
 .rail-track::-webkit-scrollbar-thumb {
   background: rgba(255, 255, 255, 0.12);
@@ -275,11 +296,30 @@ button { cursor: pointer; }
 .card-actions .play-btn {
   min-width: 44px;
   padding: 8px 12px;
+  flex: 1;
 }
-.card-actions .eye-btn {
-  min-width: 44px;
-  padding: 8px 10px;
-  opacity: 0.85;
+.thumb-eye {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  z-index: 4;
+  appearance: none;
+  border: none;
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.72);
+  color: #fff;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  backdrop-filter: blur(6px);
+  padding: 0;
+}
+.thumb-eye:hover {
+  background: rgba(255, 59, 48, 0.85);
 }
 .card-menu {
   position: absolute;
