@@ -642,10 +642,12 @@
       el.dataset.dragScroll = "1";
       el.classList.add("drag-scroll-ready");
       let down = false;
+      let dragging = false;
       let startX = 0;
       let startY = 0;
       let startScroll = 0;
-      let moved = false;
+      let pointerId = null;
+      const THRESH = 12;
 
       const isControl = (target) =>
         !!target.closest(
@@ -655,60 +657,55 @@
       el.addEventListener("pointerdown", (e) => {
         if (e.pointerType === "mouse" && e.button !== 0) return;
         if (isControl(e.target)) return;
-        // Organize: HTML5 DnD between folders — don't steal the gesture
         if (e.target.closest(".folder-tile[draggable='true']")) return;
         down = true;
-        moved = false;
+        dragging = false;
         startX = e.clientX;
         startY = e.clientY;
         startScroll = el.scrollLeft;
-        try {
-          el.setPointerCapture(e.pointerId);
-        } catch (_) {}
+        pointerId = e.pointerId;
+        // Don't capture yet — plain click must open the card
       });
 
       el.addEventListener("pointermove", (e) => {
         if (!down) return;
         const dx = e.clientX - startX;
         const dy = e.clientY - startY;
-        if (!moved) {
-          if (Math.abs(dx) < 5 && Math.abs(dy) < 5) return;
-          // Vertical intent → let page scroll; horizontal → rail
-          if (Math.abs(dy) > Math.abs(dx) + 4) {
+        if (!dragging) {
+          if (Math.abs(dx) < THRESH && Math.abs(dy) < THRESH) return;
+          // Vertical page scroll → abort rail drag
+          if (Math.abs(dy) > Math.abs(dx) + 2) {
             down = false;
-            el.classList.remove("is-dragging");
             return;
           }
-          moved = true;
+          dragging = true;
           el.classList.add("is-dragging");
+          try {
+            el.setPointerCapture(pointerId);
+          } catch (_) {}
         }
         el.scrollLeft = startScroll - dx;
         e.preventDefault();
       });
 
-      const endDrag = () => {
+      const endDrag = (e) => {
+        const wasDragging = dragging;
         down = false;
+        dragging = false;
         el.classList.remove("is-dragging");
+        if (wasDragging) {
+          // Swallow the click that follows a drag
+          const kill = (ev) => {
+            ev.preventDefault();
+            ev.stopPropagation();
+          };
+          el.addEventListener("click", kill, { capture: true, once: true });
+        }
       };
       el.addEventListener("pointerup", endDrag);
       el.addEventListener("pointercancel", endDrag);
-      el.addEventListener("lostpointercapture", endDrag);
-
-      // After a drag, kill the click that would open the card
-      el.addEventListener(
-        "click",
-        (e) => {
-          if (moved) {
-            e.preventDefault();
-            e.stopPropagation();
-            moved = false;
-          }
-        },
-        true
-      );
 
       el.addEventListener("dragstart", (e) => {
-        // Organize draft tiles still use HTML5 DnD between folders
         if (e.target.closest(".folder-tile[draggable='true']")) return;
         if (e.target.closest("img, a.card-main, .card")) e.preventDefault();
       });
@@ -2048,7 +2045,11 @@
                     : `<button type="button" class="btn secondary" data-save-yt="${escapeHtml(it.video_id)}">В очередь</button>`}
                 </div>
               </div>`).join("")
-            : `<div class="empty">Не нашлось — проверь YOUTUBE_API_KEY или попробуй другой ролик</div>`}
+            : `<div class="empty">${
+                ytRelated.error === "no_youtube_search_auth"
+                  ? "Нет доступа к YouTube Search — нужен YOUTUBE_API_KEY на сервере"
+                  : (ytRelated.note || "Пока пусто — попробуй другой ролик")
+              }</div>`}
         </div>
       </section>
       <div id="note-sheet" class="note-sheet hidden"></div>`;

@@ -155,31 +155,52 @@ def search_videos(
     max_results: int = 12,
     relevance_language: str = "ru",
     exclude_ids: set[str] | None = None,
+    access_token: str | None = None,
+    channel_id: str | None = None,
+    order: str = "relevance",
 ) -> list[dict[str, Any]]:
-    """YouTube Data API search.list — relatedToVideoId is deprecated, so we search by topic."""
+    """YouTube Data API search.list.
+
+    Prefers YOUTUBE_API_KEY; falls back to user OAuth Bearer (youtube.readonly).
+    relatedToVideoId is deprecated — we search by topic / channel.
+    """
     key = (os.environ.get("YOUTUBE_API_KEY") or "").strip()
+    token = (access_token or "").strip()
     q = (query or "").strip()
-    if not key or not q:
+    if not key and not token:
+        return []
+    if not q and not channel_id:
         return []
     exclude_ids = exclude_ids or set()
+    params: dict[str, Any] = {
+        "part": "snippet",
+        "type": "video",
+        "maxResults": min(25, max(max_results + 4, 8)),
+        "relevanceLanguage": relevance_language,
+        "safeSearch": "moderate",
+        "order": order if order in ("relevance", "date", "viewCount", "rating") else "relevance",
+    }
+    if q:
+        params["q"] = q[:120]
+    if channel_id:
+        params["channelId"] = channel_id
+    headers: dict[str, str] = {}
+    if key:
+        params["key"] = key
+    else:
+        headers["Authorization"] = f"Bearer {token}"
     try:
         r = requests.get(
             "https://www.googleapis.com/youtube/v3/search",
-            params={
-                "part": "snippet",
-                "type": "video",
-                "q": q[:120],
-                "maxResults": min(25, max(max_results + 4, 8)),
-                "relevanceLanguage": relevance_language,
-                "safeSearch": "moderate",
-                "key": key,
-            },
+            params=params,
+            headers=headers or None,
             timeout=12,
         )
-    except Exception:
+    except Exception as e:
+        print(f"[yt search] network: {e}", flush=True)
         return []
     if r.status_code != 200:
-        print(f"[yt search] HTTP {r.status_code}: {r.text[:200]}", flush=True)
+        print(f"[yt search] HTTP {r.status_code}: {r.text[:240]}", flush=True)
         return []
     items = (r.json() or {}).get("items") or []
     out: list[dict[str, Any]] = []
@@ -213,6 +234,12 @@ def search_videos(
         if len(out) >= max_results:
             break
     return out
+
+
+def youtube_search_configured() -> dict[str, bool]:
+    return {
+        "api_key": bool((os.environ.get("YOUTUBE_API_KEY") or "").strip()),
+    }
 
 
 def format_duration(sec: Optional[int]) -> str:

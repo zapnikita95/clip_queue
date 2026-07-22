@@ -1076,7 +1076,7 @@ def create_app() -> Flask:
     @app.get("/api/videos/<video_id>/yt-related")
     @require_auth
     def yt_related(video_id: str):
-        """Topic search on YouTube (relatedToVideoId deprecated). Re-rank vs library signals."""
+        """Topic + channel search on YouTube (relatedToVideoId deprecated)."""
         uid = current_user()["user_id"]
         row = db.fetchone("SELECT * FROM videos WHERE video_id = ?", (video_id,))
         if not row:
@@ -1086,26 +1086,80 @@ def create_app() -> Flask:
             row.get("channel_title") or "",
             row.get("description") or "",
         )
+        access = ""
+        oauth_ok = False
+        try:
+            access = google_oauth.get_valid_access_token(uid)
+            oauth_ok = bool(access)
+        except Exception as e:
+            print(f"[yt-related] oauth: {e}", flush=True)
+        has_key = bool((os.environ.get("YOUTUBE_API_KEY") or "").strip())
+        if not has_key and not oauth_ok:
+            return jsonify(
+                {
+                    "ok": True,
+                    "query": q,
+                    "items": [],
+                    "error": "no_youtube_search_auth",
+                    "note": "Нужен YOUTUBE_API_KEY на сервере или вход через Google (YouTube).",
+                }
+            )
+
         lib_ids = {
             r["video_id"]
             for r in db.fetchall(
                 "SELECT video_id FROM library_items WHERE user_id = ?", (uid,)
             )
         }
-        found = yt.search_videos(q, max_results=14, exclude_ids={video_id})
-        # Mark already-in-library; soft-boost same-topic title overlap with anchor
-        anchor_toks = set(sim.tokens(f"{row.get('title') or ''} {(row.get('description') or '')[:400]}"))
-        scored = []
+        exclude = {video_id}
+        found: list[dict] = []
+        # 1) Topic search across YouTube
+        found.extend(
+            yt.search_videos(
+                q,
+                max_results=10,
+                exclude_ids=exclude,
+                access_token=None if has_key else access,
+            )
+        )
+        exclude |= {x["video_id"] for x in found}
+        # 2) More from same channel (discovery of sibling uploads)
+        ch = (row.get("channel_id") or "").strip()
+        if ch:
+            found.extend(
+                yt.search_videos(
+                    "",
+                    max_results=6,
+                    exclude_ids=exclude,
+                    access_token=None if has_key else access,
+                    channel_id=ch,
+                    order="date",
+                )
+            )
+        # Dedup keep order
+        seen: set[str] = set()
+        uniq = []
         for it in found:
+            vid = it["video_id"]
+            if vid in seen:
+                continue
+            seen.add(vid)
+            uniq.append(it)
+
+        anchor_toks = set(
+            sim.tokens(f"{row.get('title') or ''} {(row.get('description') or '')[:400]}")
+        )
+        scored = []
+        for it in uniq:
             toks = set(sim.tokens(f"{it.get('title') or ''} {it.get('description') or ''}"))
             ov = len(anchor_toks & toks)
-            sc = float(ov)
+            sc = float(ov) + 0.3  # keep weak matches visible
             if it["video_id"] in lib_ids:
                 it["in_library"] = True
-                sc += 0.5
-            # Prefer other channels for discovery
-            if it.get("channel_id") and it.get("channel_id") == (row.get("channel_id") or ""):
-                sc -= 0.8
+                sc += 0.4
+            # Prefer other channels slightly for discovery
+            if it.get("channel_id") and it.get("channel_id") == ch:
+                sc -= 0.3
             it["similarity"] = round(sc, 2)
             scored.append(it)
         scored.sort(key=lambda x: -float(x.get("similarity") or 0))
@@ -1114,7 +1168,8 @@ def create_app() -> Flask:
                 "ok": True,
                 "query": q,
                 "items": scored[:12],
-                "note": "YouTube search по теме ролика (related API закрыт). Можно сохранить в очередь.",
+                "auth": "api_key" if has_key else "oauth",
+                "note": "Поиск по теме + ещё с канала. Сохрани интересное в очередь.",
             }
         )
 
