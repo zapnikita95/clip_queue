@@ -377,7 +377,7 @@ def create_app() -> Flask:
             level = int(body.get("interest") or 0)
         except (TypeError, ValueError):
             level = 0
-        level = max(0, min(2, level))  # 0 normal, 1 interesting, 2 very
+        level = max(-1, min(2, level))  # -1 less, 0 normal, 1 interesting, 2 very
         row = db.fetchone(
             "SELECT video_id FROM library_items WHERE user_id = ? AND video_id = ?",
             (uid, video_id),
@@ -942,7 +942,7 @@ def create_app() -> Flask:
                 )
         if "interest" in body:
             try:
-                interest = max(0, min(2, int(body.get("interest"))))
+                interest = max(-1, min(2, int(body.get("interest"))))
             except (TypeError, ValueError):
                 interest = 0
             sets.append("interest = ?")

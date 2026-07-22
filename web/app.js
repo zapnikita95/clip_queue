@@ -37,6 +37,139 @@
     toastTimer = setTimeout(() => toastEl.classList.add("hidden"), 2800);
   }
 
+  // --- Undo bar (Gmail-style) ---
+  let undoTick = null;
+  let undoPending = null;
+
+  function ensureUndoBar() {
+    let bar = $("#undo-bar");
+    if (bar) return bar;
+    bar = document.createElement("div");
+    bar.id = "undo-bar";
+    bar.className = "undo-bar hidden";
+    bar.innerHTML = `
+      <span class="undo-msg"></span>
+      <span class="undo-count"></span>
+      <button type="button" class="undo-btn" id="undo-action">Отменить</button>
+      <button type="button" class="undo-x" id="undo-dismiss" aria-label="Закрыть">×</button>`;
+    document.body.appendChild(bar);
+    return bar;
+  }
+
+  function commitPendingUndo() {
+    if (!undoPending) return;
+    const p = undoPending;
+    undoPending = null;
+    clearInterval(undoTick);
+    undoTick = null;
+    const bar = $("#undo-bar");
+    if (bar) bar.classList.add("hidden");
+    try { p.onCommit && p.onCommit(); } catch (_) {}
+  }
+
+  function showUndo({ message, seconds = 8, onUndo, onCommit }) {
+    // Previous pending action commits immediately
+    commitPendingUndo();
+    toastEl.classList.add("hidden");
+    const bar = ensureUndoBar();
+    const msg = bar.querySelector(".undo-msg");
+    const cnt = bar.querySelector(".undo-count");
+    let left = seconds;
+    msg.textContent = message;
+    cnt.textContent = `${left}с`;
+    bar.classList.remove("hidden");
+    undoPending = { onUndo, onCommit };
+    clearInterval(undoTick);
+    undoTick = setInterval(() => {
+      left -= 1;
+      cnt.textContent = `${left}с`;
+      if (left <= 0) commitPendingUndo();
+    }, 1000);
+    $("#undo-action").onclick = () => {
+      const p = undoPending;
+      undoPending = null;
+      clearInterval(undoTick);
+      undoTick = null;
+      bar.classList.add("hidden");
+      try { p && p.onUndo && p.onUndo(); } catch (_) {}
+    };
+    $("#undo-dismiss").onclick = () => commitPendingUndo();
+  }
+
+  const LEXICON_SNOOZE_KEY = "cq_lexicon_snooze_until";
+
+  function lexiconSnoozed() {
+    const until = Number(localStorage.getItem(LEXICON_SNOOZE_KEY) || 0);
+    return until > Date.now();
+  }
+
+  function setLexiconSnooze(msOrForever) {
+    if (msOrForever === "forever") {
+      localStorage.setItem(LEXICON_SNOOZE_KEY, String(Date.now() + 1000 * 60 * 60 * 24 * 365 * 50));
+      return;
+    }
+    localStorage.setItem(LEXICON_SNOOZE_KEY, String(Date.now() + Number(msOrForever)));
+  }
+
+  function openLexiconPrompt(videoId, { note = "", title = "" } = {}) {
+    if (lexiconSnoozed()) return;
+    let sheet = $("#note-sheet-global");
+    if (sheet) sheet.remove();
+    sheet = document.createElement("div");
+    sheet.id = "note-sheet-global";
+    sheet.className = "note-sheet";
+    sheet.innerHTML = `
+      <div class="note-sheet-card">
+        <b>Как бы ты описал этот видос?</b>
+        ${title ? `<div class="muted" style="margin-top:4px;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(title)}</div>` : ""}
+        <p class="muted" style="margin:8px 0 10px;font-size:13px">Своими словами — потом поиск поймёт «стрёмную хрень» или «уют на вечер».</p>
+        <textarea id="watch-note" rows="2" placeholder="уют на вечер / ржака не стендап / …">${escapeHtml(note)}</textarea>
+        <div class="btn-row" style="margin-top:12px;flex-wrap:wrap">
+          <button type="button" class="btn" id="watch-note-save">Сохранить</button>
+          <button type="button" class="btn ghost" id="watch-note-skip">Пропустить</button>
+        </div>
+        <div class="lexicon-snooze">
+          <label class="muted" for="lexicon-snooze-sel">Не спрашивать</label>
+          <select id="lexicon-snooze-sel">
+            <option value="">сейчас спросить</option>
+            <option value="3600000">час</option>
+            <option value="86400000">день</option>
+            <option value="604800000">неделю</option>
+            <option value="1209600000">2 недели</option>
+            <option value="forever">никогда</option>
+          </select>
+        </div>
+      </div>`;
+    document.body.appendChild(sheet);
+    const close = () => sheet.remove();
+    sheet.addEventListener("click", (e) => { if (e.target === sheet) close(); });
+    $("#watch-note-skip").onclick = () => {
+      const v = $("#lexicon-snooze-sel")?.value;
+      if (v === "forever") setLexiconSnooze("forever");
+      else if (v) setLexiconSnooze(Number(v));
+      close();
+    };
+    $("#watch-note-save").onclick = async () => {
+      const text = ($("#watch-note")?.value || "").trim();
+      const v = $("#lexicon-snooze-sel")?.value;
+      if (v === "forever") setLexiconSnooze("forever");
+      else if (v) setLexiconSnooze(Number(v));
+      if (text) {
+        try {
+          await api(`/api/library/${encodeURIComponent(videoId)}`, {
+            method: "PATCH",
+            body: JSON.stringify({ note: text }),
+          });
+          toast("Запомнил твои слова");
+        } catch (e) {
+          toast(e.message);
+        }
+      }
+      close();
+    };
+    requestAnimationFrame(() => $("#watch-note")?.focus());
+  }
+
   function escapeHtml(s) {
     return String(s ?? "")
       .replace(/&/g, "&amp;")
@@ -194,8 +327,10 @@
       <div class="card-menu">
         <button type="button" class="card-menu-btn" data-menu-toggle aria-label="Ещё">⋯</button>
         <div class="card-menu-pop hidden">
-          <button type="button" data-act="boost1">Интересно</button>
           <button type="button" data-act="boost2">Очень интересно</button>
+          <button type="button" data-act="boost1">Интересно</button>
+          <button type="button" data-act="boost0">Обычный интерес</button>
+          <button type="button" data-act="boost_down">Менее интересно</button>
           <button type="button" data-act="watched">Просмотрено</button>
           ${listId ? `<button type="button" data-act="remove-cat">Убрать из категории</button>` : ""}
           ${draftFolder ? `<button type="button" data-act="remove-draft">Убрать из категории</button>` : ""}
@@ -208,7 +343,7 @@
     const listId = opts.listId || "";
     const dur = item.duration_label ? `<span class="badge">${escapeHtml(item.duration_label)}</span>` : "";
     const boost = Number(item.interest || 0);
-    const boostMark = boost >= 2 ? "🔥🔥" : boost === 1 ? "🔥" : "";
+    const boostMark = boost >= 2 ? "🔥🔥" : boost === 1 ? "🔥" : boost < 0 ? "↓" : "";
     const pills = (item.user_tags || []).slice(0, 3).map((t) =>
       `<span class="tag-pill tag-pill-sm">${escapeHtml((t.emoji || "") + " " + t.name)}</span>`
     ).join("");
@@ -234,40 +369,132 @@
       </div>`;
   }
 
-  async function runCardAction(act, videoId, listId) {
+  function hideCardOptimistic(videoId, listId) {
+    const sel = listId
+      ? `.card[data-video-id="${CSS.escape(videoId)}"][data-list-id="${CSS.escape(String(listId))}"]`
+      : `.card[data-video-id="${CSS.escape(videoId)}"]`;
+    const nodes = [...document.querySelectorAll(sel)];
+    nodes.forEach((el) => {
+      el.dataset.undoHidden = "1";
+      el.style.display = "none";
+    });
+    return () => {
+      nodes.forEach((el) => {
+        el.style.display = "";
+        delete el.dataset.undoHidden;
+      });
+    };
+  }
+
+  async function runCardAction(act, videoId, listId, meta = {}) {
     if (!videoId || !act) return;
     try {
-      if (act === "boost1" || act === "boost2") {
+      if (act === "boost1" || act === "boost2" || act === "boost0" || act === "boost_down") {
+        const level = act === "boost2" ? 2 : act === "boost1" ? 1 : act === "boost_down" ? -1 : 0;
         await api(`/api/library/${encodeURIComponent(videoId)}`, {
           method: "PATCH",
-          body: JSON.stringify({ interest: act === "boost2" ? 2 : 1 }),
+          body: JSON.stringify({ interest: level }),
         });
-        toast(act === "boost2" ? "Очень интересно — выше в теме" : "Интересно");
+        const labels = {
+          2: "Очень интересно — выше в теме",
+          1: "Интересно",
+          0: "Обычный интерес",
+          [-1]: "Менее интересно — ниже в теме",
+        };
+        toast(labels[level] || "Ок");
+        // Soft visual: refresh boost marks without full reload
+        document.querySelectorAll(`.card[data-video-id="${CSS.escape(videoId)}"] .card-boost`).forEach((el) => el.remove());
+        if (level >= 1) {
+          document.querySelectorAll(`.card[data-video-id="${CSS.escape(videoId)}"] .card-thumb`).forEach((thumb) => {
+            const span = document.createElement("span");
+            span.className = "card-boost";
+            span.textContent = level >= 2 ? "🔥🔥" : "🔥";
+            thumb.appendChild(span);
+          });
+        }
       } else if (act === "watched") {
-        await api(`/api/library/${encodeURIComponent(videoId)}`, {
-          method: "PATCH",
-          body: JSON.stringify({ status: "watched" }),
+        const restore = hideCardOptimistic(videoId, listId);
+        const title = meta.title || "";
+        showUndo({
+          message: "Просмотрено",
+          seconds: 8,
+          onUndo: restore,
+          onCommit: async () => {
+            try {
+              await api(`/api/library/${encodeURIComponent(videoId)}`, {
+                method: "PATCH",
+                body: JSON.stringify({ status: "watched" }),
+              });
+              document.querySelectorAll(`.card[data-video-id="${CSS.escape(videoId)}"]`).forEach((el) => el.remove());
+              openLexiconPrompt(videoId, { title });
+            } catch (e) {
+              restore();
+              toast(e.message);
+            }
+          },
         });
-        toast("Отмечено просмотренным");
-        document.querySelectorAll(`.card[data-video-id="${CSS.escape(videoId)}"]`).forEach((el) => el.remove());
       } else if (act === "dismiss") {
-        if (!confirm("Убрать из Clip Queue? При синке больше не вернётся.")) return;
-        await api(`/api/library/${encodeURIComponent(videoId)}`, {
-          method: "PATCH",
-          body: JSON.stringify({ status: "dismissed" }),
+        const restore = hideCardOptimistic(videoId, listId);
+        showUndo({
+          message: "Удалено из Clip Queue",
+          seconds: 8,
+          onUndo: restore,
+          onCommit: async () => {
+            try {
+              await api(`/api/library/${encodeURIComponent(videoId)}`, {
+                method: "PATCH",
+                body: JSON.stringify({ status: "dismissed" }),
+              });
+              document.querySelectorAll(`.card[data-video-id="${CSS.escape(videoId)}"]`).forEach((el) => el.remove());
+            } catch (e) {
+              restore();
+              toast(e.message);
+            }
+          },
         });
-        toast("Удалено");
-        document.querySelectorAll(`.card[data-video-id="${CSS.escape(videoId)}"]`).forEach((el) => el.remove());
       } else if (act === "remove-cat" && listId) {
-        await api(`/api/lists/${encodeURIComponent(listId)}/items/${encodeURIComponent(videoId)}`, {
-          method: "DELETE",
+        const restore = hideCardOptimistic(videoId, listId);
+        showUndo({
+          message: "Убрано из категории",
+          seconds: 8,
+          onUndo: restore,
+          onCommit: async () => {
+            try {
+              await api(`/api/lists/${encodeURIComponent(listId)}/items/${encodeURIComponent(videoId)}`, {
+                method: "DELETE",
+              });
+              document.querySelectorAll(
+                `.card[data-video-id="${CSS.escape(videoId)}"][data-list-id="${CSS.escape(String(listId))}"]`
+              ).forEach((el) => el.remove());
+            } catch (e) {
+              restore();
+              toast(e.message);
+            }
+          },
         });
-        toast("Убрано из категории");
-        document.querySelectorAll(`.card[data-video-id="${CSS.escape(videoId)}"][data-list-id="${CSS.escape(String(listId))}"]`).forEach((el) => el.remove());
+      } else if (act === "remove-draft") {
+        // organize draft — just hide with undo that reloads parent paint if needed
+        const card = document.querySelector(`.card[data-video-id="${CSS.escape(videoId)}"]`);
+        if (card) {
+          const restore = hideCardOptimistic(videoId, listId);
+          showUndo({
+            message: "Убрано из черновика",
+            seconds: 6,
+            onUndo: restore,
+            onCommit: () => {
+              card.remove();
+              card.dispatchEvent(new CustomEvent("cq-draft-remove", { bubbles: true, detail: { videoId } }));
+            },
+          });
+        }
       }
     } catch (e) {
       toast(e.message);
     }
+  }
+
+  function closeAllCardMenus() {
+    document.querySelectorAll(".card-menu-pop").forEach((p) => p.classList.add("hidden"));
   }
 
   function wireCardMenus(root = document) {
@@ -276,16 +503,16 @@
       card.dataset.wired = "1";
       const vid = card.getAttribute("data-video-id");
       const listId = card.getAttribute("data-list-id") || "";
+      const title = card.querySelector(".card-title")?.textContent || "";
       const toggle = card.querySelector("[data-menu-toggle]");
       const pop = card.querySelector(".card-menu-pop");
       if (toggle && pop) {
         toggle.onclick = (e) => {
           e.preventDefault();
           e.stopPropagation();
-          document.querySelectorAll(".card-menu-pop").forEach((p) => {
-            if (p !== pop) p.classList.add("hidden");
-          });
-          pop.classList.toggle("hidden");
+          const wasOpen = !pop.classList.contains("hidden");
+          closeAllCardMenus();
+          if (!wasOpen) pop.classList.remove("hidden");
         };
       }
       card.querySelectorAll("[data-act]").forEach((btn) => {
@@ -293,9 +520,21 @@
           e.preventDefault();
           e.stopPropagation();
           if (pop) pop.classList.add("hidden");
-          runCardAction(btn.getAttribute("data-act"), vid, listId);
+          runCardAction(btn.getAttribute("data-act"), vid, listId, { title });
         };
       });
+    });
+  }
+
+  // Click outside closes ⋯ menus
+  if (!window.__cqMenuOutside) {
+    window.__cqMenuOutside = true;
+    document.addEventListener("click", (e) => {
+      if (e.target.closest(".card-menu")) return;
+      closeAllCardMenus();
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") closeAllCardMenus();
     });
   }
 
@@ -416,6 +655,8 @@
       el.addEventListener("pointerdown", (e) => {
         if (e.pointerType === "mouse" && e.button !== 0) return;
         if (isControl(e.target)) return;
+        // Organize: HTML5 DnD between folders — don't steal the gesture
+        if (e.target.closest(".folder-tile[draggable='true']")) return;
         down = true;
         moved = false;
         startX = e.clientX;
@@ -1604,8 +1845,8 @@
       <div class="panel">
         <form id="search-form" class="smart-search smart-search-lg">
           <input type="search" id="search-q" value="${escapeHtml(q0)}" placeholder="Что хочешь посмотреть?" />
-          <button type="button" class="smart-mic" id="search-mic" title="Голосом">🎤</button>
-          <button type="submit" class="smart-go">Найти</button>
+          <button type="button" class="smart-mic" id="search-mic" title="Голосом" aria-label="Голосом">🎤</button>
+          <button type="submit" class="smart-go" title="Найти" aria-label="Найти">⌕</button>
         </form>
         <div id="search-meta" class="muted" style="margin-top:10px;font-size:13px"></div>
         <div id="search-out" style="margin-top:16px"></div>
@@ -1627,13 +1868,34 @@
         if ((interp.must_not || []).length) bits.push(`без: ${(interp.must_not || []).join(", ")}`);
         if ((interp.prefer || []).length) bits.push(`ближе: ${(interp.prefer || []).join(", ")}`);
         meta.textContent = bits.length ? bits.join(" · ") : `${(data.items || []).length} совпадений`;
-        const items = data.items || [];
-        if (!items.length) {
+        const all = data.items || [];
+        const isShortish = (it) =>
+          it.is_short || it.is_shortform || it.content_kind === "shorts" || it.content_kind === "shortform"
+          || (typeof it.duration_sec === "number" && it.duration_sec > 0 && it.duration_sec <= 180);
+        const main = all.filter((it) => !isShortish(it));
+        const shorts = all.filter((it) => isShortish(it));
+        meta.textContent = bits.length
+          ? bits.join(" · ")
+          : `${main.length} совпадений${shorts.length ? ` · ${shorts.length} шортов скрыто` : ""}`;
+        if (!main.length && !shorts.length) {
           out.innerHTML = `<div class="empty">В библиотеке ничего близкого. Попробуй другие слова или разметь пару роликов своими словами.</div>`;
           return;
         }
-        out.innerHTML = `<div class="queue-grid" id="search-grid">${items.map(cardHtml).join("")}</div>`;
-        wireCardMenus($("#search-grid"));
+        let html = "";
+        if (main.length) {
+          html += `<div class="search-grid" id="search-grid">${main.map(cardHtml).join("")}</div>`;
+        } else {
+          html += `<div class="empty">Длинных роликов нет — только шорты по запросу.</div>`;
+        }
+        if (shorts.length) {
+          html += `
+            <details class="shorts-fold" style="margin-top:18px">
+              <summary class="muted">Шорты / короткие (${shorts.length}) — обычно не для очереди</summary>
+              <div class="search-grid" style="margin-top:12px">${shorts.map(cardHtml).join("")}</div>
+            </details>`;
+        }
+        out.innerHTML = html;
+        wireCardMenus(out);
       } catch (e) {
         out.innerHTML = `<div class="empty">${escapeHtml(e.message)}</div>`;
       }
@@ -1880,42 +2142,31 @@
       toast("В «Начатые» — из очереди убрано");
       renderVideo(videoId);
     };
-    $("#mark-watched").onclick = async () => {
-      await api(`/api/library/${encodeURIComponent(videoId)}`, {
-        method: "PATCH",
-        body: JSON.stringify({ status: "watched" }),
-      });
-      toast("Просмотрено");
-      const sheet = $("#note-sheet");
-      if (sheet) {
-        sheet.classList.remove("hidden");
-        sheet.innerHTML = `
-          <div class="note-sheet-card">
-            <b>Как бы ты описал этот видос?</b>
-            <p class="muted" style="margin:6px 0 10px;font-size:13px">Своими словами — так поиск потом найдёт «стрёмную хрень», даже если в названии этого нет.</p>
-            <textarea id="watch-note" rows="2" placeholder="уют на вечер / ржака не стендап / …">${escapeHtml(noteVal)}</textarea>
-            <div class="btn-row" style="margin-top:10px">
-              <button type="button" class="btn" id="watch-note-save">Сохранить</button>
-              <button type="button" class="btn ghost" id="watch-note-skip">Пропустить</button>
-            </div>
-          </div>`;
-        $("#watch-note-skip").onclick = () => { sheet.classList.add("hidden"); renderVideo(videoId); };
-        $("#watch-note-save").onclick = async () => {
-          const note = ($("#watch-note")?.value || "").trim();
-          if (note) {
+    $("#mark-watched").onclick = () => {
+      showUndo({
+        message: "Просмотрено",
+        seconds: 8,
+        onUndo: () => {},
+        onCommit: async () => {
+          try {
             await api(`/api/library/${encodeURIComponent(videoId)}`, {
               method: "PATCH",
-              body: JSON.stringify({ note }),
+              body: JSON.stringify({ status: "watched" }),
             });
-            toast("Запомнил твои слова");
+            openLexiconPrompt(videoId, { note: noteVal, title: item.title || "" });
+            // soft refresh status without killing the prompt
+            const btn = $("#mark-watched");
+            if (btn) {
+              btn.disabled = true;
+              btn.textContent = "Уже в просмотренных";
+            }
+          } catch (e) {
+            toast(e.message);
           }
-          sheet.classList.add("hidden");
-          renderVideo(videoId);
-        };
-      } else {
-        renderVideo(videoId);
-      }
+        },
+      });
     };
+    // Remove old note-sheet inline handler block — lexicon is global
     const saveNoteBtn = $("#save-note");
     if (saveNoteBtn) {
       saveNoteBtn.onclick = async () => {
@@ -1951,10 +2202,20 @@
       toast("Снова в очереди");
       renderVideo(videoId);
     };
-    $("#delete-item").onclick = async () => {
-      await api(`/api/library/${encodeURIComponent(videoId)}`, { method: "DELETE" });
-      toast("Убрано");
-      navigate("/queue");
+    $("#delete-item").onclick = () => {
+      showUndo({
+        message: "Убрать из библиотеки",
+        seconds: 8,
+        onUndo: () => {},
+        onCommit: async () => {
+          try {
+            await api(`/api/library/${encodeURIComponent(videoId)}`, { method: "DELETE" });
+            navigate("/queue");
+          } catch (e) {
+            toast(e.message);
+          }
+        },
+      });
     };
     $("#add-tag").onclick = async () => {
       const name = $("#new-tag").value.trim();
