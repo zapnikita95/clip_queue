@@ -87,10 +87,11 @@ def create_app() -> Flask:
             {
                 "ok": True,
                 "service": "clip_queue",
-                "version": "0.2.0",
+                "version": "0.2.1",
                 "db": "postgres" if db.is_postgres() else "sqlite",
                 "google_oauth": google_oauth.configured(),
                 "llm": llm.available(),
+                "youtube_api_key": bool((os.environ.get("YOUTUBE_API_KEY") or "").strip()),
             }
         )
 
