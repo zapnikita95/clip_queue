@@ -87,7 +87,7 @@ def create_app() -> Flask:
             {
                 "ok": True,
                 "service": "clip_queue",
-                "version": "0.2.1",
+                "version": "0.2.2",
                 "db": "postgres" if db.is_postgres() else "sqlite",
                 "google_oauth": google_oauth.configured(),
                 "llm": llm.available(),
@@ -1077,16 +1077,22 @@ def create_app() -> Flask:
     @app.get("/api/videos/<video_id>/yt-related")
     @require_auth
     def yt_related(video_id: str):
-        """Topic + channel search on YouTube (relatedToVideoId deprecated)."""
+        """Topic search on YouTube — no shorts, no library dupes, min topic overlap.
+
+        relatedToVideoId is deprecated; we search with tight queries + duration filter.
+        """
         uid = current_user()["user_id"]
         row = db.fetchone("SELECT * FROM videos WHERE video_id = ?", (video_id,))
         if not row:
             return json_error("Нет видео", 404)
-        q = sim.related_search_query(
+
+        queries = sim.related_search_queries(
             row.get("title") or "",
             row.get("channel_title") or "",
             row.get("description") or "",
         )
+        q_primary = queries[0] if queries else (row.get("title") or "")[:80]
+
         access = ""
         oauth_ok = False
         try:
@@ -1099,78 +1105,134 @@ def create_app() -> Flask:
             return jsonify(
                 {
                     "ok": True,
-                    "query": q,
+                    "query": q_primary,
+                    "queries": queries,
                     "items": [],
                     "error": "no_youtube_search_auth",
                     "note": "Нужен YOUTUBE_API_KEY на сервере или вход через Google (YouTube).",
                 }
             )
 
+        token = None if has_key else access
+        # Already in library → hide from YT rail (incl. «Похожие из твоих»)
         lib_ids = {
             r["video_id"]
             for r in db.fetchall(
                 "SELECT video_id FROM library_items WHERE user_id = ?", (uid,)
             )
         }
-        exclude = {video_id}
+        exclude = {video_id} | set(lib_ids)
         found: list[dict] = []
-        # 1) Topic search across YouTube
-        found.extend(
-            yt.search_videos(
-                q,
-                max_results=10,
-                exclude_ids=exclude,
-                access_token=None if has_key else access,
-            )
-        )
-        exclude |= {x["video_id"] for x in found}
-        # 2) More from same channel (discovery of sibling uploads)
-        ch = (row.get("channel_id") or "").strip()
-        if ch:
-            found.extend(
-                yt.search_videos(
-                    "",
-                    max_results=6,
+
+        # 1) Topic searches: medium (4–20m) + long (20m+) — skip API «short»
+        for q in queries[:2]:
+            for dur in ("medium", "long"):
+                batch = yt.search_videos(
+                    q,
+                    max_results=8,
                     exclude_ids=exclude,
-                    access_token=None if has_key else access,
-                    channel_id=ch,
-                    order="date",
+                    access_token=token,
+                    video_duration=dur,
                 )
+                found.extend(batch)
+                exclude |= {x["video_id"] for x in batch}
+
+        # 2) Same channel, but still with topic words (not random latest uploads)
+        ch = (row.get("channel_id") or "").strip()
+        topic_toks = [
+            t
+            for t in sim.tokens(row.get("title") or "")
+        ]
+        # Prefer longer tokens for channel sibling search
+        topic_q = " ".join(sorted(topic_toks, key=lambda t: (-len(t), t))[:4])
+        if ch and topic_q:
+            batch = yt.search_videos(
+                topic_q,
+                max_results=6,
+                exclude_ids=exclude,
+                access_token=token,
+                channel_id=ch,
+                order="relevance",
+                video_duration="medium",
             )
+            found.extend(batch)
+            exclude |= {x["video_id"] for x in batch}
+            batch = yt.search_videos(
+                topic_q,
+                max_results=4,
+                exclude_ids=exclude,
+                access_token=token,
+                channel_id=ch,
+                order="relevance",
+                video_duration="long",
+            )
+            found.extend(batch)
+
         # Dedup keep order
         seen: set[str] = set()
-        uniq = []
+        uniq: list[dict] = []
         for it in found:
             vid = it["video_id"]
-            if vid in seen:
+            if vid in seen or vid in lib_ids:
+                continue
+            title_l = (it.get("title") or "").lower()
+            if "#shorts" in title_l or " #short" in title_l:
                 continue
             seen.add(vid)
             uniq.append(it)
 
-        anchor_toks = set(
-            sim.tokens(f"{row.get('title') or ''} {(row.get('description') or '')[:400]}")
-        )
-        scored = []
+        # Hard duration cut: drop true shorts / very short clips
+        min_sec = 180  # 3+ minutes
+        durs = yt.fetch_durations([it["video_id"] for it in uniq], access_token=token)
+        lasting: list[dict] = []
         for it in uniq:
-            toks = set(sim.tokens(f"{it.get('title') or ''} {it.get('description') or ''}"))
-            ov = len(anchor_toks & toks)
-            sc = float(ov) + 0.3  # keep weak matches visible
-            if it["video_id"] in lib_ids:
-                it["in_library"] = True
-                sc += 0.4
-            # Prefer other channels slightly for discovery
+            sec = durs.get(it["video_id"])
+            if sec is not None and sec < min_sec:
+                continue
+            if sec is not None:
+                it["duration_sec"] = sec
+                it["duration_label"] = yt.format_duration(sec)
+            lasting.append(it)
+
+        anchor_toks = sim.tokens(
+            f"{row.get('title') or ''} {(row.get('description') or '')[:500]}"
+        )
+        scored: list[dict] = []
+        for it in lasting:
+            sc = sim.topic_overlap_score(
+                anchor_toks,
+                it.get("title") or "",
+                it.get("description") or "",
+            )
+            # Drop topical garbage (Comedy Club on «трудности перевода» etc.)
+            if sc < 1.15:
+                continue
             if it.get("channel_id") and it.get("channel_id") == ch:
-                sc -= 0.3
+                sc += 0.55  # sibling on same channel + topic = good
+            it["in_library"] = False
             it["similarity"] = round(sc, 2)
             scored.append(it)
         scored.sort(key=lambda x: -float(x.get("similarity") or 0))
+        # Diversify channels a bit
+        final: list[dict] = []
+        ch_count: dict[str, int] = {}
+        for it in scored:
+            cid = it.get("channel_id") or "_"
+            if ch_count.get(cid, 0) >= 3:
+                continue
+            ch_count[cid] = ch_count.get(cid, 0) + 1
+            final.append(it)
+            if len(final) >= 12:
+                break
+
         return jsonify(
             {
                 "ok": True,
-                "query": q,
-                "items": scored[:12],
+                "query": q_primary,
+                "queries": queries,
+                "items": final,
                 "auth": "api_key" if has_key else "oauth",
-                "note": "Поиск по теме + ещё с канала. Сохрани интересное в очередь.",
+                "note": "По теме и с канала · без шорцов · без уже добавленных",
             }
         )
 

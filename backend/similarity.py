@@ -206,21 +206,71 @@ def rank_similar(
 
 
 def related_search_query(title: str, channel_title: str = "", description: str = "") -> str:
-    """Build a YouTube search query that captures the topic, not only the channel."""
+    """Primary YouTube search query — topic, not channel name."""
+    qs = related_search_queries(title, channel_title, description)
+    return qs[0] if qs else (title or "")[:80]
+
+
+def related_search_queries(
+    title: str,
+    channel_title: str = "",
+    description: str = "",
+) -> list[str]:
+    """Several tight queries: quoted title core, keyword topic, optional channel+topic."""
     title = (title or "").strip()
-    # Drop episode noise
+    channel_title = (channel_title or "").strip()
+    desc = (description or "")[:400]
     cleaned = re.sub(r"[\[\(].*?[\]\)]", " ", title)
-    cleaned = re.sub(r"\b(часть|часть\s*\d+|part\s*\d+|ep\.?\s*\d+|выпуск\s*\d+)\b", " ", cleaned, flags=re.I)
-    toks = [t for t in _token_list(cleaned) if t not in _STOP][:6]
-    if len(toks) < 2:
-        toks = _token_list(title)[:5]
-    # Pull distinctive words from description start
-    for t in _token_list((description or "")[:280]):
-        if t not in toks and t not in _STOP:
-            toks.append(t)
-        if len(toks) >= 7:
-            break
-    q = " ".join(toks[:7])
-    if not q and channel_title:
-        q = channel_title
-    return q.strip() or title[:80]
+    cleaned = re.sub(
+        r"\b(часть|часть\s*\d+|part\s*\d+|ep\.?\s*\d+|выпуск\s*\d+|сезон\s*\d+)\b",
+        " ",
+        cleaned,
+        flags=re.I,
+    )
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    toks = [t for t in _token_list(cleaned) if t not in _STOP]
+    # Prefer longer / rarer tokens for the topic core
+    core = sorted(toks, key=lambda t: (-len(t), t))[:5]
+    queries: list[str] = []
+    if cleaned and len(cleaned) >= 8:
+        # Quoted phrase forces topical match (avoids Comedy Club on «трудности»)
+        phrase = cleaned[:70].strip(" -–—|")
+        if len(phrase) >= 8:
+            queries.append(f'"{phrase}"')
+    if len(core) >= 2:
+        queries.append(" ".join(core[:5]))
+    elif core:
+        # Single strong token + a desc hint
+        extra = [t for t in _token_list(desc) if t not in _STOP and t not in core][:3]
+        queries.append(" ".join(core + extra))
+    # Same-channel siblings that still match the topic words
+    if channel_title and core:
+        queries.append(f"{channel_title} {' '.join(core[:3])}")
+    # Dedup preserve order
+    seen: set[str] = set()
+    out: list[str] = []
+    for q in queries:
+        q = (q or "").strip()
+        if not q or q.lower() in seen:
+            continue
+        seen.add(q.lower())
+        out.append(q)
+    if not out and title:
+        out.append(title[:80])
+    return out[:3]
+
+
+def topic_overlap_score(anchor_toks: set[str], title: str, description: str = "") -> float:
+    """How well a candidate matches the anchor topic (0 = noise)."""
+    cand = _tokens(f"{title or ''} {(description or '')[:300]}")
+    if not anchor_toks or not cand:
+        return 0.0
+    ov = anchor_toks & cand
+    if not ov:
+        return 0.0
+    # Longer shared tokens count more
+    w = sum(1.0 + max(0, len(t) - 4) * 0.15 for t in ov)
+    # Jaccard-ish dampening of generic spam
+    j = len(ov) / max(1, len(anchor_toks | cand))
+    return w + j * 2.0
+

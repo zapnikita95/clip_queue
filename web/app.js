@@ -2022,7 +2022,7 @@
       </section>
       <section class="rail" style="margin-top:18px">
         <div class="rail-head"><h2>Похожие на YouTube</h2>
-          <span class="muted" style="font-size:13px">${ytRelated.query ? escapeHtml(ytRelated.query) : "по теме"}</span>
+          <span class="muted" style="font-size:13px">${ytRelated.query ? escapeHtml(String(ytRelated.query).replace(/^"|"$/g, "")) : "по теме · без шорцов"}</span>
         </div>
         <div class="rail-track drag-scroll" id="yt-related-rail">
           ${(ytRelated.items || []).length
@@ -2031,7 +2031,7 @@
                 <a class="card-main" href="${escapeHtml(it.watch_url)}" target="_blank" rel="noopener">
                   <div class="card-thumb">
                     <img src="${escapeHtml(it.thumb_url)}" alt="" loading="lazy" />
-                    ${it.in_library ? `<span class="badge">уже есть</span>` : ""}
+                    ${it.duration_label ? `<span class="badge">${escapeHtml(it.duration_label)}</span>` : ""}
                   </div>
                   <div class="card-body">
                     <h3 class="card-title">${escapeHtml(it.title)}</h3>
@@ -2040,15 +2040,13 @@
                 </a>
                 <div class="card-actions">
                   <a class="btn play-btn" href="${escapeHtml(it.watch_url)}" target="_blank" rel="noopener">▶</a>
-                  ${it.in_library
-                    ? `<a class="btn ghost" href="/v/${encodeURIComponent(it.video_id)}" data-nav>Открыть</a>`
-                    : `<button type="button" class="btn secondary" data-save-yt="${escapeHtml(it.video_id)}">В очередь</button>`}
+                  <button type="button" class="btn secondary" data-save-yt="${escapeHtml(it.video_id)}">В очередь</button>
                 </div>
               </div>`).join("")
             : `<div class="empty">${
                 ytRelated.error === "no_youtube_search_auth"
                   ? "Нет доступа к YouTube Search — нужен YOUTUBE_API_KEY на сервере"
-                  : (ytRelated.note || "Пока пусто — попробуй другой ролик")
+                  : (ytRelated.note || "По теме ничего не нашлось — попробуй другой ролик")
               }</div>`}
         </div>
       </section>

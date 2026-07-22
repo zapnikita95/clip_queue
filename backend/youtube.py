@@ -158,11 +158,13 @@ def search_videos(
     access_token: str | None = None,
     channel_id: str | None = None,
     order: str = "relevance",
+    video_duration: str | None = None,
 ) -> list[dict[str, Any]]:
     """YouTube Data API search.list.
 
     Prefers YOUTUBE_API_KEY; falls back to user OAuth Bearer (youtube.readonly).
     relatedToVideoId is deprecated — we search by topic / channel.
+    video_duration: short | medium | long | None
     """
     key = (os.environ.get("YOUTUBE_API_KEY") or "").strip()
     token = (access_token or "").strip()
@@ -184,6 +186,8 @@ def search_videos(
         params["q"] = q[:120]
     if channel_id:
         params["channelId"] = channel_id
+    if video_duration in ("short", "medium", "long"):
+        params["videoDuration"] = video_duration
     headers: dict[str, str] = {}
     if key:
         params["key"] = key
@@ -233,6 +237,52 @@ def search_videos(
         )
         if len(out) >= max_results:
             break
+    return out
+
+
+def fetch_durations(
+    video_ids: list[str],
+    *,
+    access_token: str | None = None,
+) -> dict[str, int]:
+    """Batch videos.list → video_id → duration_sec."""
+    key = (os.environ.get("YOUTUBE_API_KEY") or "").strip()
+    token = (access_token or "").strip()
+    if not key and not token:
+        return {}
+    ids = [v for v in video_ids if v]
+    out: dict[str, int] = {}
+    for i in range(0, len(ids), 50):
+        chunk = ids[i : i + 50]
+        params: dict[str, Any] = {
+            "id": ",".join(chunk),
+            "part": "contentDetails",
+        }
+        headers: dict[str, str] = {}
+        if key:
+            params["key"] = key
+        else:
+            headers["Authorization"] = f"Bearer {token}"
+        try:
+            r = requests.get(
+                "https://www.googleapis.com/youtube/v3/videos",
+                params=params,
+                headers=headers or None,
+                timeout=12,
+            )
+        except Exception as e:
+            print(f"[yt durations] network: {e}", flush=True)
+            continue
+        if r.status_code != 200:
+            print(f"[yt durations] HTTP {r.status_code}: {r.text[:200]}", flush=True)
+            continue
+        for it in (r.json() or {}).get("items") or []:
+            vid = (it.get("id") or "").strip()
+            sec = _iso8601_duration_to_sec(
+                ((it.get("contentDetails") or {}).get("duration") or "")
+            )
+            if vid and isinstance(sec, int):
+                out[vid] = sec
     return out
 
 
