@@ -12,7 +12,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from flask import Flask, g, jsonify, redirect, request, send_from_directory
 
-from backend import auth, db, google_oauth, llm, organize, sync_jobs, takeout, themes, yt_sync
+from backend import auth, db, google_oauth, llm, organize, search as cq_search, sync_jobs, takeout, themes, yt_sync
 from backend import similarity as sim
 from backend import youtube as yt
 
@@ -1025,14 +1025,21 @@ def create_app() -> Flask:
         anchor_row = db.fetchone("SELECT * FROM videos WHERE video_id = ?", (video_id,))
         if not anchor_row:
             return json_error("Нет видео", 404)
+        anchor_li = db.fetchone(
+            "SELECT note, interest FROM library_items WHERE user_id = ? AND video_id = ?",
+            (uid, video_id),
+        )
         anchor = yt.card_from_video_row(anchor_row)
         anchor["tags"] = sim.parse_tags_json(anchor_row.get("tags_json"))
+        anchor["note"] = (anchor_li or {}).get("note") or ""
 
         rows = db.fetchall(
             """
-            SELECT v.* FROM library_items li
+            SELECT v.*, li.note AS user_note, li.status AS lib_status
+            FROM library_items li
             JOIN videos v ON v.video_id = li.video_id
             WHERE li.user_id = ? AND li.video_id != ?
+              AND COALESCE(li.status, 'queue') NOT IN ('dismissed', 'rejected')
             """,
             (uid, video_id),
         )
@@ -1040,6 +1047,7 @@ def create_app() -> Flask:
         for r in rows:
             c = yt.card_from_video_row(r)
             c["tags"] = sim.parse_tags_json(r.get("tags_json"))
+            c["note"] = r.get("user_note") or ""
             candidates.append(c)
 
         anchor_tag_ids = {
@@ -1049,7 +1057,6 @@ def create_app() -> Flask:
                 (uid, video_id),
             )
         }
-        # rebuild overlap counts
         from collections import defaultdict
 
         vid_tags: dict[str, set] = defaultdict(set)
@@ -1063,8 +1070,138 @@ def create_app() -> Flask:
             if vid != video_id
         }
 
-        ranked = sim.rank_similar(anchor, candidates, tag_overlap=overlap, limit=16)
+        ranked = sim.rank_similar(anchor, candidates, tag_overlap=overlap, limit=18)
         return jsonify({"ok": True, "items": ranked})
+
+    @app.get("/api/videos/<video_id>/yt-related")
+    @require_auth
+    def yt_related(video_id: str):
+        """Topic search on YouTube (relatedToVideoId deprecated). Re-rank vs library signals."""
+        uid = current_user()["user_id"]
+        row = db.fetchone("SELECT * FROM videos WHERE video_id = ?", (video_id,))
+        if not row:
+            return json_error("Нет видео", 404)
+        q = sim.related_search_query(
+            row.get("title") or "",
+            row.get("channel_title") or "",
+            row.get("description") or "",
+        )
+        lib_ids = {
+            r["video_id"]
+            for r in db.fetchall(
+                "SELECT video_id FROM library_items WHERE user_id = ?", (uid,)
+            )
+        }
+        found = yt.search_videos(q, max_results=14, exclude_ids={video_id})
+        # Mark already-in-library; soft-boost same-topic title overlap with anchor
+        anchor_toks = set(sim.tokens(f"{row.get('title') or ''} {(row.get('description') or '')[:400]}"))
+        scored = []
+        for it in found:
+            toks = set(sim.tokens(f"{it.get('title') or ''} {it.get('description') or ''}"))
+            ov = len(anchor_toks & toks)
+            sc = float(ov)
+            if it["video_id"] in lib_ids:
+                it["in_library"] = True
+                sc += 0.5
+            # Prefer other channels for discovery
+            if it.get("channel_id") and it.get("channel_id") == (row.get("channel_id") or ""):
+                sc -= 0.8
+            it["similarity"] = round(sc, 2)
+            scored.append(it)
+        scored.sort(key=lambda x: -float(x.get("similarity") or 0))
+        return jsonify(
+            {
+                "ok": True,
+                "query": q,
+                "items": scored[:12],
+                "note": "YouTube search по теме ролика (related API закрыт). Можно сохранить в очередь.",
+            }
+        )
+
+    @app.get("/api/search")
+    @require_auth
+    def api_search():
+        uid = current_user()["user_id"]
+        q = (request.args.get("q") or "").strip()
+        if len(q) < 2:
+            return json_error("Напиши запрос")
+        limit = min(60, max(8, int(request.args.get("limit") or 36)))
+        rows = db.fetchall(
+            """
+            SELECT v.*, li.status, li.note, li.interest
+            FROM library_items li
+            JOIN videos v ON v.video_id = li.video_id
+            WHERE li.user_id = ?
+              AND COALESCE(li.status, 'queue') NOT IN ('dismissed', 'rejected')
+            """,
+            (uid,),
+        )
+        items = []
+        for r in rows:
+            card = yt.card_from_video_row(
+                r,
+                {
+                    "status": r.get("status"),
+                    "note": r.get("note") or "",
+                    "interest": int(r.get("interest") or 0),
+                },
+            )
+            card["tags"] = sim.parse_tags_json(r.get("tags_json"))
+            items.append(card)
+        # Attach user tags lightly
+        from collections import defaultdict
+
+        by_vid: dict[str, list] = defaultdict(list)
+        for r in db.fetchall(
+            """
+            SELECT it.video_id, ut.id, ut.name, ut.emoji
+            FROM item_tags it
+            JOIN user_tags ut ON ut.id = it.tag_id
+            WHERE it.user_id = ?
+            """,
+            (uid,),
+        ):
+            by_vid[r["video_id"]].append(
+                {"id": r["id"], "name": r["name"], "emoji": r.get("emoji") or ""}
+            )
+        for it in items:
+            it["user_tags"] = by_vid.get(it["video_id"]) or []
+
+        result = cq_search.smart_search(q, items, limit=limit)
+        return jsonify({"ok": True, **result})
+
+    @app.post("/api/voice/transcribe")
+    @require_auth
+    def voice_transcribe():
+        """Whisper via OpenAI if OPENAI_API_KEY set; else client should use Web Speech API."""
+        import requests as req
+
+        key = (os.environ.get("OPENAI_API_KEY") or "").strip()
+        if not key:
+            return json_error(
+                "Whisper на сервере не настроен (OPENAI_API_KEY). Используй голосовой ввод браузера.",
+                503,
+            )
+        f = request.files.get("audio") or request.files.get("file")
+        if not f:
+            return json_error("Нужен файл audio")
+        raw = f.read()
+        if not raw or len(raw) > 12_000_000:
+            return json_error("Пустой или слишком большой файл")
+        try:
+            r = req.post(
+                "https://api.openai.com/v1/audio/transcriptions",
+                headers={"Authorization": f"Bearer {key}"},
+                files={"file": (f.filename or "audio.webm", raw, f.mimetype or "audio/webm")},
+                data={"model": "whisper-1", "language": "ru"},
+                timeout=60,
+            )
+        except Exception as e:
+            return json_error(f"Whisper недоступен: {e}", 502)
+        if r.status_code != 200:
+            return json_error(f"Whisper HTTP {r.status_code}: {r.text[:200]}", 502)
+        text = (r.json() or {}).get("text") or ""
+        return jsonify({"ok": True, "text": text.strip()})
 
     # ----- Home -----
 
@@ -1856,6 +1993,7 @@ def create_app() -> Flask:
     @app.get("/tags")
     @app.get("/add")
     @app.get("/organize")
+    @app.get("/search")
     @app.get("/onboard")
     @app.get("/auth/callback")
     @app.get("/v/<path:rest>")

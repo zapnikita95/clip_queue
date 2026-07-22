@@ -309,6 +309,11 @@
           </div>
           <div class="brand-name">Clip Queue</div>
         </a>
+        <form class="smart-search" id="smart-search" action="/search" method="get">
+          <input type="search" name="q" id="smart-q" placeholder="Что хочешь посмотреть?" autocomplete="off" enterkeyhint="search" />
+          <button type="button" class="smart-mic" id="smart-mic" title="Голосом" aria-label="Голосом">🎤</button>
+          <button type="submit" class="smart-go" title="Найти">⌕</button>
+        </form>
         <nav class="nav">
           <button class="nav-btn ${active === "home" ? "active" : ""}" data-route="/home">Главная</button>
           <button class="nav-btn ${active === "queue" ? "active" : ""}" data-route="/queue">Очередь</button>
@@ -318,6 +323,78 @@
         </nav>
       </header>
       <button type="button" class="fab-add" id="fab-add" title="Добавить видео">+</button>`;
+  }
+
+  function wireSmartSearch() {
+    const form = $("#smart-search");
+    if (!form || form.dataset.wired === "1") return;
+    form.dataset.wired = "1";
+    form.addEventListener("submit", (e) => {
+      e.preventDefault();
+      const q = ($("#smart-q")?.value || "").trim();
+      if (!q) return toast("Напиши, что ищешь");
+      navigate(`/search?q=${encodeURIComponent(q)}`);
+    });
+    const mic = $("#smart-mic");
+    if (mic) {
+      mic.onclick = async () => {
+        const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (SR) {
+          const rec = new SR();
+          rec.lang = "ru-RU";
+          rec.interimResults = false;
+          mic.classList.add("listening");
+          toast("Слушаю…");
+          rec.onresult = (ev) => {
+            const text = (ev.results?.[0]?.[0]?.transcript || "").trim();
+            if (text && $("#smart-q")) $("#smart-q").value = text;
+            mic.classList.remove("listening");
+            if (text) navigate(`/search?q=${encodeURIComponent(text)}`);
+          };
+          rec.onerror = () => {
+            mic.classList.remove("listening");
+            toast("Не расслышал — попробуй ещё");
+          };
+          rec.onend = () => mic.classList.remove("listening");
+          try { rec.start(); } catch (_) { mic.classList.remove("listening"); }
+          return;
+        }
+        // Fallback: record short clip → Whisper API
+        if (!navigator.mediaDevices?.getUserMedia) {
+          return toast("Голос в этом браузере недоступен");
+        }
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          const rec = new MediaRecorder(stream);
+          const chunks = [];
+          rec.ondataavailable = (e) => chunks.push(e.data);
+          mic.classList.add("listening");
+          toast("Запись 5 сек…");
+          rec.start();
+          await new Promise((r) => setTimeout(r, 5000));
+          rec.stop();
+          stream.getTracks().forEach((t) => t.stop());
+          await new Promise((r) => { rec.onstop = r; });
+          const blob = new Blob(chunks, { type: rec.mimeType || "audio/webm" });
+          const fd = new FormData();
+          fd.append("audio", blob, "voice.webm");
+          const headers = {};
+          const t = token();
+          if (t) headers.Authorization = `Bearer ${t}`;
+          const res = await fetch("/api/voice/transcribe", { method: "POST", body: fd, headers, credentials: "include" });
+          const data = await res.json().catch(() => ({}));
+          mic.classList.remove("listening");
+          if (!res.ok) return toast(data.error || "Whisper недоступен");
+          if (data.text && $("#smart-q")) {
+            $("#smart-q").value = data.text;
+            navigate(`/search?q=${encodeURIComponent(data.text)}`);
+          }
+        } catch (e) {
+          mic.classList.remove("listening");
+          toast(e.message || "Микрофон недоступен");
+        }
+      };
+    }
   }
 
   function enableDragScroll(root = document) {
@@ -381,6 +458,7 @@
     }
     const fab = $("#fab-add");
     if (fab) fab.onclick = () => openAddSheet();
+    wireSmartSearch();
     document.querySelectorAll("#bottom-nav button").forEach((b) => {
       const r = b.getAttribute("data-route");
       const path = location.pathname;
@@ -1451,6 +1529,85 @@
     return navigate("/settings", true);
   }
 
+  async function renderSearch() {
+    const q0 = new URL(location.href).searchParams.get("q") || "";
+    app.innerHTML = `
+      ${topbar("home")}
+      <section class="hero">
+        <h1>Умный поиск</h1>
+        <p>Пиши как чувствуешь: «видосик на вечер», «ржачный но не стендап», «геймплей не обзор». Ищем по твоей библиотеке — название, описание, теги и твои слова.</p>
+      </section>
+      <div class="panel">
+        <form id="search-form" class="smart-search smart-search-lg">
+          <input type="search" id="search-q" value="${escapeHtml(q0)}" placeholder="Что хочешь посмотреть?" />
+          <button type="button" class="smart-mic" id="search-mic" title="Голосом">🎤</button>
+          <button type="submit" class="smart-go">Найти</button>
+        </form>
+        <div id="search-meta" class="muted" style="margin-top:10px;font-size:13px"></div>
+        <div id="search-out" style="margin-top:16px"></div>
+      </div>`;
+    wireNav();
+    const run = async (q) => {
+      const out = $("#search-out");
+      const meta = $("#search-meta");
+      if (!q || q.trim().length < 2) {
+        out.innerHTML = `<div class="empty">Введи хотя бы пару слов</div>`;
+        return;
+      }
+      out.innerHTML = `<div class="muted">Ищу…</div>`;
+      try {
+        const data = await api(`/api/search?q=${encodeURIComponent(q.trim())}&limit=40`);
+        const interp = data.interpreted || {};
+        const bits = [];
+        if (interp.rewritten && interp.rewritten !== q) bits.push(`понял как «${interp.rewritten}»`);
+        if ((interp.must_not || []).length) bits.push(`без: ${(interp.must_not || []).join(", ")}`);
+        if ((interp.prefer || []).length) bits.push(`ближе: ${(interp.prefer || []).join(", ")}`);
+        meta.textContent = bits.length ? bits.join(" · ") : `${(data.items || []).length} совпадений`;
+        const items = data.items || [];
+        if (!items.length) {
+          out.innerHTML = `<div class="empty">В библиотеке ничего близкого. Попробуй другие слова или разметь пару роликов своими словами.</div>`;
+          return;
+        }
+        out.innerHTML = `<div class="queue-grid" id="search-grid">${items.map(cardHtml).join("")}</div>`;
+        wireCardMenus($("#search-grid"));
+      } catch (e) {
+        out.innerHTML = `<div class="empty">${escapeHtml(e.message)}</div>`;
+      }
+    };
+    $("#search-form").onsubmit = (e) => {
+      e.preventDefault();
+      const q = ($("#search-q")?.value || "").trim();
+      navigate(`/search?q=${encodeURIComponent(q)}`, true);
+      run(q);
+    };
+    const mic = $("#search-mic");
+    if (mic) {
+      mic.onclick = () => {
+        const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!SR) return toast("Голос: Chrome / Safari");
+        const rec = new SR();
+        rec.lang = "ru-RU";
+        mic.classList.add("listening");
+        rec.onresult = (ev) => {
+          const text = (ev.results?.[0]?.[0]?.transcript || "").trim();
+          mic.classList.remove("listening");
+          if (text && $("#search-q")) {
+            $("#search-q").value = text;
+            navigate(`/search?q=${encodeURIComponent(text)}`, true);
+            run(text);
+          }
+        };
+        rec.onerror = () => mic.classList.remove("listening");
+        rec.onend = () => mic.classList.remove("listening");
+        try { rec.start(); } catch (_) { mic.classList.remove("listening"); }
+      };
+    }
+    if (q0) {
+      if ($("#smart-q")) $("#smart-q").value = q0;
+      run(q0);
+    }
+  }
+
   async function renderVideo(videoId) {
     const data = await api(`/api/videos/${encodeURIComponent(videoId)}`);
     const item = data.item;
@@ -1460,8 +1617,12 @@
       try { allTags = await api("/api/tags/seed-defaults", { method: "POST", body: "{}" }); } catch (_) {}
     }
     let similar = { items: [] };
+    let ytRelated = { items: [], query: "" };
     try {
       similar = await api(`/api/videos/${encodeURIComponent(videoId)}/similar`);
+    } catch (_) {}
+    try {
+      ytRelated = await api(`/api/videos/${encodeURIComponent(videoId)}/yt-related`);
     } catch (_) {}
     const assignedIds = new Set((item.user_tags || []).map((t) => t.id));
     const pickHtml = (allTags.tags || []).map((t) => {
@@ -1471,6 +1632,7 @@
     }).join("");
 
     const unavailable = item.is_unavailable || /^(private|deleted) video$/i.test(item.title || "");
+    const noteVal = item.note || "";
     app.innerHTML = `
       ${topbar("queue")}
       <div class="video-page">
@@ -1487,6 +1649,11 @@
             ${tagPillsHtml(item.user_tags || [], { removable: true, videoId })}
           </div>
           <p class="muted" style="margin-top:14px;line-height:1.5;white-space:pre-wrap">${escapeHtml((item.description || "").slice(0, 600))}</p>
+          <div class="field lexicon-field" style="margin-top:16px">
+            <label>Как ты это назовёшь (своя лексика)</label>
+            <textarea id="user-note" rows="2" placeholder="Например: стрёмная хрень / уют на вечер / хуйня для деградантов">${escapeHtml(noteVal)}</textarea>
+            <button type="button" class="btn secondary" id="save-note" style="margin-top:8px">Сохранить описание</button>
+          </div>
         </div>
         <div class="panel">
           <div class="muted" style="margin:0 0 10px;font-size:13px">Статус: <b>${
@@ -1523,12 +1690,45 @@
         </div>
       </div>
       <section class="rail" style="margin-top:28px">
-        <div class="rail-head"><h2>Похожие из твоих</h2></div>
-        <div class="rail-track">
-          ${similar.items?.length ? similar.items.map(cardHtml).join("") : `<div class="empty">Добавь ещё видео — появятся похожие по каналу и вайбу</div>`}
+        <div class="rail-head"><h2>Похожие из твоих</h2>
+          <span class="muted" style="font-size:13px">по описанию и вайбу</span>
         </div>
-      </section>`;
+        <div class="rail-track drag-scroll">
+          ${similar.items?.length ? similar.items.map(cardHtml).join("") : `<div class="empty">Добавь ещё видео — появятся похожие по смыслу</div>`}
+        </div>
+      </section>
+      <section class="rail" style="margin-top:18px">
+        <div class="rail-head"><h2>Похожие на YouTube</h2>
+          <span class="muted" style="font-size:13px">${ytRelated.query ? escapeHtml(ytRelated.query) : "по теме"}</span>
+        </div>
+        <div class="rail-track drag-scroll" id="yt-related-rail">
+          ${(ytRelated.items || []).length
+            ? ytRelated.items.map((it) => `
+              <div class="card yt-discover-card" data-video-id="${escapeHtml(it.video_id)}">
+                <a class="card-main" href="${escapeHtml(it.watch_url)}" target="_blank" rel="noopener">
+                  <div class="card-thumb">
+                    <img src="${escapeHtml(it.thumb_url)}" alt="" loading="lazy" />
+                    ${it.in_library ? `<span class="badge">уже есть</span>` : ""}
+                  </div>
+                  <div class="card-body">
+                    <h3 class="card-title">${escapeHtml(it.title)}</h3>
+                    <div class="card-meta">${escapeHtml(it.channel_title || "")}</div>
+                  </div>
+                </a>
+                <div class="card-actions">
+                  <a class="btn play-btn" href="${escapeHtml(it.watch_url)}" target="_blank" rel="noopener">▶</a>
+                  ${it.in_library
+                    ? `<a class="btn ghost" href="/v/${encodeURIComponent(it.video_id)}" data-nav>Открыть</a>`
+                    : `<button type="button" class="btn secondary" data-save-yt="${escapeHtml(it.video_id)}">В очередь</button>`}
+                </div>
+              </div>`).join("")
+            : `<div class="empty">Не нашлось — проверь YOUTUBE_API_KEY или попробуй другой ролик</div>`}
+        </div>
+      </section>
+      <div id="note-sheet" class="note-sheet hidden"></div>`;
     wireNav();
+    enableDragScroll(app);
+    wireCardMenus(app);
     const lists = await api("/api/lists");
     const sel = $("#list-select");
     sel.innerHTML = (lists.lists || []).map((l) =>
@@ -1621,9 +1821,64 @@
         method: "PATCH",
         body: JSON.stringify({ status: "watched" }),
       });
-      toast("Просмотрено — в общем плане больше нет");
-      renderVideo(videoId);
+      toast("Просмотрено");
+      const sheet = $("#note-sheet");
+      if (sheet) {
+        sheet.classList.remove("hidden");
+        sheet.innerHTML = `
+          <div class="note-sheet-card">
+            <b>Как бы ты описал этот видос?</b>
+            <p class="muted" style="margin:6px 0 10px;font-size:13px">Своими словами — так поиск потом найдёт «стрёмную хрень», даже если в названии этого нет.</p>
+            <textarea id="watch-note" rows="2" placeholder="уют на вечер / ржака не стендап / …">${escapeHtml(noteVal)}</textarea>
+            <div class="btn-row" style="margin-top:10px">
+              <button type="button" class="btn" id="watch-note-save">Сохранить</button>
+              <button type="button" class="btn ghost" id="watch-note-skip">Пропустить</button>
+            </div>
+          </div>`;
+        $("#watch-note-skip").onclick = () => { sheet.classList.add("hidden"); renderVideo(videoId); };
+        $("#watch-note-save").onclick = async () => {
+          const note = ($("#watch-note")?.value || "").trim();
+          if (note) {
+            await api(`/api/library/${encodeURIComponent(videoId)}`, {
+              method: "PATCH",
+              body: JSON.stringify({ note }),
+            });
+            toast("Запомнил твои слова");
+          }
+          sheet.classList.add("hidden");
+          renderVideo(videoId);
+        };
+      } else {
+        renderVideo(videoId);
+      }
     };
+    const saveNoteBtn = $("#save-note");
+    if (saveNoteBtn) {
+      saveNoteBtn.onclick = async () => {
+        const note = ($("#user-note")?.value || "").trim();
+        await api(`/api/library/${encodeURIComponent(videoId)}`, {
+          method: "PATCH",
+          body: JSON.stringify({ note }),
+        });
+        toast(note ? "Описание сохранено" : "Описание очищено");
+      };
+    }
+    document.querySelectorAll("[data-save-yt]").forEach((btn) => {
+      btn.onclick = async () => {
+        const vid = btn.getAttribute("data-save-yt");
+        try {
+          await api("/api/videos/save", {
+            method: "POST",
+            body: JSON.stringify({ url: `https://www.youtube.com/watch?v=${vid}` }),
+          });
+          toast("В очереди");
+          btn.textContent = "Уже есть";
+          btn.disabled = true;
+        } catch (e) {
+          toast(e.message);
+        }
+      };
+    });
     $("#back-queue").onclick = async () => {
       await api(`/api/library/${encodeURIComponent(videoId)}`, {
         method: "PATCH",
@@ -1712,6 +1967,7 @@
     if (path === "/queue") return renderQueue();
     if (path === "/channels") return renderChannels();
     if (path === "/organize") return renderOrganize();
+    if (path === "/search") return renderSearch();
     if (path === "/add") return renderAdd();
     if (path === "/lists") return renderLists();
     if (path === "/tags") return renderTagsPage();

@@ -149,6 +149,72 @@ def resolve(url_or_id: str) -> dict[str, Any]:
     return _oembed(video_id)
 
 
+def search_videos(
+    query: str,
+    *,
+    max_results: int = 12,
+    relevance_language: str = "ru",
+    exclude_ids: set[str] | None = None,
+) -> list[dict[str, Any]]:
+    """YouTube Data API search.list — relatedToVideoId is deprecated, so we search by topic."""
+    key = (os.environ.get("YOUTUBE_API_KEY") or "").strip()
+    q = (query or "").strip()
+    if not key or not q:
+        return []
+    exclude_ids = exclude_ids or set()
+    try:
+        r = requests.get(
+            "https://www.googleapis.com/youtube/v3/search",
+            params={
+                "part": "snippet",
+                "type": "video",
+                "q": q[:120],
+                "maxResults": min(25, max(max_results + 4, 8)),
+                "relevanceLanguage": relevance_language,
+                "safeSearch": "moderate",
+                "key": key,
+            },
+            timeout=12,
+        )
+    except Exception:
+        return []
+    if r.status_code != 200:
+        print(f"[yt search] HTTP {r.status_code}: {r.text[:200]}", flush=True)
+        return []
+    items = (r.json() or {}).get("items") or []
+    out: list[dict[str, Any]] = []
+    for it in items:
+        vid = ((it.get("id") or {}).get("videoId") or "").strip()
+        if not vid or vid in exclude_ids:
+            continue
+        sn = it.get("snippet") or {}
+        thumbs = sn.get("thumbnails") or {}
+        thumb = ""
+        for k in ("high", "medium", "default"):
+            if k in thumbs and thumbs[k].get("url"):
+                thumb = thumbs[k]["url"]
+                break
+        out.append(
+            {
+                "video_id": vid,
+                "title": (sn.get("title") or "").strip(),
+                "description": (sn.get("description") or "").strip(),
+                "channel_id": (sn.get("channelId") or "").strip(),
+                "channel_title": (sn.get("channelTitle") or "").strip(),
+                "thumb_url": thumb or thumb_url(vid),
+                "watch_url": watch_url(vid),
+                "published_at": sn.get("publishedAt"),
+                "duration_sec": None,
+                "duration_label": "",
+                "source": "youtube_search",
+                "in_library": False,
+            }
+        )
+        if len(out) >= max_results:
+            break
+    return out
+
+
 def format_duration(sec: Optional[int]) -> str:
     if sec is None or sec < 0:
         return ""
