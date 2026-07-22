@@ -571,6 +571,8 @@ def apply_proposal(user_id: int, proposal: dict) -> dict[str, Any]:
         if not title or not vids:
             continue
         list_id = _ensure_list(user_id, title)
+        # Replace membership so edits (move between folders) stick
+        db.execute("DELETE FROM list_items WHERE list_id = ?", (list_id,))
         n = 0
         for vid in vids:
             _add_list_item(list_id, vid, n)
@@ -618,6 +620,153 @@ def apply_proposal(user_id: int, proposal: dict) -> dict[str, Any]:
         "lists": created,
         "rules_saved": rules_saved,
         "music_purged": music_purged,
+    }
+
+
+_SKIP_LIST_TITLES = {
+    "лайки youtube",
+    "музыка / клипы (скрыто)",
+    "музыка / клипы",
+}
+
+
+def _is_sync_dump_list(title: str) -> bool:
+    t = (title or "").strip()
+    if not t:
+        return True
+    low = t.lower()
+    if low in _SKIP_LIST_TITLES:
+        return True
+    if t.startswith("YT:"):
+        return True
+    return False
+
+
+def saved_structure(user_id: int, *, items_per_folder: int = 24) -> dict[str, Any]:
+    """Load the user's last saved organize folders from lists (+ rules)."""
+    ensure_classify_tables()
+    rules = list_rules(user_id)
+    rules_by_list: dict[int, dict] = {}
+    for r in rules:
+        lid = int(r["list_id"])
+        if lid not in rules_by_list:
+            rules_by_list[lid] = {
+                "type": r.get("rule_type"),
+                "value": r.get("rule_value") or "",
+            }
+
+    lists = db.fetchall(
+        "SELECT * FROM lists WHERE user_id = ? ORDER BY id ASC",
+        (user_id,),
+    )
+    folders: list[dict[str, Any]] = []
+    for lst in lists:
+        title = (lst.get("title") or "").strip()
+        if _is_sync_dump_list(title):
+            continue
+        lid = int(lst["id"])
+        # Prefer lists that have classify rules; if none exist yet, still show
+        # non-sync lists with videos (manual folders).
+        if rules_by_list and lid not in rules_by_list:
+            # Skip music hidden even if somehow not caught
+            if "скрыто" in title.lower():
+                continue
+            # Without any theme/channel rule — only keep if user has zero rules
+            # (then show nothing meaningful) OR include manual lists
+            if rules:
+                # Still include channel/theme-looking lists without rule? No —
+                # after apply every persist folder has a rule. Orphans = old junk.
+                continue
+
+        rows = db.fetchall(
+            """
+            SELECT v.video_id, v.title, v.channel_title, v.duration_sec, v.thumb_url
+            FROM list_items x
+            JOIN videos v ON v.video_id = x.video_id
+            WHERE x.list_id = ?
+            ORDER BY x.position ASC, x.added_at DESC
+            LIMIT ?
+            """,
+            (lid, max(items_per_folder, 80)),
+        )
+        video_ids = []
+        items = []
+        for r in rows:
+            if yt.is_unavailable_video(r.get("title")):
+                continue
+            vid = r["video_id"]
+            video_ids.append(vid)
+            items.append(
+                {
+                    "video_id": vid,
+                    "title": r.get("title") or vid,
+                    "channel_title": r.get("channel_title") or "",
+                    "duration_sec": r.get("duration_sec"),
+                    "duration_label": yt.format_duration(r.get("duration_sec")),
+                    "thumb_url": r.get("thumb_url") or yt.thumb_url(vid),
+                }
+            )
+        if not video_ids:
+            continue
+        rule = rules_by_list.get(lid)
+        folders.append(
+            {
+                "list_id": lid,
+                "title": title[:120],
+                "reason": "Сохранено",
+                "video_ids": video_ids,
+                "count": len(video_ids),
+                "rule": rule,
+                "persist": bool(rule),
+                "items": items[:items_per_folder],
+            }
+        )
+
+    # Fallback: last applied proposal JSON if lists empty but proposal exists
+    if not folders:
+        row = db.fetchone(
+            """
+            SELECT id, proposal_json FROM organize_proposals
+            WHERE user_id = ? AND applied = 1
+            ORDER BY id DESC LIMIT 1
+            """,
+            (user_id,),
+        )
+        if row:
+            try:
+                proposal = json.loads(row["proposal_json"] or "{}")
+            except Exception:
+                proposal = {}
+            for f in proposal.get("folders") or []:
+                if not f.get("video_ids"):
+                    continue
+                folders.append(
+                    {
+                        "list_id": None,
+                        "title": (f.get("title") or "")[:120],
+                        "reason": f.get("reason") or "Из прошлого сохранения",
+                        "video_ids": list(f.get("video_ids") or []),
+                        "count": len(f.get("video_ids") or []),
+                        "rule": f.get("rule"),
+                        "persist": bool(f.get("persist", True)),
+                        "items": (f.get("items") or [])[:items_per_folder],
+                    }
+                )
+
+    theme_opts = [
+        {"id": t["id"], "title": t["title"]}
+        for t in themes.THEMES
+    ]
+    return {
+        "has_structure": bool(folders),
+        "folders": folders,
+        "rules_count": len(rules),
+        "summary": (
+            f"Сохранено папок: {len(folders)} · правил: {len(rules)}"
+            if folders
+            else "Раскладки ещё нет — нажми «Разложить» один раз и сохрани."
+        ),
+        "themes": theme_opts,
     }
 
 

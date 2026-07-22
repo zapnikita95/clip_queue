@@ -12,7 +12,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from flask import Flask, g, jsonify, redirect, request, send_from_directory
 
-from backend import auth, db, google_oauth, llm, organize, sync_jobs, takeout, yt_sync
+from backend import auth, db, google_oauth, llm, organize, sync_jobs, takeout, themes, yt_sync
 from backend import similarity as sim
 from backend import youtube as yt
 
@@ -237,6 +237,13 @@ def create_app() -> Flask:
         use_llm = bool(body.get("use_llm")) or (request.args.get("llm") == "1")
         proposal = organize.propose_structure(uid, use_llm=use_llm)
         return jsonify({"ok": True, "proposal": proposal})
+
+    @app.get("/api/organize/structure")
+    @require_auth
+    def organize_structure():
+        """Last saved folders — what home and organize should show by default."""
+        uid = current_user()["user_id"]
+        return jsonify({"ok": True, **organize.saved_structure(uid)})
 
     @app.get("/api/organize/rules")
     @require_auth
@@ -557,6 +564,15 @@ def create_app() -> Flask:
         # video = long-form only (6min–10h). Junk buckets: music | shorts | shortform | marathon
         kind = (request.args.get("kind") or "video").strip().lower()
         channel = (request.args.get("channel") or "").strip()
+        theme = (request.args.get("theme") or "").strip().lower()
+        try:
+            dur_min = int(request.args.get("dur_min") or 0)
+        except ValueError:
+            dur_min = 0
+        try:
+            dur_max = int(request.args.get("dur_max") or 0)
+        except ValueError:
+            dur_max = 0
         limit = min(int(request.args.get("limit") or 60), 200)
         offset = max(int(request.args.get("offset") or 0), 0)
         # Over-fetch then filter — junk buckets otherwise fill the page
@@ -594,6 +610,15 @@ def create_app() -> Flask:
                 continue
             if channel and (row.get("channel_title") or "").strip() != channel:
                 continue
+            dur = row.get("duration_sec")
+            if dur_min > 0 and (not isinstance(dur, int) or int(dur) < dur_min):
+                continue
+            if dur_max > 0 and (not isinstance(dur, int) or int(dur) > dur_max):
+                continue
+            if theme:
+                primary = themes.primary_theme(row.get("title"), row.get("channel_title"))
+                if not primary or primary.get("id") != theme:
+                    continue
             if q:
                 blob = f"{row.get('title') or ''} {row.get('channel_title') or ''}".lower()
                 if q not in blob:
@@ -622,23 +647,44 @@ def create_app() -> Flask:
             if len(items) >= offset + limit:
                 break
         page = items[offset : offset + limit]
-        return jsonify({"ok": True, "items": page, "kind": kind, "channel": channel or None})
+        return jsonify(
+            {
+                "ok": True,
+                "items": page,
+                "kind": kind,
+                "channel": channel or None,
+                "theme": theme or None,
+                "dur_min": dur_min or None,
+                "dur_max": dur_max or None,
+            }
+        )
 
     @app.get("/api/channels")
     @require_auth
     def channels():
-        """Browseable channel list from the user's library (videos, not Topic music)."""
+        """Channels with optional inline videos, theme + duration filters."""
         uid = current_user()["user_id"]
         kind = (request.args.get("kind") or "video").strip().lower()
         status = (request.args.get("status") or "queue").strip()
+        theme = (request.args.get("theme") or "").strip().lower()
+        expand = request.args.get("expand") in ("1", "true", "yes")
+        try:
+            dur_min = int(request.args.get("dur_min") or 0)
+        except ValueError:
+            dur_min = 0
+        try:
+            dur_max = int(request.args.get("dur_max") or 0)
+        except ValueError:
+            dur_max = 0
+        try:
+            videos_limit = min(int(request.args.get("videos_limit") or 16), 40)
+        except ValueError:
+            videos_limit = 16
+
         rows = db.fetchall(
             """
-            SELECT COALESCE(v.channel_id, '') AS channel_id,
-                   COALESCE(v.channel_title, '') AS channel_title,
-                   v.title AS sample_title,
-                   v.duration_sec AS sample_duration,
-                   v.thumb_url AS sample_thumb,
-                   v.video_id AS sample_video_id
+            SELECT v.video_id, v.title, v.channel_id, v.channel_title,
+                   v.duration_sec, v.thumb_url, v.description
             FROM library_items li
             JOIN videos v ON v.video_id = li.video_id
             WHERE li.user_id = ? AND li.status = ?
@@ -664,13 +710,13 @@ def create_app() -> Flask:
         buckets: dict[str, dict] = {}
         for r in rows:
             title = (r.get("channel_title") or "Без канала").strip() or "Без канала"
-            if yt.is_unavailable_video(r.get("sample_title")) or yt.is_unavailable_video(title):
+            if yt.is_unavailable_video(r.get("title")) or yt.is_unavailable_video(title):
                 continue
             bucket = yt.content_bucket(
-                r.get("sample_title"),
+                r.get("title"),
                 title,
-                r.get("sample_duration"),
-                None,
+                r.get("duration_sec"),
+                r.get("description"),
             )
             if kind == "video" and bucket != "video":
                 continue
@@ -680,6 +726,20 @@ def create_app() -> Flask:
                 continue
             if kind == "marathon" and bucket != "marathon":
                 continue
+            if kind not in ("all", "video", "music", "shorts", "shortform", "marathon"):
+                pass
+            if kind == "all":
+                pass
+            dur = r.get("duration_sec")
+            if dur_min > 0 and (not isinstance(dur, int) or int(dur) < dur_min):
+                continue
+            if dur_max > 0 and (not isinstance(dur, int) or int(dur) > dur_max):
+                continue
+            if theme:
+                primary = themes.primary_theme(r.get("title"), title)
+                if not primary or primary.get("id") != theme:
+                    continue
+
             key = f"{r.get('channel_id') or ''}|{title}"
             slot = buckets.get(key)
             if not slot:
@@ -687,8 +747,8 @@ def create_app() -> Flask:
                 thumb = (
                     sub_by_id.get(ch_id)
                     or sub_by_title.get(title)
-                    or r.get("sample_thumb")
-                    or yt.thumb_url(r.get("sample_video_id") or "")
+                    or r.get("thumb_url")
+                    or yt.thumb_url(r.get("video_id") or "")
                 )
                 slot = {
                     "channel_id": r.get("channel_id") or "",
@@ -696,12 +756,35 @@ def create_app() -> Flask:
                     "count": 0,
                     "thumb_url": thumb,
                     "is_music": bucket == "music",
-                    "is_music_topic": bucket == "music",
+                    "videos": [],
                 }
                 buckets[key] = slot
             slot["count"] += 1
+            if expand and len(slot["videos"]) < videos_limit:
+                slot["videos"].append(
+                    {
+                        "video_id": r["video_id"],
+                        "title": r.get("title") or r["video_id"],
+                        "channel_title": title,
+                        "duration_sec": r.get("duration_sec"),
+                        "duration_label": yt.format_duration(r.get("duration_sec")),
+                        "thumb_url": r.get("thumb_url") or yt.thumb_url(r["video_id"]),
+                        "watch_url": f"https://www.youtube.com/watch?v={r['video_id']}",
+                        "content_kind": bucket,
+                    }
+                )
         out = sorted(buckets.values(), key=lambda x: -int(x["count"]))
-        return jsonify({"ok": True, "channels": out, "kind": kind})
+        return jsonify(
+            {
+                "ok": True,
+                "channels": out,
+                "kind": kind,
+                "theme": theme or None,
+                "dur_min": dur_min or None,
+                "dur_max": dur_max or None,
+                "themes": [{"id": t["id"], "title": t["title"]} for t in themes.THEMES],
+            }
+        )
 
     @app.patch("/api/library/<video_id>")
     @require_auth
