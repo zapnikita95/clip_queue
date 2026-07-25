@@ -899,6 +899,154 @@ def apply_rules_to_video(
     return matched
 
 
+_CATCHALL_LIST_MARKERS = (
+    "без темы",
+    "разобрать",
+    "не разобрано",
+    "в очереди /",
+)
+
+
+def _is_catchall_list_title(title: str) -> bool:
+    low = (title or "").strip().lower()
+    if not low:
+        return False
+    return any(m in low for m in _CATCHALL_LIST_MARKERS)
+
+
+def _themed_list_ids(user_id: int) -> set[int]:
+    """Lists that count as «разобрано» (theme / channel / keyword / theme rules)."""
+    out: set[int] = set()
+    for r in list_rules(user_id):
+        rtype = r.get("rule_type") or ""
+        title = r.get("list_title") or ""
+        if _is_catchall_list_title(title) or "скрыто" in title.lower():
+            continue
+        if rtype in ("theme", "channel", "keyword"):
+            out.add(int(r["list_id"]))
+    theme_titles = {t["title"].strip().lower() for t in themes.THEMES}
+    for lst in db.fetchall(
+        "SELECT id, title FROM lists WHERE user_id = ?", (user_id,)
+    ):
+        t = (lst.get("title") or "").strip().lower()
+        if not t or _is_catchall_list_title(t) or "скрыто" in t:
+            continue
+        if t in theme_titles or t.startswith("канал:") or t.startswith("тема:"):
+            out.add(int(lst["id"]))
+    return out
+
+
+def _catchall_list_ids(user_id: int) -> list[int]:
+    return [
+        int(r["id"])
+        for r in db.fetchall("SELECT id, title FROM lists WHERE user_id = ?", (user_id,))
+        if _is_catchall_list_title(r.get("title") or "")
+    ]
+
+
+def _remove_from_catchall(user_id: int, video_id: str) -> None:
+    for lid in _catchall_list_ids(user_id):
+        db.execute(
+            "DELETE FROM list_items WHERE list_id = ? AND video_id = ?",
+            (lid, video_id),
+        )
+
+
+def _match_theme_folders(
+    user_id: int,
+    video_id: str,
+    *,
+    title: str | None,
+    channel_title: str | None,
+    description: str | None,
+) -> list[dict]:
+    """Put video into existing folders whose titles match detected themes."""
+    detected = themes.detect_themes(
+        title, channel_title, description=description or "", min_score=3
+    )
+    if not detected:
+        return []
+    lists = {
+        (r.get("title") or "").strip().lower(): r
+        for r in db.fetchall(
+            "SELECT id, title FROM lists WHERE user_id = ?", (user_id,)
+        )
+    }
+    matched: list[dict] = []
+    seen: set[int] = set()
+    for th in detected:
+        key = (th.get("title") or "").strip().lower()
+        lst = lists.get(key)
+        if not lst:
+            continue
+        lid = int(lst["id"])
+        if lid in seen:
+            continue
+        seen.add(lid)
+        _add_list_item(lid, video_id, 0)
+        matched.append(
+            {
+                "list_id": lid,
+                "list_title": lst.get("title"),
+                "rule_type": "theme",
+                "rule_value": th.get("id") or "",
+            }
+        )
+    return matched
+
+
+def pending_to_classify(user_id: int, *, limit: int = 250) -> list[dict[str, Any]]:
+    """Queue videos not yet in a themed folder (background sync backlog)."""
+    ensure_classify_tables()
+    themed_ids = _themed_list_ids(user_id)
+    classified_vids: set[str] = set()
+    if themed_ids:
+        placeholders = ",".join("?" * len(themed_ids))
+        rows = db.fetchall(
+            f"SELECT DISTINCT video_id FROM list_items WHERE list_id IN ({placeholders})",
+            tuple(themed_ids),
+        )
+        classified_vids = {r["video_id"] for r in rows}
+
+    lib = db.fetchall(
+        """
+        SELECT v.video_id, v.title, v.channel_title, v.duration_sec, v.thumb_url, li.saved_at
+        FROM library_items li
+        JOIN videos v ON v.video_id = li.video_id
+        WHERE li.user_id = ?
+          AND li.status IN ('queue', 'in_progress')
+        ORDER BY li.saved_at DESC
+        LIMIT ?
+        """,
+        (user_id, max(limit * 4, 400)),
+    )
+    out: list[dict[str, Any]] = []
+    for r in lib:
+        vid = r["video_id"]
+        if vid in classified_vids:
+            continue
+        if yt.is_unavailable_video(r.get("title")):
+            continue
+        bucket = yt.content_bucket(
+            r.get("title"), r.get("channel_title"), r.get("duration_sec"), None
+        )
+        if bucket in ("music", "shorts", "shortform", "unavailable"):
+            continue
+        out.append(
+            {
+                "video_id": vid,
+                "title": r.get("title") or vid,
+                "channel_title": r.get("channel_title") or "",
+                "duration_sec": r.get("duration_sec"),
+                "thumb_url": r.get("thumb_url") or yt.thumb_url(vid),
+                "saved_at": str(r.get("saved_at") or ""),
+            }
+        )
+        if len(out) >= limit:
+            break
+    return out
+
+
 def classify_new_video(
     user_id: int,
     video_id: str,
@@ -907,8 +1055,9 @@ def classify_new_video(
     channel_title: str | None = None,
     duration_sec: int | None = None,
     description: str | None = None,
+    use_llm: bool = True,
 ) -> dict[str, Any]:
-    """Rules first, then tiny LLM picks among existing saved folders."""
+    """Rules → theme folders → optional LLM into existing folders."""
     row = db.fetchone("SELECT * FROM videos WHERE video_id = ?", (video_id,))
     if row:
         title = title if title is not None else row.get("title")
@@ -923,18 +1072,47 @@ def classify_new_video(
         channel_title=channel_title,
         duration_sec=duration_sec,
     )
-    if matched:
+    # Real folders (not just «длинные» / music dump)
+    theme_like = [
+        m
+        for m in matched
+        if (m.get("rule_type") or "") in ("theme", "channel", "keyword")
+        or (
+            (m.get("rule_type") or "") == "content_kind"
+            and (m.get("rule_value") or "") != "music"
+        )
+    ]
+    if not theme_like:
+        theme_hits = _match_theme_folders(
+            user_id,
+            video_id,
+            title=title,
+            channel_title=channel_title,
+            description=description,
+        )
+        theme_like = theme_hits
+        matched = list(matched) + theme_hits
+
+    if theme_like:
+        _remove_from_catchall(user_id, video_id)
+        eng = "rules"
+        if all((m.get("rule_type") or "") == "theme" for m in theme_like):
+            eng = "themes"
         return {
-            "matched": matched,
-            "engine": "rules",
-            "reason": "Совпадение с сохранёнными правилами",
+            "matched": theme_like,
+            "engine": eng,
+            "reason": "Совпадение с правилами / темами",
         }
+
+    if not use_llm:
+        return {"matched": [], "engine": "none", "reason": "Нет совпадения (без LLM)"}
 
     rules = [
         r
         for r in list_rules(user_id)
         if (r.get("list_title") or "")
         and "скрыто" not in (r.get("list_title") or "").lower()
+        and not _is_catchall_list_title(r.get("list_title") or "")
         and r.get("rule_type") != "content_kind"
     ]
     existing_lists = []
@@ -942,6 +1120,19 @@ def classify_new_video(
     for r in rules:
         t = (r.get("list_title") or "").strip()
         if t and t.lower() not in seen_titles:
+            seen_titles.add(t.lower())
+            existing_lists.append(t)
+    for lst in db.fetchall(
+        "SELECT title FROM lists WHERE user_id = ?", (user_id,)
+    ):
+        t = (lst.get("title") or "").strip()
+        if (
+            t
+            and t.lower() not in seen_titles
+            and not _is_catchall_list_title(t)
+            and "скрыто" not in t.lower()
+            and not _is_sync_dump_list(t)
+        ):
             seen_titles.add(t.lower())
             existing_lists.append(t)
     if not existing_lists:
@@ -962,7 +1153,6 @@ def classify_new_video(
             "reason": suggestion.get("reason") or "Не нашлось категории",
         }
 
-    # Match suggested title to an existing list (exact / contains)
     pick_l = pick.lower()
     chosen = None
     for r in rules:
@@ -970,6 +1160,21 @@ def classify_new_video(
         if title_l == pick_l or pick_l in title_l or title_l in pick_l:
             chosen = r
             break
+    if not chosen:
+        for lst in db.fetchall(
+            "SELECT id, title FROM lists WHERE user_id = ?", (user_id,)
+        ):
+            title_l = (lst.get("title") or "").lower()
+            if title_l == pick_l or pick_l in title_l or title_l in pick_l:
+                if _is_catchall_list_title(title_l) or "скрыто" in title_l:
+                    continue
+                chosen = {
+                    "list_id": lst["id"],
+                    "list_title": lst.get("title"),
+                    "rule_type": "llm",
+                    "rule_value": "",
+                }
+                break
     if not chosen:
         return {
             "matched": [],
@@ -979,6 +1184,7 @@ def classify_new_video(
         }
 
     _add_list_item(int(chosen["list_id"]), video_id, 0)
+    _remove_from_catchall(user_id, video_id)
     return {
         "matched": [chosen],
         "engine": suggestion.get("engine") or "llm",
@@ -987,18 +1193,90 @@ def classify_new_video(
     }
 
 
+def classify_pending_batch(
+    user_id: int,
+    *,
+    limit: int = 200,
+    use_llm: bool = True,
+    llm_budget: int = 40,
+    progress_cb=None,
+) -> dict[str, Any]:
+    """Sort backlog into folders. Rules/themes first; LLM for leftovers (budgeted)."""
+    import time as _time
+
+    pending = pending_to_classify(user_id, limit=limit)
+    total = len(pending)
+    classified = 0
+    skipped = 0
+    llm_used = 0
+    t0 = _time.time()
+    for i, item in enumerate(pending):
+        vid = item["video_id"]
+        # Fast path first
+        result = classify_new_video(user_id, vid, use_llm=False)
+        if not (result.get("matched") or []) and use_llm and llm_used < llm_budget:
+            result = classify_new_video(user_id, vid, use_llm=True)
+            if result.get("matched"):
+                llm_used += 1
+        if result.get("matched"):
+            classified += 1
+        else:
+            skipped += 1
+        if progress_cb:
+            elapsed = _time.time() - t0
+            pct = int(5 + 90 * (i + 1) / max(1, total))
+            eta = 0.0
+            if i > 0:
+                eta = (elapsed / (i + 1)) * (total - i - 1)
+            progress_cb(
+                {
+                    "pct": pct,
+                    "title": "Разбираю новые",
+                    "detail": f"{i + 1} из {total} · {(item.get('title') or vid)[:80]}",
+                    "done": i + 1,
+                    "total": total,
+                    "classified": classified,
+                    "elapsed_sec": elapsed,
+                    "eta_sec": eta,
+                }
+            )
+    return {
+        "ok": True,
+        "total": total,
+        "classified": classified,
+        "skipped": skipped,
+        "llm_used": llm_used,
+        "pending_left": len(pending_to_classify(user_id, limit=5)),
+    }
+
+
 def home_feed(user_id: int) -> dict[str, Any]:
     """Home spine: saved folders + recent adds + fastest-growing themes."""
     structure = saved_structure(user_id, items_per_folder=16)
+    # Pull a wide window — newest first — then drop music/shorts so the rail
+    # is not filled with «старье» from a tiny LIMIT after filtering.
     recent_rows = db.fetchall(
         """
-        SELECT v.video_id, v.title, v.channel_title, v.duration_sec, v.thumb_url, li.saved_at
+        SELECT v.video_id, v.title, v.channel_title, v.duration_sec, v.thumb_url,
+               v.published_at, li.saved_at
         FROM library_items li
         JOIN videos v ON v.video_id = li.video_id
         WHERE li.user_id = ?
           AND li.status IN ('queue', 'in_progress')
-        ORDER BY li.saved_at DESC
-        LIMIT 24
+        ORDER BY li.saved_at DESC NULLS LAST
+        LIMIT 120
+        """,
+        (user_id,),
+    ) if db.is_postgres() else db.fetchall(
+        """
+        SELECT v.video_id, v.title, v.channel_title, v.duration_sec, v.thumb_url,
+               v.published_at, li.saved_at
+        FROM library_items li
+        JOIN videos v ON v.video_id = li.video_id
+        WHERE li.user_id = ?
+          AND li.status IN ('queue', 'in_progress')
+        ORDER BY datetime(li.saved_at) DESC
+        LIMIT 120
         """,
         (user_id,),
     )
@@ -1008,6 +1286,11 @@ def home_feed(user_id: int) -> dict[str, Any]:
             continue
         bucket = yt.content_bucket(r.get("title"), r.get("channel_title"), r.get("duration_sec"), None)
         if bucket in ("music", "shorts", "shortform", "unavailable"):
+            continue
+        # Skip ultra-short without duration_sec tagged as shortform already;
+        # still hide ≤90s noise if duration known
+        dur = r.get("duration_sec")
+        if isinstance(dur, int) and 0 < dur <= 90:
             continue
         vid = r["video_id"]
         recent.append(
@@ -1022,6 +1305,8 @@ def home_feed(user_id: int) -> dict[str, Any]:
                 "saved_at": str(r.get("saved_at") or ""),
             }
         )
+        if len(recent) >= 18:
+            break
 
     if db.is_postgres():
         growing_rows = db.fetchall(
@@ -1066,8 +1351,10 @@ def home_feed(user_id: int) -> dict[str, Any]:
             }
         )
 
+    pending = pending_to_classify(user_id, limit=250)
     return {
         **structure,
-        "recent": recent[:18],
+        "recent": recent,
         "growing": growing[:8],
+        "pending_classify": len(pending),
     }

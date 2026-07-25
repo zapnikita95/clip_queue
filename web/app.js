@@ -1363,14 +1363,20 @@
     const folders = structure.folders || [];
     const recent = structure.recent || [];
     const growing = structure.growing || [];
+    const pendingClassify = Number(structure.pending_classify || 0);
     const has = !!structure.has_structure && folders.length;
 
-    const growingHtml = growing.length
+    const growingHtml = (growing.length || pendingClassify > 0)
       ? `<div class="growing-row">${growing.map((g) => `
           <div class="growing-chip">
             <b>${escapeHtml(g.title)}</b>
             <span class="muted">+${g.added} за 2 нед.</span>
-          </div>`).join("")}</div>`
+          </div>`).join("")}
+          ${pendingClassify > 0
+            ? `<button type="button" class="btn home-classify-btn" id="home-classify">Разобрать · ${pendingClassify}</button>`
+            : ""}
+        </div>
+        <div id="home-classify-progress" class="home-classify-progress"></div>`
       : "";
 
     app.innerHTML = `
@@ -1378,7 +1384,7 @@
       <section class="hero">
         <h1>${has ? "Что посмотреть" : "Сначала разложи видео"}</h1>
         <p>${has
-          ? "Твои темы. Перетащи ⋮⋮ у названия, чтобы поменять порядок. Новые шары сами попадают в категории."
+          ? "Твои темы. Перетащи ⋮⋮ у названия, чтобы поменять порядок. Новые сами попадают в категории — или жми «Разобрать»."
           : "Онбординг: синк → умная категоризация → Сохранить. Потом главная — центр продукта."}</p>
         <div class="stats">
           <div class="stat">Папок: <b>${folders.length}</b></div>
@@ -1394,6 +1400,57 @@
       </section>
       <div id="rails"></div>`;
     wireNav();
+
+    const classifyBtn = $("#home-classify");
+    if (classifyBtn) {
+      classifyBtn.onclick = async () => {
+        const boxHost = $("#home-classify-progress");
+        classifyBtn.disabled = true;
+        const box = mountProgress(boxHost, {
+          title: "Разбираю новые",
+          detail: "Кладу видео по папкам…",
+        });
+        try {
+          const start = await api("/api/organize/classify-pending", {
+            method: "POST",
+            body: JSON.stringify({ limit: 200, use_llm: true }),
+          });
+          let job = start.job || {};
+          const jobId = job.id;
+          const t0 = Date.now();
+          while (job.status === "running") {
+            updateProgress(box, {
+              pct: job.pct || 5,
+              title: job.title || "Разбираю",
+              detail: job.detail || "",
+              elapsed_sec: (Date.now() - t0) / 1000,
+              eta_sec: job.eta_sec,
+            });
+            await new Promise((r) => setTimeout(r, 700));
+            const st = await api(`/api/organize/classify-pending/${encodeURIComponent(jobId)}`);
+            job = st.job || {};
+          }
+          if (job.status === "error") {
+            finishProgress(box, { ok: false, title: "Ошибка", detail: job.detail || job.error || "" });
+            classifyBtn.disabled = false;
+            return;
+          }
+          finishProgress(box, {
+            ok: true,
+            title: "Готово",
+            detail: job.detail || `В папки: ${job.classified || 0}`,
+            elapsed_sec: (Date.now() - t0) / 1000,
+          });
+          toast(`Разобрано: ${job.classified || 0}`);
+          setTimeout(() => renderHome(), 600);
+        } catch (e) {
+          finishProgress(box, { ok: false, title: "Ошибка", detail: e.message || String(e) });
+          classifyBtn.disabled = false;
+          toast(e.message || "Не удалось разобрать");
+        }
+      };
+    }
+
     const host = $("#rails");
     if (!has && !recent.length) {
       host.innerHTML = `
@@ -1410,7 +1467,7 @@
       block.className = "rail";
       block.innerHTML = `
         <div class="rail-head">
-          <h2>Недавно добавил</h2>
+          <h2>Недавно добавлены</h2>
           <span class="muted" style="font-size:13px">${recent.length}</span>
         </div>
         <div class="rail-track drag-scroll">

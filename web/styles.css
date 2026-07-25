@@ -1365,3 +1365,12 @@ a.btn.ghost:hover {
   min-width: 140px;
 }
 .growing-chip b { font-size: 13px; color: var(--text); }
+.home-classify-btn {
+  align-self: stretch;
+  min-width: 140px;
+  padding: 10px 16px;
+}
+.home-classify-progress {
+  margin-top: 12px;
+}
+.home-classify-progress:empty { display: none; }

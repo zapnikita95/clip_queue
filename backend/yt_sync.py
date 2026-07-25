@@ -340,6 +340,12 @@ def iter_sync_youtube_library(
             if _ensure_library(user_id, vid, source="liked", status="queue"):
                 stats["liked_new"] += 1
                 known.add(vid)
+                try:
+                    from backend import organize as _org
+
+                    _org.classify_new_video(user_id, vid, use_llm=False)
+                except Exception as e:
+                    log.warning("auto-classify liked %s: %s", vid, e)
             _add_list_item(list_id, vid)
             if liked and i % 40 == 0:
                 pct = 22 + int(10 * (i + 1) / max(1, len(liked)))
@@ -401,6 +407,12 @@ def iter_sync_youtube_library(
             if _ensure_library(user_id, vid, source="playlist", status="queue"):
                 stats["playlist_items_new"] += 1
                 known.add(vid)
+                try:
+                    from backend import organize as _org
+
+                    _org.classify_new_video(user_id, vid, use_llm=False)
+                except Exception as e:
+                    log.warning("auto-classify playlist %s: %s", vid, e)
             _add_list_item(list_id, vid)
         yield emit(
             40 + int(40 * (pi + 1) / n_pl),

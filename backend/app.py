@@ -13,6 +13,7 @@ from dotenv import load_dotenv
 from flask import Flask, g, jsonify, redirect, request, send_from_directory
 
 from backend import auth, db, google_oauth, llm, organize, search as cq_search, sync_jobs, takeout, themes, yt_sync
+from backend import classify_jobs
 from backend import similarity as sim
 from backend import youtube as yt
 
@@ -87,7 +88,7 @@ def create_app() -> Flask:
             {
                 "ok": True,
                 "service": "clip_queue",
-                "version": "0.2.2",
+                "version": "0.2.3",
                 "db": "postgres" if db.is_postgres() else "sqlite",
                 "google_oauth": google_oauth.configured(),
                 "llm": llm.available(),
@@ -295,6 +296,28 @@ def create_app() -> Flask:
         """Last saved folders + recent + growing themes for home."""
         uid = current_user()["user_id"]
         return jsonify({"ok": True, **organize.home_feed(uid)})
+
+    @app.post("/api/organize/classify-pending")
+    @require_auth
+    def organize_classify_pending():
+        """Background: sort new/unfiled queue videos into saved folders."""
+        uid = current_user()["user_id"]
+        body = request.get_json(silent=True) or {}
+        limit = min(300, max(10, int(body.get("limit") or 200)))
+        use_llm = body.get("use_llm")
+        if use_llm is None:
+            use_llm = True
+        job = classify_jobs.start_classify(uid, limit=limit, use_llm=bool(use_llm))
+        return jsonify({"ok": True, "job": job})
+
+    @app.get("/api/organize/classify-pending/<job_id>")
+    @require_auth
+    def organize_classify_pending_status(job_id: str):
+        uid = current_user()["user_id"]
+        job = classify_jobs.get_job(job_id) or classify_jobs.active_job_for_user(uid)
+        if not job or int(job.get("user_id") or 0) != uid:
+            return json_error("Нет задачи", 404)
+        return jsonify({"ok": True, "job": job})
 
     @app.get("/api/organize/rules")
     @require_auth
