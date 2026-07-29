@@ -557,9 +557,15 @@ def iter_sync_youtube_library(
         include_known = bool(is_inbox and (full or True))
         if is_inbox and not full:
             # Always refresh top of inbox (even known) so dates/order stay true
-            stop_known = 30
+            stop_known = 40
             include_known = True
-            pl_limit = min(pl_limit, 120)
+            pl_limit = min(max(pl_limit, 80), 150)
+            # Demote old positions so YouTube head (0..n) wins in «Недавно»
+            db.execute(
+                "UPDATE list_items SET position = position + 100000 "
+                "WHERE list_id = ? AND position < 100000",
+                (list_id,),
+            )
 
         items = _iter_playlist_items(
             access,

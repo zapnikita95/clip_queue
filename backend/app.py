@@ -88,7 +88,7 @@ def create_app() -> Flask:
             {
                 "ok": True,
                 "service": "clip_queue",
-                "version": "0.2.4",
+                "version": "0.2.5",
                 "db": "postgres" if db.is_postgres() else "sqlite",
                 "google_oauth": google_oauth.configured(),
                 "llm": llm.available(),

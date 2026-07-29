@@ -1278,13 +1278,13 @@ def home_feed(user_id: int) -> dict[str, Any]:
         scored.sort(key=lambda x: -x[0])
         primary = scored[0][1]
         inbox_title = (primary.get("title") or "").replace("YT: ", "", 1).strip()
-        lids = tuple(int(x[1]["id"]) for x in scored)
-        placeholders = ",".join("?" * len(lids))
+        lids = (int(primary["id"]),)
+        placeholders = "?"
         if db.is_postgres():
             recent_rows = db.fetchall(
                 f"""
                 SELECT v.video_id, v.title, v.channel_title, v.duration_sec, v.thumb_url,
-                       x.added_at AS saved_at, l.title AS list_title
+                       x.added_at AS saved_at, x.position, l.title AS list_title
                 FROM list_items x
                 JOIN videos v ON v.video_id = x.video_id
                 JOIN lists l ON l.id = x.list_id
@@ -1292,7 +1292,7 @@ def home_feed(user_id: int) -> dict[str, Any]:
                   ON li.video_id = x.video_id AND li.user_id = ?
                 WHERE x.list_id IN ({placeholders})
                   AND COALESCE(li.status, 'queue') IN ('queue', 'in_progress')
-                ORDER BY x.added_at DESC NULLS LAST
+                ORDER BY x.position ASC, x.added_at DESC NULLS LAST
                 LIMIT 80
                 """,
                 (user_id, *lids),
@@ -1301,7 +1301,7 @@ def home_feed(user_id: int) -> dict[str, Any]:
             recent_rows = db.fetchall(
                 f"""
                 SELECT v.video_id, v.title, v.channel_title, v.duration_sec, v.thumb_url,
-                       x.added_at AS saved_at, l.title AS list_title
+                       x.added_at AS saved_at, x.position, l.title AS list_title
                 FROM list_items x
                 JOIN videos v ON v.video_id = x.video_id
                 JOIN lists l ON l.id = x.list_id
@@ -1309,7 +1309,7 @@ def home_feed(user_id: int) -> dict[str, Any]:
                   ON li.video_id = x.video_id AND li.user_id = ?
                 WHERE x.list_id IN ({placeholders})
                   AND COALESCE(li.status, 'queue') IN ('queue', 'in_progress')
-                ORDER BY datetime(x.added_at) DESC
+                ORDER BY x.position ASC, datetime(x.added_at) DESC
                 LIMIT 80
                 """,
                 (user_id, *lids),
