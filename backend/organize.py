@@ -1253,46 +1253,108 @@ def classify_pending_batch(
 def home_feed(user_id: int) -> dict[str, Any]:
     """Home spine: saved folders + recent adds + fastest-growing themes."""
     structure = saved_structure(user_id, items_per_folder=16)
-    # Pull a wide window — newest first — then drop music/shorts so the rail
-    # is not filled with «старье» from a tiny LIMIT after filtering.
-    recent_rows = db.fetchall(
-        """
-        SELECT v.video_id, v.title, v.channel_title, v.duration_sec, v.thumb_url,
-               v.published_at, li.saved_at
-        FROM library_items li
-        JOIN videos v ON v.video_id = li.video_id
-        WHERE li.user_id = ?
-          AND li.status IN ('queue', 'in_progress')
-        ORDER BY li.saved_at DESC NULLS LAST
-        LIMIT 120
-        """,
-        (user_id,),
-    ) if db.is_postgres() else db.fetchall(
-        """
-        SELECT v.video_id, v.title, v.channel_title, v.duration_sec, v.thumb_url,
-               v.published_at, li.saved_at
-        FROM library_items li
-        JOIN videos v ON v.video_id = li.video_id
-        WHERE li.user_id = ?
-          AND li.status IN ('queue', 'in_progress')
-        ORDER BY datetime(li.saved_at) DESC
-        LIMIT 120
-        """,
-        (user_id,),
-    )
-    recent = []
+
+    # Спецпапки YouTube (Listen later / смотреть позже) — источник правды для «Недавно»
+    from backend.yt_sync import is_inbox_playlist_title
+
+    inbox_lists = [
+        r
+        for r in db.fetchall(
+            "SELECT id, title FROM lists WHERE user_id = ?", (user_id,)
+        )
+        if is_inbox_playlist_title(r.get("title") or "")
+    ]
+    inbox_title = ""
+    recent: list[dict] = []
+    if inbox_lists:
+        # Prefer the largest inbox (e.g. «Тест сомтреть позже»)
+        scored = []
+        for lst in inbox_lists:
+            c = db.fetchone(
+                "SELECT COUNT(*) AS c FROM list_items WHERE list_id = ?",
+                (lst["id"],),
+            )
+            scored.append((int((c or {}).get("c") or 0), lst))
+        scored.sort(key=lambda x: -x[0])
+        primary = scored[0][1]
+        inbox_title = (primary.get("title") or "").replace("YT: ", "", 1).strip()
+        lids = tuple(int(x[1]["id"]) for x in scored)
+        placeholders = ",".join("?" * len(lids))
+        if db.is_postgres():
+            recent_rows = db.fetchall(
+                f"""
+                SELECT v.video_id, v.title, v.channel_title, v.duration_sec, v.thumb_url,
+                       x.added_at AS saved_at, l.title AS list_title
+                FROM list_items x
+                JOIN videos v ON v.video_id = x.video_id
+                JOIN lists l ON l.id = x.list_id
+                LEFT JOIN library_items li
+                  ON li.video_id = x.video_id AND li.user_id = ?
+                WHERE x.list_id IN ({placeholders})
+                  AND COALESCE(li.status, 'queue') IN ('queue', 'in_progress')
+                ORDER BY x.added_at DESC NULLS LAST
+                LIMIT 80
+                """,
+                (user_id, *lids),
+            )
+        else:
+            recent_rows = db.fetchall(
+                f"""
+                SELECT v.video_id, v.title, v.channel_title, v.duration_sec, v.thumb_url,
+                       x.added_at AS saved_at, l.title AS list_title
+                FROM list_items x
+                JOIN videos v ON v.video_id = x.video_id
+                JOIN lists l ON l.id = x.list_id
+                LEFT JOIN library_items li
+                  ON li.video_id = x.video_id AND li.user_id = ?
+                WHERE x.list_id IN ({placeholders})
+                  AND COALESCE(li.status, 'queue') IN ('queue', 'in_progress')
+                ORDER BY datetime(x.added_at) DESC
+                LIMIT 80
+                """,
+                (user_id, *lids),
+            )
+    else:
+        recent_rows = db.fetchall(
+            """
+            SELECT v.video_id, v.title, v.channel_title, v.duration_sec, v.thumb_url,
+                   v.published_at, li.saved_at
+            FROM library_items li
+            JOIN videos v ON v.video_id = li.video_id
+            WHERE li.user_id = ?
+              AND li.status IN ('queue', 'in_progress')
+            ORDER BY li.saved_at DESC NULLS LAST
+            LIMIT 120
+            """,
+            (user_id,),
+        ) if db.is_postgres() else db.fetchall(
+            """
+            SELECT v.video_id, v.title, v.channel_title, v.duration_sec, v.thumb_url,
+                   v.published_at, li.saved_at
+            FROM library_items li
+            JOIN videos v ON v.video_id = li.video_id
+            WHERE li.user_id = ?
+              AND li.status IN ('queue', 'in_progress')
+            ORDER BY datetime(li.saved_at) DESC
+            LIMIT 120
+            """,
+            (user_id,),
+        )
+
+    seen_vids: set[str] = set()
     for r in recent_rows:
         if yt.is_unavailable_video(r.get("title")):
             continue
         bucket = yt.content_bucket(r.get("title"), r.get("channel_title"), r.get("duration_sec"), None)
         if bucket in ("music", "shorts", "shortform", "unavailable"):
             continue
-        # Skip ultra-short without duration_sec tagged as shortform already;
-        # still hide ≤90s noise if duration known
         dur = r.get("duration_sec")
         if isinstance(dur, int) and 0 < dur <= 90:
             continue
         vid = r["video_id"]
+        if vid in seen_vids:
+            continue
+        seen_vids.add(vid)
         recent.append(
             {
                 "video_id": vid,
@@ -1343,6 +1405,9 @@ def home_feed(user_id: int) -> dict[str, Any]:
         title = (r.get("title") or "").strip()
         if _is_sync_dump_list(title) or "скрыто" in title.lower():
             continue
+        # Don't show inbox dump as a «growing theme» chip noise
+        if is_inbox_playlist_title(title):
+            continue
         growing.append(
             {
                 "list_id": r["id"],
@@ -1355,6 +1420,7 @@ def home_feed(user_id: int) -> dict[str, Any]:
     return {
         **structure,
         "recent": recent,
+        "recent_source": inbox_title or "библиотека",
         "growing": growing[:8],
         "pending_classify": len(pending),
     }

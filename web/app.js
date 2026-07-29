@@ -1364,6 +1364,7 @@
     const recent = structure.recent || [];
     const growing = structure.growing || [];
     const pendingClassify = Number(structure.pending_classify || 0);
+    const recentSource = (structure.recent_source || "").trim();
     const has = !!structure.has_structure && folders.length;
 
     const growingHtml = (growing.length || pendingClassify > 0)
@@ -1377,19 +1378,20 @@
             : ""}
         </div>
         <div id="home-classify-progress" class="home-classify-progress"></div>`
-      : "";
+      : `<div id="home-classify-progress" class="home-classify-progress"></div>`;
 
     app.innerHTML = `
       ${topbar("home")}
       <section class="hero">
         <h1>${has ? "Что посмотреть" : "Сначала разложи видео"}</h1>
         <p>${has
-          ? "Твои темы. Перетащи ⋮⋮ у названия, чтобы поменять порядок. Новые сами попадают в категории — или жми «Разобрать»."
+          ? "Твои темы. При открытии подтягиваем спецпапку (Listen later / смотреть позже). Перетащи ⋮⋮ у названия, чтобы поменять порядок."
           : "Онбординг: синк → умная категоризация → Сохранить. Потом главная — центр продукта."}</p>
         <div class="stats">
           <div class="stat">Папок: <b>${folders.length}</b></div>
           <div class="stat">Очередь: <b>${shell.counts?.queue ?? "—"}</b></div>
           <div class="stat">Начатые: <b>${shell.counts?.started || 0}</b></div>
+          <div class="stat muted" id="home-sync-stat" style="display:none">Синк…</div>
         </div>
         ${growingHtml}
         <div class="btn-row" style="margin-top:14px">
@@ -1400,6 +1402,52 @@
       </section>
       <div id="rails"></div>`;
     wireNav();
+
+    // Quiet delta sync on every home open — keeps «Недавно» / спецпапка fresh
+    (async () => {
+      const syncStat = $("#home-sync-stat");
+      try {
+        const me = await api("/api/me").catch(() => ({}));
+        if (!me.youtube_connected) return;
+        const lastAt = me.last_youtube_sync && me.last_youtube_sync.at
+          ? Date.parse(me.last_youtube_sync.at)
+          : 0;
+        if (lastAt && Date.now() - lastAt < 3 * 60 * 1000) return; // <3 мин — не дёргаем
+        if (syncStat) {
+          syncStat.style.display = "";
+          syncStat.innerHTML = "Синк спецпапки…";
+        }
+        const start = await api("/api/youtube/sync", {
+          method: "POST",
+          body: JSON.stringify({ full: false }),
+        });
+        let job = start.job || {};
+        const jobId = job.id;
+        let guard = 0;
+        while (job.status === "running" && guard < 90) {
+          guard += 1;
+          if (syncStat) {
+            syncStat.innerHTML = escapeHtml(job.detail || job.title || "Синк…");
+          }
+          await new Promise((r) => setTimeout(r, 1200));
+          const st = await api(`/api/youtube/sync/status?job_id=${encodeURIComponent(jobId)}`);
+          job = st.job || {};
+        }
+        if (syncStat) {
+          if (job.status === "done") {
+            const s = job.stats || {};
+            const n = (s.liked_new || 0) + (s.playlist_items_new || 0) + (s.inbox_new || 0);
+            syncStat.innerHTML = n > 0 ? `Синк: +${n}` : "Синк ок";
+            if (n > 0) setTimeout(() => renderHome(), 400);
+            else setTimeout(() => { if (syncStat) syncStat.style.display = "none"; }, 2500);
+          } else {
+            syncStat.innerHTML = "Синк не удался";
+          }
+        }
+      } catch (_) {
+        if (syncStat) syncStat.style.display = "none";
+      }
+    })();
 
     const classifyBtn = $("#home-classify");
     if (classifyBtn) {
@@ -1468,7 +1516,7 @@
       block.innerHTML = `
         <div class="rail-head">
           <h2>Недавно добавлены</h2>
-          <span class="muted" style="font-size:13px">${recent.length}</span>
+          <span class="muted" style="font-size:13px">${recentSource ? escapeHtml(recentSource) + " · " : ""}${recent.length}</span>
         </div>
         <div class="rail-track drag-scroll">
           ${recent.map((it) => cardHtml(it)).join("")}

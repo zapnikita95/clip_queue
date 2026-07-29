@@ -128,6 +128,61 @@ def _ensure_library(user_id: int, video_id: str, source: str, status: str = "que
     return True
 
 
+def _touch_library_saved_at(user_id: int, video_id: str, when: str | None = None) -> None:
+    """Bump saved_at so «Недавно добавлены» picks up inbox / playlist adds."""
+    if db.is_postgres():
+        if when:
+            db.execute(
+                "UPDATE library_items SET saved_at = GREATEST(saved_at, %s::timestamptz) "
+                "WHERE user_id = %s AND video_id = %s AND status IN ('queue', 'in_progress')",
+                (when, user_id, video_id),
+            )
+        else:
+            db.execute(
+                "UPDATE library_items SET saved_at = NOW() "
+                "WHERE user_id = %s AND video_id = %s AND status IN ('queue', 'in_progress')",
+                (user_id, video_id),
+            )
+    else:
+        if when:
+            db.execute(
+                "UPDATE library_items SET saved_at = ? "
+                "WHERE user_id = ? AND video_id = ? AND status IN ('queue', 'in_progress') "
+                "AND (saved_at IS NULL OR datetime(saved_at) < datetime(?))",
+                (when, user_id, video_id, when),
+            )
+        else:
+            db.execute(
+                "UPDATE library_items SET saved_at = datetime('now') "
+                "WHERE user_id = ? AND video_id = ? AND status IN ('queue', 'in_progress')",
+                (user_id, video_id),
+            )
+
+
+def is_inbox_playlist_title(title: str) -> bool:
+    """User's «спецпапка» for stuff to watch: Listen later / смотреть позже / etc."""
+    t = (title or "").strip().lower()
+    if t.startswith("yt:"):
+        t = t[3:].strip()
+    if not t:
+        return False
+    if t in (
+        "listen later",
+        "слушать позже",
+        "смотреть позже",
+        "сомтреть позже",
+        "watch later",
+    ):
+        return True
+    if "listen later" in t:
+        return True
+    if "позже" in t and any(
+        x in t for x in ("смотр", "сомтр", "listen", "тест", "очеред", "inbox", "to watch")
+    ):
+        return True
+    return False
+
+
 def _ensure_list(user_id: int, title: str) -> int:
     row = db.fetchone(
         "SELECT id FROM lists WHERE user_id = ? AND title = ?",
@@ -150,16 +205,97 @@ def _ensure_list(user_id: int, title: str) -> int:
     return int(row["id"])
 
 
-def _add_list_item(list_id: int, video_id: str) -> None:
-    db.execute(
-        "INSERT INTO list_items (list_id, video_id, position) VALUES (?, ?, 0) "
-        + (
-            "ON CONFLICT DO NOTHING"
-            if db.is_postgres()
-            else "ON CONFLICT(list_id, video_id) DO NOTHING"
-        ),
+def _add_list_item(
+    list_id: int,
+    video_id: str,
+    position: int = 0,
+    *,
+    added_at: str | None = None,
+    refresh: bool = False,
+) -> bool:
+    """Insert list membership. Returns True if the row was newly inserted."""
+    before = db.fetchone(
+        "SELECT 1 AS x FROM list_items WHERE list_id = ? AND video_id = ?",
         (list_id, video_id),
     )
+    if refresh:
+        if added_at:
+            if db.is_postgres():
+                db.execute(
+                    """
+                    INSERT INTO list_items (list_id, video_id, position, added_at)
+                    VALUES (?, ?, ?, ?::timestamptz)
+                    ON CONFLICT (list_id, video_id) DO UPDATE SET
+                      position = EXCLUDED.position,
+                      added_at = EXCLUDED.added_at
+                    """,
+                    (list_id, video_id, position, added_at),
+                )
+            else:
+                db.execute(
+                    """
+                    INSERT INTO list_items (list_id, video_id, position, added_at)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(list_id, video_id) DO UPDATE SET
+                      position = excluded.position,
+                      added_at = excluded.added_at
+                    """,
+                    (list_id, video_id, position, added_at),
+                )
+        else:
+            db.execute(
+                """
+                INSERT INTO list_items (list_id, video_id, position) VALUES (?, ?, ?)
+                ON CONFLICT(list_id, video_id) DO UPDATE SET position = excluded.position
+                """
+                if not db.is_postgres()
+                else """
+                INSERT INTO list_items (list_id, video_id, position) VALUES (?, ?, ?)
+                ON CONFLICT (list_id, video_id) DO UPDATE SET position = EXCLUDED.position
+                """,
+                (list_id, video_id, position),
+            )
+        return before is None
+
+    if added_at:
+        if db.is_postgres():
+            db.execute(
+                """
+                INSERT INTO list_items (list_id, video_id, position, added_at)
+                VALUES (?, ?, ?, ?::timestamptz)
+                ON CONFLICT DO NOTHING
+                """,
+                (list_id, video_id, position, added_at),
+            )
+        else:
+            db.execute(
+                """
+                INSERT INTO list_items (list_id, video_id, position, added_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(list_id, video_id) DO NOTHING
+                """,
+                (list_id, video_id, position, added_at),
+            )
+    else:
+        db.execute(
+            "INSERT INTO list_items (list_id, video_id, position) VALUES (?, ?, ?) "
+            + (
+                "ON CONFLICT DO NOTHING"
+                if db.is_postgres()
+                else "ON CONFLICT(list_id, video_id) DO NOTHING"
+            ),
+            (list_id, video_id, position),
+        )
+    return before is None
+
+
+def _list_video_ids(list_id: int) -> set[str]:
+    return {
+        r["video_id"]
+        for r in db.fetchall(
+            "SELECT video_id FROM list_items WHERE list_id = ?", (list_id,)
+        )
+    }
 
 
 def _iter_playlist_items(
@@ -169,9 +305,14 @@ def _iter_playlist_items(
     *,
     known_ids: set[str] | None = None,
     stop_after_known: int = 0,
+    include_known: bool = False,
 ) -> list[dict]:
-    """Page playlist items. If stop_after_known>0, stop after that many consecutive
-    already-known videos in a row (likes are newest-first → cheap delta)."""
+    """Page playlist items.
+
+    stop_after_known: stop after N consecutive ids already in known_ids
+    (likes newest-first → cheap delta).
+    include_known=True: still yield known ids (for refreshing added_at on inbox).
+    """
     items: list[dict] = []
     page = None
     consecutive_known = 0
@@ -200,13 +341,20 @@ def _iter_playlist_items(
             )
             if not vid:
                 continue
-            if known_ids is not None and stop_after_known > 0 and vid in known_ids:
+            is_known = known_ids is not None and vid in known_ids
+            if is_known and stop_after_known > 0:
                 consecutive_known += 1
                 if consecutive_known >= stop_after_known:
+                    if include_known:
+                        items.append({"video_id": vid, "snippet": sn, "already_in": True})
                     return items
+                if include_known:
+                    items.append({"video_id": vid, "snippet": sn, "already_in": True})
+                    if len(items) >= limit:
+                        break
                 continue
             consecutive_known = 0
-            items.append({"video_id": vid, "snippet": sn})
+            items.append({"video_id": vid, "snippet": sn, "already_in": bool(is_known)})
             if len(items) >= limit:
                 break
         page = data.get("nextPageToken")
@@ -367,44 +515,72 @@ def iter_sync_youtube_library(
             break
 
     work_pls = []
+    inbox_pls = []
     for pl in playlists:
         pl_id = pl.get("id")
         title = ((pl.get("snippet") or {}).get("title") or "Плейлист").strip()
         if pl_id in ("WL", "HL") or title.lower() in ("watch later", "смотреть позже"):
-            stats["skipped_private"].append(title or pl_id)
-            continue
-        work_pls.append((pl_id, title))
+            # System WL is blocked by Google; user-made «смотреть позже» / Listen later — ok
+            if pl_id in ("WL", "HL"):
+                stats["skipped_private"].append(title or pl_id)
+                continue
+            # title literally "смотреть позже" as custom playlist — treat as inbox below
+        entry = (pl_id, title)
+        if is_inbox_playlist_title(title):
+            inbox_pls.append(entry)
+        else:
+            work_pls.append(entry)
+    # Спецпапки (Listen later / «смотреть позже») — всегда первыми
+    work_pls = inbox_pls + work_pls
+    stats["inbox_playlists"] = [t for _, t in inbox_pls]
 
     n_pl = max(1, len(work_pls))
     for pi, (pl_id, title) in enumerate(work_pls):
         base = 40 + int(40 * pi / n_pl)
+        is_inbox = is_inbox_playlist_title(title)
         yield emit(
             base,
-            f"Плейлист: {title[:48]}",
+            f"{'Спецпапка' if is_inbox else 'Плейлист'}: {title[:48]}",
             f"{pi + 1} из {len(work_pls)} · " + ("полный" if full else "дельта"),
         )
         stats["playlists"] += 1
+        list_id = _ensure_list(user_id, f"YT: {title}"[:120])
+        in_list = _list_video_ids(list_id)
+
         pl_limit = int(os.environ.get("YT_PLAYLIST_SYNC_LIMIT", "2000") or 2000)
         pl_limit = max(300, min(pl_limit, 5000))
         if not full:
-            pl_limit = min(pl_limit, 250)
-        stop_known = 0 if full else 20
+            pl_limit = min(pl_limit, 400 if is_inbox else 250)
+        # Delta: stop after consecutive already-in-THIS-list (not whole library!)
+        stop_known = 0 if full else (25 if is_inbox else 20)
+        # Inbox: refresh added_at from YouTube for head of list so «Недавно» is real
+        include_known = bool(is_inbox and (full or True))
+        if is_inbox and not full:
+            # Always refresh top of inbox (even known) so dates/order stay true
+            stop_known = 30
+            include_known = True
+            pl_limit = min(pl_limit, 120)
+
         items = _iter_playlist_items(
             access,
             pl_id,
             limit=pl_limit,
-            known_ids=known,
+            known_ids=in_list,
             stop_after_known=stop_known,
+            include_known=include_known if is_inbox else False,
         )
         ids = [x["video_id"] for x in items]
         if ids:
             _enrich_durations(access, ids)
-        list_id = _ensure_list(user_id, f"YT: {title}"[:120])
-        for x in items:
+        new_in_pl = 0
+        for pos, x in enumerate(items):
             vid = x["video_id"]
+            sn = x.get("snippet") or {}
+            added_at = (sn.get("publishedAt") or "").strip() or None
             if not db.fetchone("SELECT video_id FROM videos WHERE video_id = ?", (vid,)):
-                _upsert_video_from_snippet(vid, x.get("snippet") or {})
-            if _ensure_library(user_id, vid, source="playlist", status="queue"):
+                _upsert_video_from_snippet(vid, sn)
+            inserted_lib = _ensure_library(user_id, vid, source="playlist", status="queue")
+            if inserted_lib:
                 stats["playlist_items_new"] += 1
                 known.add(vid)
                 try:
@@ -413,11 +589,26 @@ def iter_sync_youtube_library(
                     _org.classify_new_video(user_id, vid, use_llm=False)
                 except Exception as e:
                     log.warning("auto-classify playlist %s: %s", vid, e)
-            _add_list_item(list_id, vid)
+            was_new_membership = _add_list_item(
+                list_id,
+                vid,
+                position=pos,
+                added_at=added_at,
+                refresh=bool(is_inbox),
+            )
+            if was_new_membership or inserted_lib:
+                new_in_pl += 1
+                if is_inbox:
+                    _touch_library_saved_at(user_id, vid, added_at)
+            elif is_inbox and added_at:
+                # Keep library «recent» aligned with when user put it in the inbox folder
+                _touch_library_saved_at(user_id, vid, added_at)
+        if is_inbox:
+            stats["inbox_new"] = int(stats.get("inbox_new") or 0) + new_in_pl
         yield emit(
             40 + int(40 * (pi + 1) / n_pl),
-            f"Плейлист: {title[:48]}",
-            f"Новых в этой пачке: {len(items)}",
+            f"{'Спецпапка' if is_inbox else 'Плейлист'}: {title[:48]}",
+            f"В пачке: {len(items)} · новых в папке: {new_in_pl}",
         )
 
     yield emit(84, "Тяну подписки", "Каналы для подсказок по структуре")
