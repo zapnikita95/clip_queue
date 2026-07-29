@@ -1365,16 +1365,26 @@
     const growing = structure.growing || [];
     const pendingClassify = Number(structure.pending_classify || 0);
     const recentSource = (structure.recent_source || "").trim();
+    const classifyJob = structure.classify_job || null;
+    const canResumeClassify = !!(
+      classifyJob
+      && (classifyJob.status === "paused" || (classifyJob.status === "error" && classifyJob.resumable))
+      && (classifyJob.done || classifyJob.done_ids_count)
+    );
     const has = !!structure.has_structure && folders.length;
 
-    const growingHtml = (growing.length || pendingClassify > 0)
+    const classifyBtnLabel = canResumeClassify
+      ? `Продолжить · ${classifyJob.done || classifyJob.done_ids_count || 0}/${classifyJob.total || "?"}`
+      : (pendingClassify > 0 ? `Разобрать · ${pendingClassify}` : "");
+
+    const growingHtml = (growing.length || pendingClassify > 0 || canResumeClassify)
       ? `<div class="growing-row">${growing.map((g) => `
           <div class="growing-chip">
             <b>${escapeHtml(g.title)}</b>
             <span class="muted">+${g.added} за 2 нед.</span>
           </div>`).join("")}
-          ${pendingClassify > 0
-            ? `<button type="button" class="btn home-classify-btn" id="home-classify">Разобрать · ${pendingClassify}</button>`
+          ${classifyBtnLabel
+            ? `<button type="button" class="btn home-classify-btn" id="home-classify">${escapeHtml(classifyBtnLabel)}</button>`
             : ""}
         </div>
         <div id="home-classify-progress" class="home-classify-progress"></div>`
@@ -1451,21 +1461,69 @@
 
     const classifyBtn = $("#home-classify");
     if (classifyBtn) {
-      classifyBtn.onclick = async () => {
+      const pollClassifyStatus = async (jobId) => {
+        let lastErr = null;
+        for (let attempt = 0; attempt < 6; attempt++) {
+          try {
+            const st = await api(`/api/organize/classify-pending/${encodeURIComponent(jobId)}`);
+            return st.job || {};
+          } catch (e) {
+            lastErr = e;
+            // Railway 502 on poll — job usually still running; retry
+            if (e.status === 502 || e.status === 503 || e.status === 504) {
+              await new Promise((r) => setTimeout(r, 1200 + attempt * 800));
+              continue;
+            }
+            throw e;
+          }
+        }
+        throw lastErr || new Error("HTTP 502");
+      };
+
+      const runClassify = async ({ resume = false } = {}) => {
         const boxHost = $("#home-classify-progress");
         classifyBtn.disabled = true;
         const box = mountProgress(boxHost, {
-          title: "Разбираю новые",
-          detail: "Кладу видео по папкам…",
+          title: resume ? "Продолжаю разбор" : "Разбираю новые",
+          detail: resume ? "С чекпоинта…" : "Кладу видео по папкам…",
         });
+        const showResumeUi = (job) => {
+          finishProgress(box, {
+            ok: false,
+            title: "Разбор прерван",
+            detail: job.detail || "Прогресс сохранён — можно продолжить",
+            pct: Math.min(99, Number(job.pct) || 5),
+          });
+          const actions = document.createElement("div");
+          actions.className = "btn-row";
+          actions.style.marginTop = "10px";
+          actions.innerHTML = `<button type="button" class="btn" id="classify-resume-btn">Продолжить</button>
+            <button type="button" class="btn ghost" id="classify-dismiss-btn">Позже</button>`;
+          boxHost.appendChild(actions);
+          const resumeBtn = $("#classify-resume-btn");
+          if (resumeBtn) {
+            resumeBtn.onclick = () => runClassify({ resume: true });
+          }
+          const dismiss = $("#classify-dismiss-btn");
+          if (dismiss) {
+            dismiss.onclick = () => {
+              classifyBtn.disabled = false;
+              classifyBtn.textContent = `Продолжить · ${job.done || 0}/${job.total || "?"}`;
+            };
+          }
+          classifyBtn.disabled = false;
+          classifyBtn.textContent = `Продолжить · ${job.done || 0}/${job.total || "?"}`;
+        };
+
         try {
           const start = await api("/api/organize/classify-pending", {
             method: "POST",
-            body: JSON.stringify({ limit: 200, use_llm: true }),
+            body: JSON.stringify({ limit: 200, use_llm: true, resume }),
           });
           let job = start.job || {};
           const jobId = job.id;
           const t0 = Date.now();
+          let streak502 = 0;
           while (job.status === "running") {
             updateProgress(box, {
               pct: job.pct || 5,
@@ -1474,9 +1532,32 @@
               elapsed_sec: (Date.now() - t0) / 1000,
               eta_sec: job.eta_sec,
             });
-            await new Promise((r) => setTimeout(r, 700));
-            const st = await api(`/api/organize/classify-pending/${encodeURIComponent(jobId)}`);
-            job = st.job || {};
+            await new Promise((r) => setTimeout(r, 900));
+            try {
+              job = await pollClassifyStatus(jobId);
+              streak502 = 0;
+            } catch (e) {
+              streak502 += 1;
+              updateProgress(box, {
+                pct: job.pct || 5,
+                title: "Связь оборвалась",
+                detail: `Повторяю опрос… (${e.message || "502"}) · прогресс на сервере сохранён`,
+                elapsed_sec: (Date.now() - t0) / 1000,
+              });
+              if (streak502 >= 8) {
+                // Mark as paused locally; server checkpoint remains
+                showResumeUi({
+                  ...job,
+                  status: "paused",
+                  detail: `Оборвалась связь после ${job.done || "?"} роликов — нажми «Продолжить»`,
+                });
+                return;
+              }
+            }
+          }
+          if (job.status === "paused" || (job.status === "error" && job.resumable)) {
+            showResumeUi(job);
+            return;
           }
           if (job.status === "error") {
             finishProgress(box, { ok: false, title: "Ошибка", detail: job.detail || job.error || "" });
@@ -1493,10 +1574,42 @@
           setTimeout(() => renderHome(), 600);
         } catch (e) {
           finishProgress(box, { ok: false, title: "Ошибка", detail: e.message || String(e) });
+          // Offer resume if we likely have server checkpoint
+          const actions = document.createElement("div");
+          actions.className = "btn-row";
+          actions.style.marginTop = "10px";
+          actions.innerHTML = `<button type="button" class="btn" id="classify-resume-btn">Продолжить / повторить</button>`;
+          boxHost.appendChild(actions);
+          const resumeBtn = $("#classify-resume-btn");
+          if (resumeBtn) resumeBtn.onclick = () => runClassify({ resume: true });
           classifyBtn.disabled = false;
           toast(e.message || "Не удалось разобрать");
         }
       };
+
+      classifyBtn.onclick = () => runClassify({ resume: canResumeClassify });
+
+      // If job is already running (another tab / reload) — attach progress
+      if (classifyJob && classifyJob.status === "running") {
+        runClassify({ resume: true });
+      } else if (canResumeClassify) {
+        const boxHost = $("#home-classify-progress");
+        if (boxHost) {
+          boxHost.innerHTML = `<div class="progress-box error" data-progress>
+            <div class="progress-head">
+              <div class="progress-copy">
+                <div class="progress-title">Разбор прерван</div>
+                <div class="progress-detail">${escapeHtml(classifyJob.detail || "Можно продолжить с чекпоинта")}</div>
+              </div>
+            </div>
+            <div class="btn-row" style="margin-top:10px">
+              <button type="button" class="btn" id="classify-resume-btn">Продолжить</button>
+            </div>
+          </div>`;
+          const resumeBtn = $("#classify-resume-btn");
+          if (resumeBtn) resumeBtn.onclick = () => runClassify({ resume: true });
+        }
+      }
     }
 
     const host = $("#rails");

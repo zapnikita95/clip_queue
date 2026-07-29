@@ -88,7 +88,7 @@ def create_app() -> Flask:
             {
                 "ok": True,
                 "service": "clip_queue",
-                "version": "0.2.5",
+                "version": "0.2.6",
                 "db": "postgres" if db.is_postgres() else "sqlite",
                 "google_oauth": google_oauth.configured(),
                 "llm": llm.available(),
@@ -307,14 +307,27 @@ def create_app() -> Flask:
         use_llm = body.get("use_llm")
         if use_llm is None:
             use_llm = True
-        job = classify_jobs.start_classify(uid, limit=limit, use_llm=bool(use_llm))
+        resume = bool(body.get("resume"))
+        job = classify_jobs.start_classify(
+            uid, limit=limit, use_llm=bool(use_llm), resume=resume
+        )
+        return jsonify({"ok": True, "job": job})
+
+    @app.get("/api/organize/classify-pending")
+    @require_auth
+    def organize_classify_pending_active():
+        """Active / paused classify job for this user (for resume UI)."""
+        uid = current_user()["user_id"]
+        job = classify_jobs.active_job_for_user(uid)
         return jsonify({"ok": True, "job": job})
 
     @app.get("/api/organize/classify-pending/<job_id>")
     @require_auth
     def organize_classify_pending_status(job_id: str):
         uid = current_user()["user_id"]
-        job = classify_jobs.get_job(job_id) or classify_jobs.active_job_for_user(uid)
+        job = classify_jobs.get_job(job_id)
+        if not job:
+            job = classify_jobs.active_job_for_user(uid)
         if not job or int(job.get("user_id") or 0) != uid:
             return json_error("Нет задачи", 404)
         return jsonify({"ok": True, "job": job})

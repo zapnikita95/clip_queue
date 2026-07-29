@@ -1199,45 +1199,60 @@ def classify_pending_batch(
     limit: int = 200,
     use_llm: bool = True,
     llm_budget: int = 40,
+    skip_ids: set[str] | None = None,
     progress_cb=None,
 ) -> dict[str, Any]:
-    """Sort backlog into folders. Rules/themes first; LLM for leftovers (budgeted)."""
+    """Sort backlog into folders. Rules/themes first; LLM for leftovers (budgeted).
+
+    skip_ids — already processed in a previous (interrupted) run; still counted in total.
+    """
     import time as _time
 
-    pending = pending_to_classify(user_id, limit=limit)
-    total = len(pending)
+    skip_ids = set(skip_ids or [])
+    pending_all = pending_to_classify(user_id, limit=limit + len(skip_ids))
+    # Keep skipped items out of work list but preserve overall target size
+    pending = [p for p in pending_all if p["video_id"] not in skip_ids][:limit]
+    # Total = already done in this job + remaining work this pass
+    total = len(skip_ids) + len(pending)
+    if total < len(skip_ids):
+        total = len(skip_ids)
     classified = 0
     skipped = 0
     llm_used = 0
     t0 = _time.time()
+    base_done = len(skip_ids)
+
     for i, item in enumerate(pending):
         vid = item["video_id"]
-        # Fast path first
         result = classify_new_video(user_id, vid, use_llm=False)
         if not (result.get("matched") or []) and use_llm and llm_used < llm_budget:
             result = classify_new_video(user_id, vid, use_llm=True)
             if result.get("matched"):
                 llm_used += 1
-        if result.get("matched"):
+        was_classified = bool(result.get("matched"))
+        if was_classified:
             classified += 1
         else:
             skipped += 1
+        done_n = base_done + i + 1
         if progress_cb:
             elapsed = _time.time() - t0
-            pct = int(5 + 90 * (i + 1) / max(1, total))
+            pct = int(5 + 90 * done_n / max(1, total))
             eta = 0.0
             if i > 0:
-                eta = (elapsed / (i + 1)) * (total - i - 1)
+                eta = (elapsed / (i + 1)) * (len(pending) - i - 1)
             progress_cb(
                 {
-                    "pct": pct,
+                    "pct": min(99, pct),
                     "title": "Разбираю новые",
-                    "detail": f"{i + 1} из {total} · {(item.get('title') or vid)[:80]}",
-                    "done": i + 1,
+                    "detail": f"{done_n} из {total} · {(item.get('title') or vid)[:80]}",
+                    "done": done_n,
                     "total": total,
                     "classified": classified,
                     "elapsed_sec": elapsed,
                     "eta_sec": eta,
+                    "video_id": vid,
+                    "was_classified": was_classified,
                 }
             )
     return {
@@ -1247,6 +1262,7 @@ def classify_pending_batch(
         "skipped": skipped,
         "llm_used": llm_used,
         "pending_left": len(pending_to_classify(user_id, limit=5)),
+        "resumed_from": base_done,
     }
 
 
@@ -1417,10 +1433,17 @@ def home_feed(user_id: int) -> dict[str, Any]:
         )
 
     pending = pending_to_classify(user_id, limit=250)
+    try:
+        from backend import classify_jobs as _cj
+
+        classify_job = _cj.active_job_for_user(user_id)
+    except Exception:
+        classify_job = None
     return {
         **structure,
         "recent": recent,
         "recent_source": inbox_title or "библиотека",
         "growing": growing[:8],
         "pending_classify": len(pending),
+        "classify_job": classify_job,
     }
