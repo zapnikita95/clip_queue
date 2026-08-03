@@ -441,11 +441,107 @@ def create_app() -> Flask:
         )
         if not row:
             return json_error("Нет в библиотеке", 404)
+        bumped = _apply_interest_and_queue_boost(uid, video_id, level)
+        return jsonify({"ok": True, "interest": level, "boosted": bumped})
+
+    def _bump_saved_at(uid: int, video_id: str, *, days_delta: int = 0) -> None:
+        """Move item toward (days_delta>=0 as now) or away from queue head."""
+        from datetime import datetime, timedelta, timezone
+
+        when = datetime.now(timezone.utc) + timedelta(days=days_delta)
+        stamp = when.strftime("%Y-%m-%d %H:%M:%S")
+        if db.is_postgres():
+            db.execute(
+                "UPDATE library_items SET saved_at = %s::timestamptz "
+                "WHERE user_id = %s AND video_id = %s AND status IN ('queue', 'in_progress')",
+                (when.isoformat(), uid, video_id),
+            )
+        else:
+            db.execute(
+                "UPDATE library_items SET saved_at = ? "
+                "WHERE user_id = ? AND video_id = ? AND status IN ('queue', 'in_progress')",
+                (stamp, uid, video_id),
+            )
+
+    def _apply_interest_and_queue_boost(uid: int, video_id: str, level: int) -> list[str]:
+        """Set interest, reorder queue via saved_at, softly boost/demote similar."""
         db.execute(
             "UPDATE library_items SET interest = ? WHERE user_id = ? AND video_id = ?",
             (level, uid, video_id),
         )
-        return jsonify({"ok": True, "interest": level})
+        if level >= 2:
+            _bump_saved_at(uid, video_id, days_delta=0)
+        elif level == 1:
+            _bump_saved_at(uid, video_id, days_delta=0)
+        elif level < 0:
+            _bump_saved_at(uid, video_id, days_delta=-10)
+
+        boosted: list[str] = [video_id]
+        # Nearby similar from library (same channel + shared tags), queue only
+        anchor = db.fetchone("SELECT channel_title FROM videos WHERE video_id = ?", (video_id,))
+        ch = (anchor or {}).get("channel_title") or ""
+        tag_ids = {
+            r["tag_id"]
+            for r in db.fetchall(
+                "SELECT tag_id FROM item_tags WHERE user_id = ? AND video_id = ?",
+                (uid, video_id),
+            )
+        }
+        candidates = db.fetchall(
+            """
+            SELECT li.video_id, li.interest, v.channel_title
+            FROM library_items li
+            JOIN videos v ON v.video_id = li.video_id
+            WHERE li.user_id = ? AND li.video_id != ?
+              AND li.status = 'queue'
+            ORDER BY li.saved_at DESC
+            LIMIT 80
+            """,
+            (uid, video_id),
+        )
+        scored: list[tuple[int, str]] = []
+        for c in candidates:
+            score = 0
+            if ch and (c.get("channel_title") or "") == ch:
+                score += 3
+            if tag_ids:
+                shared = db.fetchone(
+                    """
+                    SELECT COUNT(*) AS n FROM item_tags
+                    WHERE user_id = ? AND video_id = ? AND tag_id IN ({})
+                    """.format(",".join("?" * len(tag_ids))),
+                    (uid, c["video_id"], *tag_ids),
+                ) if tag_ids else None
+                score += int((shared or {}).get("n") or 0)
+            if score > 0:
+                scored.append((score, c["video_id"]))
+        scored.sort(reverse=True)
+        for _, sid in scored[:5]:
+            cur = db.fetchone(
+                "SELECT interest FROM library_items WHERE user_id = ? AND video_id = ?",
+                (uid, sid),
+            )
+            cur_i = int((cur or {}).get("interest") or 0)
+            if level >= 2:
+                new_i = min(2, max(cur_i, 1))
+                db.execute(
+                    "UPDATE library_items SET interest = ? WHERE user_id = ? AND video_id = ?",
+                    (new_i, uid, sid),
+                )
+                _bump_saved_at(uid, sid, days_delta=0)
+                boosted.append(sid)
+            elif level == 1:
+                _bump_saved_at(uid, sid, days_delta=0)
+                boosted.append(sid)
+            elif level < 0:
+                new_i = max(-1, cur_i - 1)
+                db.execute(
+                    "UPDATE library_items SET interest = ? WHERE user_id = ? AND video_id = ?",
+                    (new_i, uid, sid),
+                )
+                _bump_saved_at(uid, sid, days_delta=-5)
+                boosted.append(sid)
+        return boosted
 
     @app.post("/api/library/<video_id>/dismiss")
     @require_auth
@@ -880,17 +976,31 @@ def create_app() -> Flask:
         offset = max(int(request.args.get("offset") or 0), 0)
         # Over-fetch then filter — junk buckets otherwise fill the page
         fetch_n = min(3000, max(limit * 30, 300))
-        rows = db.fetchall(
-            """
-            SELECT v.*, li.status, li.note, li.source, li.saved_at, li.watched_at
-            FROM library_items li
-            JOIN videos v ON v.video_id = li.video_id
-            WHERE li.user_id = ? AND li.status = ?
-            ORDER BY li.saved_at DESC
-            LIMIT ?
-            """,
-            (uid, status, fetch_n),
-        )
+        if status in ("", "all", "*"):
+            rows = db.fetchall(
+                """
+                SELECT v.*, li.status, li.note, li.source, li.saved_at, li.watched_at, li.interest
+                FROM library_items li
+                JOIN videos v ON v.video_id = li.video_id
+                WHERE li.user_id = ?
+                  AND li.status IN ('queue', 'in_progress', 'watched')
+                ORDER BY COALESCE(li.interest, 0) DESC, li.saved_at DESC
+                LIMIT ?
+                """,
+                (uid, fetch_n),
+            )
+        else:
+            rows = db.fetchall(
+                """
+                SELECT v.*, li.status, li.note, li.source, li.saved_at, li.watched_at, li.interest
+                FROM library_items li
+                JOIN videos v ON v.video_id = li.video_id
+                WHERE li.user_id = ? AND li.status = ?
+                ORDER BY COALESCE(li.interest, 0) DESC, li.saved_at DESC
+                LIMIT ?
+                """,
+                (uid, status, fetch_n),
+            )
         items = []
         for row in rows:
             bucket = yt.content_bucket(
@@ -1138,8 +1248,9 @@ def create_app() -> Flask:
                 interest = max(-1, min(2, int(body.get("interest"))))
             except (TypeError, ValueError):
                 interest = 0
-            sets.append("interest = ?")
-            params.append(interest)
+            _apply_interest_and_queue_boost(uid, video_id, interest)
+            if status not in ("queue", "in_progress", "watched", "archived", "dismissed") and note is None:
+                return jsonify({"ok": True, "item": _library_card(uid, video_id)})
         if note is not None:
             sets.append("note = ?")
             params.append(str(note)[:2000])
@@ -1645,21 +1756,22 @@ def create_app() -> Flask:
         if rail_id == "queue":
             pool = db.fetchall(
                 """
-                SELECT v.*, li.status, li.saved_at, li.watched_at, li.source
+                SELECT v.*, li.status, li.saved_at, li.watched_at, li.source, li.interest
                 FROM library_items li JOIN videos v ON v.video_id = li.video_id
                 WHERE li.user_id = ? AND li.status = 'queue'
-                ORDER BY li.saved_at DESC LIMIT ?
+                ORDER BY COALESCE(li.interest, 0) DESC, li.saved_at DESC LIMIT ?
                 """,
                 (uid, max(limit * 16, 200)),
             )
             pool = _clean_lib_rows(pool, allow_music=False)
             if offset == 0:
-                # Pin manual adds (share/paste) so they always show in «Недавно»
+                # Pin manual adds + high interest at head
                 pin_sources = {"android_share", "paste", "share", "add"}
                 pinned = [
                     r for r in pool
                     if (r.get("source") or "").strip().lower() in pin_sources
-                ][: max(6, limit // 2)]
+                    or int(r.get("interest") or 0) >= 2
+                ][: max(8, limit // 2)]
                 pinned_ids = {r.get("video_id") for r in pinned}
                 rest = [r for r in pool if r.get("video_id") not in pinned_ids]
                 rows = (pinned + _diversify_lib_rows(rest, limit))[:limit]
@@ -1962,10 +2074,27 @@ def create_app() -> Flask:
     @require_auth
     def get_lists():
         uid = current_user()["user_id"]
-        rows = db.fetchall(
-            "SELECT * FROM lists WHERE user_id = ? ORDER BY created_at DESC",
-            (uid,),
-        )
+        try:
+            tag_id = int(request.args.get("tag_id") or 0)
+        except ValueError:
+            tag_id = 0
+        if tag_id:
+            rows = db.fetchall(
+                """
+                SELECT DISTINCT l.*
+                FROM lists l
+                JOIN list_items x ON x.list_id = l.id
+                JOIN item_tags it ON it.video_id = x.video_id AND it.user_id = l.user_id
+                WHERE l.user_id = ? AND it.tag_id = ?
+                ORDER BY l.created_at DESC
+                """,
+                (uid, tag_id),
+            )
+        else:
+            rows = db.fetchall(
+                "SELECT * FROM lists WHERE user_id = ? ORDER BY created_at DESC",
+                (uid,),
+            )
         out = []
         for r in rows:
             cnt = db.fetchone(
@@ -2141,11 +2270,35 @@ def create_app() -> Flask:
     @require_auth
     def get_tags():
         uid = current_user()["user_id"]
+        only_used = (request.args.get("used") or "1") != "0"
         rows = db.fetchall(
-            "SELECT * FROM user_tags WHERE user_id = ? ORDER BY name",
+            """
+            SELECT t.id, t.name, t.emoji, t.color,
+                   COUNT(it.video_id) AS video_count
+            FROM user_tags t
+            LEFT JOIN item_tags it
+              ON it.tag_id = t.id AND it.user_id = t.user_id
+            WHERE t.user_id = ?
+            GROUP BY t.id, t.name, t.emoji, t.color
+            ORDER BY t.name
+            """,
             (uid,),
         )
-        return jsonify({"ok": True, "tags": rows, "llm": llm.available()})
+        tags = []
+        for r in rows:
+            n = int(r.get("video_count") or 0)
+            if only_used and n <= 0:
+                continue
+            tags.append(
+                {
+                    "id": r["id"],
+                    "name": r.get("name"),
+                    "emoji": r.get("emoji"),
+                    "color": r.get("color"),
+                    "video_count": n,
+                }
+            )
+        return jsonify({"ok": True, "tags": tags, "llm": llm.available()})
 
     @app.post("/api/tags")
     @require_auth

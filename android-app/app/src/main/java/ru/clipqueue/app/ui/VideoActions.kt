@@ -9,6 +9,7 @@ import androidx.compose.ui.platform.LocalContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import ru.clipqueue.app.ApiClient
+import ru.clipqueue.app.AppCache
 import ru.clipqueue.app.data.VideoCard
 import ru.clipqueue.app.ui.components.CardAction
 
@@ -18,43 +19,57 @@ class VideoActions(
     private val context: android.content.Context,
     private val onOpenVideo: (String) -> Unit,
     private val onRemoved: (String) -> Unit = {},
+    private val onTag: (VideoCard) -> Unit = {},
+    private val onMove: (VideoCard) -> Unit = {},
+    private val onInterestDone: () -> Unit = {},
+    private val cache: AppCache? = null,
 ) {
     fun handle(card: VideoCard, action: CardAction) {
         val id = card.video_id ?: return
         when (action) {
             CardAction.Open -> onOpenVideo(id)
             CardAction.Watched -> scope.launch {
-                runCatching { api.patchLibrary(id, mapOf("status" to "watched")) }
-                toast("Просмотрено")
-                onRemoved(id)
+                val r = runCatching { api.patchLibrary(id, mapOf("status" to "watched")) }.getOrNull()
+                toast(if (r?.ok == true) "Просмотрено" else (r?.error ?: "Ошибка"))
+                if (r?.ok == true) {
+                    onRemoved(id)
+                    cache?.invalidateHome()
+                }
             }
             CardAction.InterestHot -> scope.launch {
-                runCatching { api.patchLibrary(id, mapOf("interest" to 2)) }
-                toast("Очень интересно")
+                val r = runCatching { api.setInterest(id, 2) }.getOrNull()
+                toast(if (r?.ok == true) "Очень интересно — поднято в очереди" else (r?.error ?: "Ошибка"))
+                if (r?.ok == true) {
+                    cache?.invalidateHome()
+                    onInterestDone()
+                }
             }
             CardAction.InterestOk -> scope.launch {
-                runCatching { api.patchLibrary(id, mapOf("interest" to 1)) }
-                toast("Интересно")
+                val r = runCatching { api.setInterest(id, 1) }.getOrNull()
+                toast(if (r?.ok == true) "Интересно — ближе к началу" else (r?.error ?: "Ошибка"))
+                if (r?.ok == true) {
+                    cache?.invalidateHome()
+                    onInterestDone()
+                }
             }
             CardAction.InterestLow -> scope.launch {
-                runCatching { api.patchLibrary(id, mapOf("interest" to -1)) }
-                toast("Менее интересно")
+                val r = runCatching { api.setInterest(id, -1) }.getOrNull()
+                toast(if (r?.ok == true) "Менее интересно — отодвинуто" else (r?.error ?: "Ошибка"))
+                if (r?.ok == true) {
+                    cache?.invalidateHome()
+                    onInterestDone()
+                }
             }
             CardAction.Dismiss -> scope.launch {
-                runCatching { api.deleteLibrary(id) }
-                toast("Удалено")
-                onRemoved(id)
+                val r = runCatching { api.deleteLibrary(id) }.getOrNull()
+                toast(if (r?.ok == true) "Удалено" else (r?.error ?: "Ошибка"))
+                if (r?.ok == true) {
+                    onRemoved(id)
+                    cache?.invalidateAll()
+                }
             }
-        }
-    }
-
-    fun openYoutube(card: VideoCard) {
-        val id = card.video_id ?: return
-        scope.launch {
-            val url = runCatching { api.openVideo(id).watch_url }.getOrNull()
-                ?: card.watch_url
-                ?: "https://www.youtube.com/watch?v=$id"
-            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+            CardAction.Tag -> onTag(card)
+            CardAction.Move -> onMove(card)
         }
     }
 
@@ -68,8 +83,12 @@ fun rememberVideoActions(
     api: ApiClient,
     onOpenVideo: (String) -> Unit,
     onRemoved: (String) -> Unit = {},
+    onTag: (VideoCard) -> Unit = {},
+    onMove: (VideoCard) -> Unit = {},
+    onInterestDone: () -> Unit = {},
+    cache: AppCache? = null,
 ): VideoActions {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
-    return VideoActions(api, scope, context, onOpenVideo, onRemoved)
+    return VideoActions(api, scope, context, onOpenVideo, onRemoved, onTag, onMove, onInterestDone, cache)
 }

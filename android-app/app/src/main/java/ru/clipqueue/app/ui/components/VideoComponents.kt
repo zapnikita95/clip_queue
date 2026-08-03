@@ -6,10 +6,12 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -63,6 +65,8 @@ enum class CardAction {
     InterestOk,
     InterestLow,
     Dismiss,
+    Tag,
+    Move,
 }
 
 @Composable
@@ -178,6 +182,8 @@ fun VideoThumbCard(
                     DropdownMenuItem(text = { Text("Интересно") }, onClick = { menu = false; onAction(card, CardAction.InterestOk) })
                     DropdownMenuItem(text = { Text("Менее интересно") }, onClick = { menu = false; onAction(card, CardAction.InterestLow) })
                     DropdownMenuItem(text = { Text("Просмотрено") }, onClick = { menu = false; onAction(card, CardAction.Watched) })
+                    DropdownMenuItem(text = { Text("Тег") }, onClick = { menu = false; onAction(card, CardAction.Tag) })
+                    DropdownMenuItem(text = { Text("Перенести") }, onClick = { menu = false; onAction(card, CardAction.Move) })
                     DropdownMenuItem(text = { Text("Удалить") }, onClick = { menu = false; onAction(card, CardAction.Dismiss) })
                 }
             }
@@ -270,6 +276,8 @@ fun VideoListRow(
             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                 DropdownMenuItem(text = { Text("Просмотрено") }, onClick = { menu = false; onAction(card, CardAction.Watched) })
                 DropdownMenuItem(text = { Text("Очень интересно") }, onClick = { menu = false; onAction(card, CardAction.InterestHot) })
+                DropdownMenuItem(text = { Text("Тег") }, onClick = { menu = false; onAction(card, CardAction.Tag) })
+                DropdownMenuItem(text = { Text("Перенести") }, onClick = { menu = false; onAction(card, CardAction.Move) })
                 DropdownMenuItem(text = { Text("Удалить") }, onClick = { menu = false; onAction(card, CardAction.Dismiss) })
             }
         }
@@ -287,9 +295,12 @@ fun FolderGrid(
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         folders.chunked(2).forEach { row ->
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min),
+            ) {
                 row.forEach { folder ->
-                    FolderGridCell(folder, onOpenFolder, Modifier.weight(1f))
+                    FolderGridCell(folder, onOpenFolder, Modifier.weight(1f).fillMaxHeight())
                 }
                 if (row.size == 1) Spacer(Modifier.weight(1f))
             }
@@ -334,7 +345,14 @@ private fun FolderGridCell(
             }
         }
         Spacer(Modifier.height(8.dp))
-        Text(folder.title.orEmpty(), style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        Text(
+            folder.title.orEmpty(),
+            style = MaterialTheme.typography.titleMedium,
+            maxLines = 2,
+            minLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.height(44.dp),
+        )
         Text("${folder.count ?: 0} видео", color = CqMuted, style = MaterialTheme.typography.bodySmall)
     }
 }

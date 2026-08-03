@@ -80,7 +80,10 @@ class ApiClient(private val session: SessionStore) {
 
     suspend fun homeRail(railId: String): RailResponse = get("/api/home/rails/$railId")
 
-    suspend fun lists(): ListsResponse = get("/api/lists")
+    suspend fun lists(tagId: Int? = null): ListsResponse {
+        val qs = if (tagId != null && tagId > 0) "?tag_id=$tagId" else ""
+        return get("/api/lists$qs")
+    }
 
     suspend fun listDetail(id: Int): ListDetailResponse = get("/api/lists/$id")
 
@@ -104,7 +107,33 @@ class ApiClient(private val session: SessionStore) {
             authHeaders().forEach { (k, v) -> header(k, v) }
         }.body()
 
-    suspend fun tags(): TagsResponse = get("/api/tags")
+    suspend fun setInterest(videoId: String, interest: Int): OkResponse =
+        post(
+            "/api/library/${java.net.URLEncoder.encode(videoId, "UTF-8")}/interest",
+            mapOf("interest" to interest),
+        )
+
+    suspend fun tagVideo(videoId: String, tagId: Int): OkResponse =
+        post(
+            "/api/videos/${java.net.URLEncoder.encode(videoId, "UTF-8")}/tags",
+            mapOf("tag_id" to tagId),
+        )
+
+    suspend fun untagVideo(videoId: String, tagId: Int): OkResponse =
+        client.delete("/api/videos/${java.net.URLEncoder.encode(videoId, "UTF-8")}/tags/$tagId") {
+            authHeaders().forEach { (k, v) -> header(k, v) }
+        }.body()
+
+    suspend fun addToList(listId: Int, videoId: String): OkResponse =
+        post("/api/lists/$listId/items", mapOf("video_id" to videoId))
+
+    suspend fun removeFromList(listId: Int, videoId: String): OkResponse =
+        client.delete("/api/lists/$listId/items/${java.net.URLEncoder.encode(videoId, "UTF-8")}") {
+            authHeaders().forEach { (k, v) -> header(k, v) }
+        }.body()
+
+    suspend fun tags(onlyUsed: Boolean = true): TagsResponse =
+        get("/api/tags?used=${if (onlyUsed) "1" else "0"}")
 
     suspend fun createTag(name: String, emoji: String = ""): CreateTagResponse =
         post("/api/tags", mapOf("name" to name, "emoji" to emoji))

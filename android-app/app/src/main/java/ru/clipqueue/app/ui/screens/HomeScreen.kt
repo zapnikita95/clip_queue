@@ -21,7 +21,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -30,17 +29,19 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import ru.clipqueue.app.ApiClient
+import ru.clipqueue.app.AppCache
+import ru.clipqueue.app.ClipQueueApp
 import ru.clipqueue.app.data.ListCard
 import ru.clipqueue.app.data.TagDto
 import ru.clipqueue.app.data.VideoCard
+import ru.clipqueue.app.ui.MovePickerDialog
+import ru.clipqueue.app.ui.TagPickerDialog
 import ru.clipqueue.app.ui.components.BottomBar
 import ru.clipqueue.app.ui.components.FolderGrid
 import ru.clipqueue.app.ui.components.SectionLabel
@@ -60,17 +61,74 @@ fun HomeScreen(
     onOpenFolders: () -> Unit,
     onOpenProfile: () -> Unit,
 ) {
-    var loading by remember { mutableStateOf(true) }
+    val appCache = (LocalContext.current.applicationContext as ClipQueueApp).cache
+    val cached = remember { appCache.home }
+
+    var loading by remember { mutableStateOf(cached == null) }
     var refreshing by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
-    var recent by remember { mutableStateOf<List<VideoCard>>(emptyList()) }
-    var vibe by remember { mutableStateOf<List<VideoCard>>(emptyList()) }
-    var fromPlaylists by remember { mutableStateOf<List<VideoCard>>(emptyList()) }
-    var topFolders by remember { mutableStateOf<List<ListCard>>(emptyList()) }
-    var tags by remember { mutableStateOf<List<TagDto>>(emptyList()) }
+    var recent by remember { mutableStateOf(cached?.recent.orEmpty()) }
+    var vibe by remember { mutableStateOf(cached?.vibe.orEmpty()) }
+    var fromPlaylists by remember { mutableStateOf(cached?.fromPlaylists.orEmpty()) }
+    var topFolders by remember { mutableStateOf(cached?.topFolders.orEmpty()) }
+    var tags by remember { mutableStateOf(cached?.tags.orEmpty()) }
     var selectedTagId by remember { mutableStateOf<Int?>(null) }
     var taggedVideos by remember { mutableStateOf<List<VideoCard>>(emptyList()) }
+    var taggedFolders by remember { mutableStateOf<List<ListCard>>(emptyList()) }
+    var tagCard by remember { mutableStateOf<VideoCard?>(null) }
+    var moveCard by remember { mutableStateOf<VideoCard?>(null) }
     val scope = rememberCoroutineScope()
+
+    fun usedTags(list: List<TagDto>) = list.filter { (it.video_count ?: 0) > 0 }
+
+    suspend fun loadHome(initial: Boolean, force: Boolean = false) {
+        if (!force && !initial && appCache.home != null && recent.isNotEmpty()) {
+            // silent background refresh without blanking UI
+            refreshing = true
+        } else if (initial && recent.isEmpty()) {
+            loading = true
+        } else if (force) {
+            refreshing = true
+        }
+        error = null
+        try {
+            coroutineScope {
+                val recentDef = async { api.homeRail("queue") }
+                val vibeDef = async { api.homeRail("continue_vibe") }
+                val plDef = async { api.homeRail("from_playlists") }
+                val listsDef = async { api.lists() }
+                val tagsDef = async { runCatching { api.tags(onlyUsed = true) }.getOrNull() }
+                recent = recentDef.await().items.orEmpty()
+                vibe = vibeDef.await().items.orEmpty()
+                fromPlaylists = plDef.await().items.orEmpty()
+                topFolders = listsDef.await().lists.orEmpty()
+                    .sortedByDescending { it.count ?: 0 }
+                    .take(8)
+                tags = usedTags(tagsDef.await()?.tags.orEmpty())
+                appCache.home = AppCache.Home(
+                    recent = recent,
+                    vibe = vibe,
+                    fromPlaylists = fromPlaylists,
+                    topFolders = topFolders,
+                    tags = tags,
+                )
+            }
+            val tid = selectedTagId
+            if (tid != null) {
+                taggedVideos = runCatching {
+                    api.library(status = "all", tagId = tid, kind = "all", limit = 60).items.orEmpty()
+                }.getOrDefault(emptyList())
+                taggedFolders = runCatching { api.lists(tagId = tid).lists.orEmpty() }
+                    .getOrDefault(emptyList())
+                    .sortedByDescending { it.count ?: 0 }
+            }
+        } catch (e: Exception) {
+            if (recent.isEmpty()) error = e.message ?: "Не удалось загрузить"
+        } finally {
+            loading = false
+            refreshing = false
+        }
+    }
 
     val actions = rememberVideoActions(
         api = api,
@@ -81,60 +139,45 @@ fun HomeScreen(
             fromPlaylists = fromPlaylists.filterNot { it.video_id == id }
             taggedVideos = taggedVideos.filterNot { it.video_id == id }
         },
+        onTag = { tagCard = it },
+        onMove = { moveCard = it },
+        onInterestDone = { scope.launch { loadHome(initial = false, force = true) } },
+        cache = appCache,
     )
 
-    suspend fun loadHome(initial: Boolean) {
-        if (initial) loading = true else refreshing = true
-        error = null
-        try {
-            coroutineScope {
-                launch { runCatching { api.startYoutubeSync(full = false) } }
-                val recentDef = async { api.homeRail("queue") }
-                val vibeDef = async { api.homeRail("continue_vibe") }
-                val plDef = async { api.homeRail("from_playlists") }
-                val listsDef = async { api.lists() }
-                val tagsDef = async { runCatching { api.tags() }.getOrNull() }
-                recent = recentDef.await().items.orEmpty()
-                vibe = vibeDef.await().items.orEmpty()
-                fromPlaylists = plDef.await().items.orEmpty()
-                topFolders = listsDef.await().lists.orEmpty()
-                    .sortedByDescending { it.count ?: 0 }
-                    .take(8)
-                tags = tagsDef.await()?.tags.orEmpty()
-            }
-            val tid = selectedTagId
-            if (tid != null) {
-                taggedVideos = runCatching { api.library(tagId = tid, kind = "all", limit = 40).items.orEmpty() }
-                    .getOrDefault(emptyList())
-            }
-        } catch (e: Exception) {
-            error = e.message ?: "Не удалось загрузить"
-        } finally {
-            loading = false
-            refreshing = false
+    LaunchedEffect(Unit) {
+        if (cached != null) {
+            // warm UI already; refresh quietly
+            loadHome(initial = false, force = false)
+        } else {
+            loadHome(initial = true)
         }
     }
 
-    LaunchedEffect(Unit) { loadHome(initial = true) }
     LaunchedEffect(selectedTagId) {
         val tid = selectedTagId
         if (tid == null) {
             taggedVideos = emptyList()
+            taggedFolders = emptyList()
         } else {
-            taggedVideos = runCatching { api.library(tagId = tid, kind = "all", limit = 40).items.orEmpty() }
+            taggedVideos = runCatching {
+                api.library(status = "all", tagId = tid, kind = "all", limit = 60).items.orEmpty()
+            }.getOrDefault(emptyList())
+            taggedFolders = runCatching { api.lists(tagId = tid).lists.orEmpty() }
                 .getOrDefault(emptyList())
+                .sortedByDescending { it.count ?: 0 }
         }
     }
 
-    val lifecycleOwner = LocalLifecycleOwner.current
-    DisposableEffect(lifecycleOwner) {
-        val obs = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) {
-                scope.launch { loadHome(initial = false) }
-            }
-        }
-        lifecycleOwner.lifecycle.addObserver(obs)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
+    tagCard?.let { c ->
+        TagPickerDialog(api, c, appCache, onDismiss = { tagCard = null }, onChanged = {
+            scope.launch { loadHome(initial = false, force = true) }
+        })
+    }
+    moveCard?.let { c ->
+        MovePickerDialog(api, c, appCache, onDismiss = { moveCard = null }, onChanged = {
+            scope.launch { loadHome(initial = false, force = true) }
+        })
     }
 
     Column(
@@ -155,7 +198,12 @@ fun HomeScreen(
             }
             else -> PullToRefreshBox(
                 isRefreshing = refreshing,
-                onRefresh = { scope.launch { loadHome(initial = false) } },
+                onRefresh = {
+                    scope.launch {
+                        runCatching { api.startYoutubeSync(full = false) }
+                        loadHome(initial = false, force = true)
+                    }
+                },
                 modifier = Modifier.weight(1f),
             ) {
                 LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 8.dp)) {
@@ -180,34 +228,46 @@ fun HomeScreen(
                     }
                     if (selectedTagId != null) {
                         item {
-                            SectionLabel("По тегу", Modifier.padding(horizontal = 12.dp))
-                            if (taggedVideos.isEmpty()) Text("Нет видео с этим тегом", color = CqMuted, modifier = Modifier.padding(horizontal = 12.dp))
-                            else VideoRail(taggedVideos) { c, a -> actions.handle(c, a) }
+                            SectionLabel("Папки с тегом", Modifier.padding(horizontal = 12.dp))
+                            if (taggedFolders.isEmpty()) {
+                                Text("Нет папок с этим тегом", color = CqMuted, modifier = Modifier.padding(horizontal = 12.dp))
+                            } else {
+                                FolderGrid(taggedFolders.take(8), onOpenFolder)
+                            }
                         }
-                    }
-                    item {
-                        SectionLabel("Недавно", Modifier.padding(horizontal = 12.dp))
-                        if (recent.isEmpty()) Text("Пока пусто", color = CqMuted, modifier = Modifier.padding(horizontal = 12.dp))
-                        else VideoRail(recent) { c, a -> actions.handle(c, a) }
-                    }
-                    item {
-                        SectionLabel("Могут понравиться", Modifier.padding(horizontal = 12.dp))
-                        val recs = if (vibe.isNotEmpty()) vibe else fromPlaylists
-                        if (recs.isEmpty()) Text("Смотри ролики — появятся рекомендации", color = CqMuted, modifier = Modifier.padding(horizontal = 12.dp))
-                        else VideoRail(recs) { c, a -> actions.handle(c, a) }
-                    }
-                    item {
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp).padding(top = 14.dp, bottom = 8.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text("ТОП ПАПКИ", style = MaterialTheme.typography.labelSmall, color = CqMuted)
-                            Text("все →", color = CqAccent, style = MaterialTheme.typography.bodySmall, modifier = Modifier.clickable(onClick = onOpenFolders))
+                        item {
+                            SectionLabel("Видео с тегом", Modifier.padding(horizontal = 12.dp))
+                            if (taggedVideos.isEmpty()) {
+                                Text("Нет видео с этим тегом", color = CqMuted, modifier = Modifier.padding(horizontal = 12.dp))
+                            } else {
+                                VideoRail(taggedVideos) { c, a -> actions.handle(c, a) }
+                            }
                         }
-                        if (topFolders.isEmpty()) Text("Папок пока нет", color = CqMuted, modifier = Modifier.padding(horizontal = 12.dp))
-                        else FolderGrid(topFolders, onOpenFolder)
-                        Spacer(Modifier.height(12.dp))
+                    } else {
+                        item {
+                            SectionLabel("Недавно", Modifier.padding(horizontal = 12.dp))
+                            if (recent.isEmpty()) Text("Пока пусто", color = CqMuted, modifier = Modifier.padding(horizontal = 12.dp))
+                            else VideoRail(recent) { c, a -> actions.handle(c, a) }
+                        }
+                        item {
+                            SectionLabel("Могут понравиться", Modifier.padding(horizontal = 12.dp))
+                            val recs = if (vibe.isNotEmpty()) vibe else fromPlaylists
+                            if (recs.isEmpty()) Text("Смотри ролики — появятся рекомендации", color = CqMuted, modifier = Modifier.padding(horizontal = 12.dp))
+                            else VideoRail(recs) { c, a -> actions.handle(c, a) }
+                        }
+                        item {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp).padding(top = 14.dp, bottom = 8.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text("ТОП ПАПКИ", style = MaterialTheme.typography.labelSmall, color = CqMuted)
+                                Text("все →", color = CqAccent, style = MaterialTheme.typography.bodySmall, modifier = Modifier.clickable(onClick = onOpenFolders))
+                            }
+                            if (topFolders.isEmpty()) Text("Папок пока нет", color = CqMuted, modifier = Modifier.padding(horizontal = 12.dp))
+                            else FolderGrid(topFolders, onOpenFolder)
+                            Spacer(Modifier.height(12.dp))
+                        }
                     }
                 }
             }

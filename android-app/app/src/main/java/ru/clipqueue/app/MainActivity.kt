@@ -16,6 +16,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Modifier
+import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -115,26 +116,30 @@ private fun ClipQueueNav(
         nav.navigate("video/${Uri.encode(videoId)}")
     }
 
+    fun goTab(route: String) {
+        nav.navigate(route) {
+            popUpTo(nav.graph.findStartDestination().id) { saveState = true }
+            launchSingleTop = true
+            restoreState = true
+        }
+    }
+
     NavHost(navController = nav, startDestination = "home") {
         composable("home") {
             HomeScreen(
                 api = api,
                 onOpenVideo = ::openVideo,
                 onOpenFolder = ::openFolder,
-                onOpenFolders = { nav.navigate("folders") },
-                onOpenProfile = { nav.navigate("profile") },
+                onOpenFolders = { goTab("folders") },
+                onOpenProfile = { goTab("profile") },
             )
         }
         composable("folders") {
             FoldersScreen(
                 api = api,
-                onBackHome = {
-                    nav.navigate("home") {
-                        popUpTo("home") { inclusive = true }
-                    }
-                },
+                onBackHome = { goTab("home") },
                 onOpenFolder = ::openFolder,
-                onOpenProfile = { nav.navigate("profile") },
+                onOpenProfile = { goTab("profile") },
                 onOpenVideo = ::openVideo,
             )
         }
@@ -173,12 +178,8 @@ private fun ClipQueueNav(
             ProfileScreen(
                 api = api,
                 session = session,
-                onHome = {
-                    nav.navigate("home") {
-                        popUpTo("home") { inclusive = true }
-                    }
-                },
-                onFolders = { nav.navigate("folders") },
+                onHome = { goTab("home") },
+                onFolders = { goTab("folders") },
                 onOpenHistory = { nav.navigate("saves") },
                 onLoggedOut = { loggedIn = false },
             )

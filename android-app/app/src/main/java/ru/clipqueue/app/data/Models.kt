@@ -155,6 +155,7 @@ data class TagDto(
     val id: Int? = null,
     val name: String? = null,
     val emoji: String? = null,
+    val video_count: Int? = null,
 )
 
 data class CreateTagResponse(
