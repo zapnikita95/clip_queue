@@ -74,7 +74,7 @@ fun AuthScreen(
         Text("Clip Queue", style = MaterialTheme.typography.displayLarge)
         Spacer(Modifier.height(10.dp))
         Text(
-            text = "Сохраняй из YouTube в одно касание.\nСортировка и рекомендации — на бэке.",
+            text = "YouTube → Поделиться → Clip Queue",
             style = MaterialTheme.typography.bodyMedium,
             color = CqMuted,
             textAlign = TextAlign.Center,

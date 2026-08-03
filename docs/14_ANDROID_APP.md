@@ -5,7 +5,13 @@
 - **Silent share:** YouTube → Поделиться → Clip Queue → Toast «Видео сохранено!» → UI не открывается (`ShareReceiveActivity`).
 - **Home:** недавно (`queue`), «могут понравиться» (`continue_vibe` / `from_playlists`), папки.
 - **При входе:** `POST /api/youtube/sync` в фоне.
-- **Auth:** Google Custom Tabs → `/api/auth/google/start?client=android` → deep link `clipqueue://auth?token=…`.
+## Auth (Android)
+
+1. App opens Custom Tabs → `/api/auth/google/start?client=android`
+2. Google callback → `/auth/android?token=…` (HTTPS bridge)
+3. Bridge opens `clipqueue://auth?token=…` / Android Intent → native app
+
+Raw `clipqueue://` redirects from OAuth often fail inside Custom Tabs — bridge is required.
 - API: `https://clip-queue-web-production.up.railway.app`
 
 ## Дизайны

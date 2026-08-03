@@ -946,6 +946,20 @@
       toast("Нет токена");
       return navigate("/login", true);
     }
+    // If Android Custom Tabs landed here by mistake — bounce into the app.
+    const ua = navigator.userAgent || "";
+    if (/Android/i.test(ua)) {
+      const deep = `clipqueue://auth?token=${encodeURIComponent(t)}&autosync=${encodeURIComponent(params.get("autosync") || "0")}`;
+      const intent =
+        `intent://auth?token=${encodeURIComponent(t)}` +
+        `&autosync=${encodeURIComponent(params.get("autosync") || "0")}` +
+        `#Intent;scheme=clipqueue;package=ru.clipqueue.app;end`;
+      location.replace(intent);
+      setTimeout(() => { location.href = deep; }, 300);
+      app.innerHTML = `<section class="hero"><h1>Открываю приложение…</h1>
+        <p><a class="btn" href="${deep}">Открыть Clip Queue</a></p></section>`;
+      return;
+    }
     setToken(t);
     const ok = await ensureAuth();
     let lib = 0;
@@ -955,10 +969,8 @@
     } catch (_) {}
     const wantAutosync = params.get("autosync") === "1" && lib === 0;
     if (wantAutosync) {
-      toast("Первый вход — тяну YouTube");
       return navigate("/settings?autosync=1", true);
     }
-    toast(ok ? "Снова в аккаунте" : "Токен сохранён");
     return navigate("/home", true);
   }
 
@@ -969,50 +981,58 @@
       !(meData.library_count > 0);
     app.innerHTML = `
       ${topbar("settings")}
-      <section class="hero">
+      <section class="hero hero-compact">
         <h1>Настройки</h1>
-        <p>Онбординг (первый синк + разложить) — один раз. Дальше живёшь на главной; сюда — дельта или Takeout.</p>
       </section>
       <div class="panel" style="margin-bottom:16px">
         <h2>YouTube</h2>
-        <p class="hint">
-          По умолчанию <b>дельта</b>: только новое. Полный обход — если что-то пропустил.<br>
-          Watch Later API не отдаёт — копируй в обычный плейлист.
-        </p>
-        <p class="muted">Статус: ${meData.youtube_connected ? "Google подключён" : "нужен вход через Google"} · в библиотеке: ${meData.library_count || 0}</p>
+        <p class="muted">${meData.youtube_connected ? "подключён" : "нужен Google"} · ${meData.library_count || 0} видео</p>
         <div class="btn-row">
-          <button class="btn" id="sync-yt" ${meData.youtube_connected ? "" : "disabled"}>Обновить (дельта)</button>
+          <button class="btn" id="sync-yt" ${meData.youtube_connected ? "" : "disabled"}>Обновить</button>
           <button class="btn secondary" id="sync-yt-full" ${meData.youtube_connected ? "" : "disabled"}>Полный синк</button>
           ${!meData.youtube_connected && meData.google_oauth_configured
-            ? `<a class="btn secondary" href="/api/auth/google/start">Войти через Google</a>` : ""}
-          <a class="btn ghost" href="/home" data-nav>На главную</a>
+            ? `<a class="btn secondary" href="/api/auth/google/start">Google</a>` : ""}
         </div>
         <div id="sync-out"></div>
       </div>
       <div class="panel" style="margin-bottom:16px">
-        <h2>2. История (опционально, Takeout)</h2>
-        <p class="hint">Если нужна именно история «что смотрел» — takeout.google.com → YouTube → watch-history.json.</p>
+        <h2>Категории</h2>
+        <div class="btn-row">
+          <a class="btn" href="/organize" data-nav>Разложить</a>
+        </div>
+      </div>
+      <div class="panel" style="margin-bottom:16px">
+        <h2>Takeout</h2>
         <div class="btn-row">
           <label class="file-btn">
-            Выбрать JSON
+            JSON истории
             <input type="file" id="takeout-file" accept=".json,application/json" />
           </label>
         </div>
         <div id="takeout-out"></div>
       </div>
       <div class="panel">
-        <h2>Умная категоризация</h2>
-        <p class="hint">Один раз разложи библиотеку по темам — дальше категории живут на главной. Новые видео подхватываются правилами.</p>
+        <h2>Аккаунт</h2>
+        <p class="muted">${escapeHtml(meData.user?.email || me?.email || "")}</p>
         <div class="btn-row">
-          <a class="btn" href="/organize" data-nav>Открыть</a>
+          <button class="btn secondary" id="settings-logout">Выйти</button>
         </div>
       </div>`;
     wireNav();
+    const settingsLogout = $("#settings-logout");
+    if (settingsLogout) {
+      settingsLogout.onclick = async () => {
+        try { await api("/api/auth/logout", { method: "POST", body: "{}" }); } catch (_) {}
+        setToken("");
+        me = null;
+        navigate("/login", true);
+      };
+    }
     $("#sync-yt").onclick = () => runYoutubeSync({ autoGoHome: false, full: false });
     const fullBtn = $("#sync-yt-full");
     if (fullBtn) {
       fullBtn.onclick = () => {
-        if (!confirm("Полный синк заново обойдёт лайки/плейлисты. Обычно хватает дельты. Продолжить?")) return;
+        if (!confirm("Полный синк заново обойдёт лайки и плейлисты. Продолжить?")) return;
         runYoutubeSync({ autoGoHome: false, full: true });
       };
     }
@@ -1377,38 +1397,24 @@
       ? `Продолжить · ${classifyJob.done || classifyJob.done_ids_count || 0}/${classifyJob.total || "?"}`
       : (pendingClassify > 0 ? `Разобрать · ${pendingClassify}` : "");
 
-    const growingHtml = (growing.length || pendingClassify > 0 || canResumeClassify)
-      ? `<div class="growing-row">${growing.map((g) => `
-          <div class="growing-chip">
-            <b>${escapeHtml(g.title)}</b>
-            <span class="muted">+${g.added} за 2 нед.</span>
-          </div>`).join("")}
-          ${classifyBtnLabel
-            ? `<button type="button" class="btn home-classify-btn" id="home-classify">${escapeHtml(classifyBtnLabel)}</button>`
-            : ""}
+    const growingHtml = "";
+    const classifyOnly = (pendingClassify > 0 || canResumeClassify)
+      ? `<div class="btn-row" style="margin:10px 0 4px">
+          <button type="button" class="btn home-classify-btn" id="home-classify">${escapeHtml(classifyBtnLabel)}</button>
         </div>
         <div id="home-classify-progress" class="home-classify-progress"></div>`
       : `<div id="home-classify-progress" class="home-classify-progress"></div>`;
 
     app.innerHTML = `
       ${topbar("home")}
-      <section class="hero">
-        <h1>${has ? "Что посмотреть" : "Сначала разложи видео"}</h1>
-        <p>${has
-          ? "Твои темы. При открытии подтягиваем спецпапку (Listen later / смотреть позже). Перетащи ⋮⋮ у названия, чтобы поменять порядок."
-          : "Онбординг: синк → умная категоризация → Сохранить. Потом главная — центр продукта."}</p>
-        <div class="stats">
-          <div class="stat">Папок: <b>${folders.length}</b></div>
-          <div class="stat">Очередь: <b>${shell.counts?.queue ?? "—"}</b></div>
-          <div class="stat">Начатые: <b>${shell.counts?.started || 0}</b></div>
+      <section class="hero hero-compact">
+        <h1>${has ? "Что посмотреть" : "Разложи видео"}</h1>
+        <div class="stats stats-compact">
+          <div class="stat"><b>${folders.length}</b> папок</div>
+          <div class="stat"><b>${shell.counts?.queue ?? "—"}</b> в очереди</div>
           <div class="stat muted" id="home-sync-stat" style="display:none">Синк…</div>
         </div>
-        ${growingHtml}
-        <div class="btn-row" style="margin-top:14px">
-          <a class="btn secondary" href="/queue?status=queue&kind=video" data-nav>Очередь</a>
-          <a class="btn ghost" href="/channels" data-nav>Каналы</a>
-          <a class="btn ghost" href="/settings" data-nav>Настройки</a>
-        </div>
+        ${classifyOnly}
       </section>
       <div id="rails"></div>`;
     wireNav();
@@ -1425,7 +1431,7 @@
         if (lastAt && Date.now() - lastAt < 3 * 60 * 1000) return; // <3 мин — не дёргаем
         if (syncStat) {
           syncStat.style.display = "";
-          syncStat.innerHTML = "Синк спецпапки…";
+          syncStat.innerHTML = "Синк…";
         }
         const start = await api("/api/youtube/sync", {
           method: "POST",
@@ -1616,9 +1622,9 @@
     if (!has && !recent.length) {
       host.innerHTML = `
         <div class="panel">
-          <div class="empty">Пока пусто — в Настройках открой «Умную категоризацию», сохрани темы один раз.</div>
+          <div class="empty">Пока пусто</div>
           <div class="btn-row" style="margin-top:12px">
-            <a class="btn" href="/organize" data-nav>Умная категоризация</a>
+            <a class="btn" href="/organize" data-nav>Разложить по темам</a>
           </div>
         </div>`;
       return;

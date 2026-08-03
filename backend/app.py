@@ -208,16 +208,24 @@ def create_app() -> Flask:
     @app.get("/api/auth/google/callback")
     def google_callback():
         err = request.args.get("error")
-        if err:
-            return redirect(f"/login?error={err}")
-        code = request.args.get("code") or ""
         state = request.args.get("state") or ""
         android = google_oauth.is_android_state(state)
+        if err:
+            if android:
+                return redirect(
+                    f"{google_oauth.public_origin()}/auth/android"
+                    f"?error={err}"
+                )
+            return redirect(f"/login?error={err}")
+        code = request.args.get("code") or ""
         try:
             session = google_oauth.login_with_code(code, state)
         except Exception as e:
             if android:
-                return redirect(f"clipqueue://auth?error={str(e)[:120]}")
+                return redirect(
+                    f"{google_oauth.public_origin()}/auth/android"
+                    f"?error={str(e)[:120]}"
+                )
             return redirect(f"/login?error={str(e)[:120]}")
         uid = int(session["user"]["id"])
         lib = db.fetchone(
@@ -227,8 +235,10 @@ def create_app() -> Flask:
         # Autosync only on empty library (onboarding). Returning users → home.
         autosync = 0 if int((lib or {}).get("c") or 0) > 0 else 1
         if android:
+            # HTTPS bridge — Custom Tabs often ignore raw clipqueue:// redirects.
             dest = (
-                f"clipqueue://auth?token={session['token']}&autosync={autosync}"
+                f"{google_oauth.public_origin()}/auth/android"
+                f"?token={session['token']}&autosync={autosync}"
             )
             resp = redirect(dest)
         else:
@@ -2164,6 +2174,11 @@ def create_app() -> Flask:
     @app.get("/login")
     def spa(rest: str = ""):
         return send_from_directory(WEB, "index.html")
+
+    @app.get("/auth/android")
+    def auth_android_bridge():
+        """Bridge page for Custom Tabs → native Clip Queue app."""
+        return send_from_directory(WEB, "android-auth.html")
 
     @app.get("/manifest.webmanifest")
     def manifest():
