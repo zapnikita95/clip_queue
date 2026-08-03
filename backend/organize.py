@@ -1358,18 +1358,19 @@ def home_feed(user_id: int) -> dict[str, Any]:
         )
 
     seen_vids: set[str] = set()
-    for r in recent_rows:
+
+    def _append_recent_row(r: dict) -> bool:
         if yt.is_unavailable_video(r.get("title")):
-            continue
+            return False
         bucket = yt.content_bucket(r.get("title"), r.get("channel_title"), r.get("duration_sec"), None)
         if bucket in ("music", "shorts", "shortform", "unavailable"):
-            continue
+            return False
         dur = r.get("duration_sec")
         if isinstance(dur, int) and 0 < dur <= 90:
-            continue
-        vid = r["video_id"]
-        if vid in seen_vids:
-            continue
+            return False
+        vid = r.get("video_id")
+        if not vid or vid in seen_vids:
+            return False
         seen_vids.add(vid)
         recent.append(
             {
@@ -1381,10 +1382,54 @@ def home_feed(user_id: int) -> dict[str, Any]:
                 "thumb_url": r.get("thumb_url") or yt.thumb_url(vid),
                 "watch_url": f"https://www.youtube.com/watch?v={vid}",
                 "saved_at": str(r.get("saved_at") or ""),
+                "source": (r.get("source") or "").strip(),
             }
         )
+        return True
+
+    # Manual adds (Android share / paste / web add) must surface even when inbox mode is on.
+    # Web home used only YT inbox list_items; shares write to library_items only.
+    if db.is_postgres():
+        manual_rows = db.fetchall(
+            """
+            SELECT v.video_id, v.title, v.channel_title, v.duration_sec, v.thumb_url,
+                   li.saved_at, li.source
+            FROM library_items li
+            JOIN videos v ON v.video_id = li.video_id
+            WHERE li.user_id = ?
+              AND li.status IN ('queue', 'in_progress')
+              AND LOWER(TRIM(COALESCE(li.source, ''))) IN ('android_share', 'paste', 'share', 'add')
+            ORDER BY li.saved_at DESC NULLS LAST
+            LIMIT 24
+            """,
+            (user_id,),
+        )
+    else:
+        manual_rows = db.fetchall(
+            """
+            SELECT v.video_id, v.title, v.channel_title, v.duration_sec, v.thumb_url,
+                   li.saved_at, li.source
+            FROM library_items li
+            JOIN videos v ON v.video_id = li.video_id
+            WHERE li.user_id = ?
+              AND li.status IN ('queue', 'in_progress')
+              AND LOWER(TRIM(COALESCE(li.source, ''))) IN ('android_share', 'paste', 'share', 'add')
+            ORDER BY datetime(li.saved_at) DESC
+            LIMIT 24
+            """,
+            (user_id,),
+        )
+    manual_added = 0
+    for r in manual_rows:
+        if _append_recent_row(r):
+            manual_added += 1
+        if manual_added >= 12:
+            break
+
+    for r in recent_rows:
         if len(recent) >= 18:
             break
+        _append_recent_row(r)
 
     if db.is_postgres():
         growing_rows = db.fetchall(
@@ -1439,10 +1484,18 @@ def home_feed(user_id: int) -> dict[str, Any]:
         classify_job = _cj.active_job_for_user(user_id)
     except Exception:
         classify_job = None
+
+    if manual_added and inbox_title:
+        recent_source = f"ваши сохранения · {inbox_title}"
+    elif manual_added and not inbox_title:
+        recent_source = "ваши сохранения"
+    else:
+        recent_source = inbox_title or "библиотека"
+
     return {
         **structure,
         "recent": recent,
-        "recent_source": inbox_title or "библиотека",
+        "recent_source": recent_source,
         "growing": growing[:8],
         "pending_classify": len(pending),
         "classify_job": classify_job,
