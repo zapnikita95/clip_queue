@@ -213,7 +213,7 @@ def create_app() -> Flask:
         if err:
             if android:
                 return redirect(
-                    f"{google_oauth.public_origin()}/auth/android"
+                    f"{google_oauth.public_origin()}/api/auth/android/done"
                     f"?error={err}"
                 )
             return redirect(f"/login?error={err}")
@@ -223,7 +223,7 @@ def create_app() -> Flask:
         except Exception as e:
             if android:
                 return redirect(
-                    f"{google_oauth.public_origin()}/auth/android"
+                    f"{google_oauth.public_origin()}/api/auth/android/done"
                     f"?error={str(e)[:120]}"
                 )
             return redirect(f"/login?error={str(e)[:120]}")
@@ -237,7 +237,7 @@ def create_app() -> Flask:
         if android:
             # HTTPS bridge — Custom Tabs often ignore raw clipqueue:// redirects.
             dest = (
-                f"{google_oauth.public_origin()}/auth/android"
+                f"{google_oauth.public_origin()}/api/auth/android/done"
                 f"?token={session['token']}&autosync={autosync}"
             )
             resp = redirect(dest)
@@ -2159,6 +2159,11 @@ def create_app() -> Flask:
 
     # ----- Static SPA -----
 
+    @app.get("/api/auth/android/done")
+    def auth_android_bridge():
+        """HTTPS bridge for Custom Tabs → native Clip Queue app."""
+        return send_from_directory(WEB, "android-auth.html")
+
     @app.get("/")
     @app.get("/home")
     @app.get("/queue")
@@ -2174,11 +2179,6 @@ def create_app() -> Flask:
     @app.get("/login")
     def spa(rest: str = ""):
         return send_from_directory(WEB, "index.html")
-
-    @app.get("/auth/android")
-    def auth_android_bridge():
-        """Bridge page for Custom Tabs → native Clip Queue app."""
-        return send_from_directory(WEB, "android-auth.html")
 
     @app.get("/manifest.webmanifest")
     def manifest():

@@ -8,7 +8,7 @@
 ## Auth (Android)
 
 1. App opens Custom Tabs → `/api/auth/google/start?client=android`
-2. Google callback → `/auth/android?token=…` (HTTPS bridge)
+2. Google callback → `/api/auth/android/done?token=…` (HTTPS bridge)
 3. Bridge opens `clipqueue://auth?token=…` / Android Intent → native app
 
 Raw `clipqueue://` redirects from OAuth often fail inside Custom Tabs — bridge is required.
