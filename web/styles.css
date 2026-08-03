@@ -5,7 +5,7 @@
   --text: #f3f3f5;
   --muted: #8e8e98;
   --border: rgba(255, 255, 255, 0.08);
-  /* Luminous primary — Kyeye; whisper red only for tiny danger states */
+  /* Luminous primary — Kyro; whisper red only for tiny danger states */
   --accent: #f3f3f5;
   --accent-2: #c8c8d0;
   --accent-soft: rgba(255, 255, 255, 0.1);
@@ -643,13 +643,118 @@ a.btn.ghost:hover {
 @media (max-width: 860px) {
   .video-page { grid-template-columns: 1fr; }
 }
+.video-hero {
+  position: relative;
+  border-radius: 18px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background:
+    radial-gradient(ellipse at 40% 35%, rgba(255,255,255,0.08), transparent 55%),
+    #0c0c10;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.08);
+}
 .video-hero img {
   width: 100%;
   aspect-ratio: 16/9;
   object-fit: cover;
-  border-radius: 18px;
-  background: #000;
-  border: 1px solid var(--border);
+  display: block;
+  background: #121216;
+  transition: transform 0.7s var(--ease), filter 0.7s var(--ease);
+}
+.video-hero:hover img {
+  transform: scale(1.02);
+  filter: brightness(1.05);
+}
+.video-hero .hero-play {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.12);
+  border: 1px solid rgba(255,255,255,0.22);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 0 36px rgba(255,255,255,0.12);
+  pointer-events: none;
+  z-index: 2;
+}
+.video-hero .hero-play::after {
+  content: "";
+  position: absolute;
+  left: 22px;
+  top: 18px;
+  border-style: solid;
+  border-width: 10px 0 10px 16px;
+  border-color: transparent transparent transparent #fff;
+}
+.video-hero::after {
+  content: "";
+  position: absolute;
+  inset: -30%;
+  background: radial-gradient(circle at 55% 40%, rgba(255,255,255,0.1), transparent 42%);
+  filter: blur(24px);
+  pointer-events: none;
+  opacity: 0.7;
+  animation: kyro-float 7s ease-in-out infinite;
+}
+@keyframes kyro-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-10px); }
+}
+
+/* —— Page transitions (Kyro) —— */
+#app.page-exit {
+  animation: kyro-page-out 0.28s var(--ease) forwards;
+}
+#app.page-exit-video {
+  animation: kyro-video-out 0.4s var(--ease) forwards;
+}
+#app.page-enter {
+  animation: kyro-page-in 0.42s var(--ease) both;
+}
+#app.page-enter-video {
+  animation: kyro-video-in 0.55s var(--ease) both;
+}
+#app.page-enter-video .video-hero {
+  animation: kyro-hero-in 0.7s var(--ease) both;
+}
+#app.page-enter-video .video-page > div:last-child {
+  animation: kyro-panel-in 0.55s 0.08s var(--ease) both;
+}
+@keyframes kyro-page-out {
+  to { opacity: 0; transform: translateY(8px) scale(0.992); filter: blur(2px); }
+}
+@keyframes kyro-page-in {
+  from { opacity: 0; transform: translateY(10px) scale(0.994); filter: blur(3px); }
+  to { opacity: 1; transform: none; filter: none; }
+}
+@keyframes kyro-video-out {
+  to { opacity: 0; transform: translateY(16px) scale(0.985); filter: blur(4px); }
+}
+@keyframes kyro-video-in {
+  from { opacity: 0; transform: translateY(18px) scale(0.98); filter: blur(5px); }
+  to { opacity: 1; transform: none; filter: none; }
+}
+@keyframes kyro-hero-in {
+  from { opacity: 0; transform: scale(0.96); filter: brightness(0.7); }
+  to { opacity: 1; transform: none; filter: none; }
+}
+@keyframes kyro-panel-in {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #app.page-exit,
+  #app.page-exit-video,
+  #app.page-enter,
+  #app.page-enter-video,
+  #app.page-enter-video .video-hero,
+  #app.page-enter-video .video-page > div:last-child,
+  .video-hero::after {
+    animation: none !important;
+  }
 }
 .muted { color: var(--muted); }
 .tag-pill {
@@ -1411,7 +1516,7 @@ a.btn.ghost:hover {
 }
 .home-classify-progress:empty { display: none; }
 
-/* —— Kyeye spine queue —— */
+/* —— Kyro spine queue —— */
 .spine-list {
   position: relative;
   max-width: 640px;
@@ -1433,7 +1538,7 @@ a.btn.ghost:hover {
   max-width: none;
   margin: 0 0 12px 36px;
   display: grid;
-  grid-template-columns: 96px 1fr auto;
+  grid-template-columns: 128px 1fr auto;
   gap: 12px;
   align-items: stretch;
   background: rgba(255,255,255,0.035);
@@ -1473,18 +1578,27 @@ a.btn.ghost:hover {
   border-radius: 0;
 }
 .spine-list .card.q-item .card-thumb {
-  width: 96px;
-  min-height: 54px;
+  width: 128px;
+  min-height: 72px;
   aspect-ratio: 16/9;
-  border-radius: 10px 0 0 10px;
+  border-radius: 12px 0 0 12px;
   overflow: hidden;
   position: relative;
+  background: #121216;
 }
 .spine-list .card.q-item .card-thumb img {
   width: 100%;
   height: 100%;
   object-fit: cover;
   display: block;
+  transition: transform 0.55s var(--ease), filter 0.45s ease, opacity 0.35s ease;
+  opacity: 0.92;
+}
+.spine-list .card.q-item:hover .card-thumb img,
+.spine-list .card.q-item:focus-within .card-thumb img {
+  transform: scale(1.04);
+  opacity: 1;
+  filter: brightness(1.06);
 }
 .spine-list .card.q-item .card-body {
   padding: 10px 4px 10px 0;

@@ -15,7 +15,7 @@ val CqElev = Color(0xFF121216)
 val CqElev2 = Color(0xFF1A1A20)
 val CqText = Color(0xFFF3F3F5)
 val CqMuted = Color(0xFF8E8E98)
-/** Luminous primary (Kyeye) — not YouTube red as system accent */
+/** Luminous primary (Kyro) — not YouTube red as system accent */
 val CqAccent = Color(0xFFF3F3F5)
 val CqAccent2 = Color(0xFFC8C8D0)
 val CqOnAccent = Color(0xFF0A0A0C)

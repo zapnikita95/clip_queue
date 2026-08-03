@@ -73,13 +73,13 @@ fun AuthScreen(
                 .background(CqElev),
             contentAlignment = Alignment.Center,
         ) {
-            Text("Kyeye", color = CqText, style = MaterialTheme.typography.labelSmall)
+            Text("Kyro", color = CqText, style = MaterialTheme.typography.labelSmall)
         }
         Spacer(Modifier.height(20.dp))
-        Text("Kyeye", style = MaterialTheme.typography.displayLarge)
+        Text("Kyro", style = MaterialTheme.typography.displayLarge)
         Spacer(Modifier.height(10.dp))
         Text(
-            text = "YouTube → Поделиться → Kyeye",
+            text = "YouTube → Поделиться → Kyro",
             style = MaterialTheme.typography.bodyMedium,
             color = CqMuted,
             textAlign = TextAlign.Center,

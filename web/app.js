@@ -334,7 +334,7 @@
           <button type="button" data-act="watched">Просмотрено</button>
           ${listId ? `<button type="button" data-act="remove-cat">Убрать из категории</button>` : ""}
           ${draftFolder ? `<button type="button" data-act="remove-draft">Убрать из категории</button>` : ""}
-          <button type="button" data-act="dismiss" class="danger">Удалить из Kyeye</button>
+          <button type="button" data-act="dismiss" class="danger">Удалить из Kyro</button>
         </div>
       </div>`;
   }
@@ -443,7 +443,7 @@
       } else if (act === "dismiss") {
         const restore = hideCardOptimistic(videoId, listId);
         showUndo({
-          message: "Удалено из Kyeye",
+          message: "Удалено из Kyro",
           seconds: 8,
           onUndo: restore,
           onCommit: async () => {
@@ -553,7 +553,7 @@
           <div class="brand-mark" aria-hidden="true">
             <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.2" fill="#fff" opacity="0.92"/></svg>
           </div>
-          <div class="brand-name">Kyeye</div>
+          <div class="brand-name">Kyro</div>
         </a>
         <form class="smart-search" id="smart-search" action="/search" method="get">
           <input type="search" name="q" id="smart-q" placeholder="Что хочешь посмотреть?" autocomplete="off" enterkeyhint="search" />
@@ -804,7 +804,7 @@
     app.innerHTML = `
       <div class="login-wrap">
         <div class="panel" style="width:min(460px,100%)">
-          <h2>Kyeye</h2>
+          <h2>Kyro</h2>
           <p class="hint">Войди через Google — сразу после входа сами заберём лайки, плейлисты и подписки в библиотеку.</p>
           ${err ? `<p class="hint" style="color:#ff8a80">Ошибка входа: ${escapeHtml(err)}</p>` : ""}
           <div class="btn-row" style="flex-direction:column;align-items:stretch">
@@ -915,7 +915,7 @@
         if (last.status === "done" || last.type === "done") {
           finishProgress(box, {
             ok: true,
-            title: last.title || "YouTube у тебя в Kyeye",
+            title: last.title || "YouTube у тебя в Kyro",
             detail: last.detail || "",
             elapsed_sec: last.elapsed_sec,
           });
@@ -964,7 +964,7 @@
       location.replace(intent);
       setTimeout(() => { location.href = deep; }, 300);
       app.innerHTML = `<section class="hero"><h1>Открываю приложение…</h1>
-        <p><a class="btn" href="${deep}">Открыть Kyeye</a></p></section>`;
+        <p><a class="btn" href="${deep}">Открыть Kyro</a></p></section>`;
       return;
     }
     setToken(t);
@@ -2192,6 +2192,7 @@
         <div>
           <div class="video-hero">
             <img src="${escapeHtml(item.thumb_url)}" alt="" />
+            <span class="hero-play" aria-hidden="true"></span>
           </div>
           ${unavailable ? `<div class="warn-box">YouTube скрыл этот ролик (private/deleted). В лайках осталась заглушка — открыть на YouTube, скорее всего, не получится. Можно убрать из библиотеки.</div>` : ""}
           <h1 style="font-family:var(--display);letter-spacing:-0.03em;margin:16px 0 8px;font-size:1.6rem">${escapeHtml(item.title)}</h1>
@@ -2503,10 +2504,45 @@
     };
   }
 
+  function isVideoPath(path) {
+    return /^\/v\//.test((path || "").split("?")[0]);
+  }
+
+  function prefersReducedMotion() {
+    return window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  }
+
+  async function transitionOut({ toVideo = false, fromVideo = false } = {}) {
+    if (prefersReducedMotion() || !app || !app.children.length) return;
+    app.classList.remove("page-enter", "page-enter-video", "page-exit", "page-exit-video");
+    const heavy = toVideo || fromVideo;
+    app.classList.add(heavy ? "page-exit-video" : "page-exit");
+    await new Promise((r) => setTimeout(r, heavy ? 380 : 240));
+  }
+
+  function transitionIn({ video = false } = {}) {
+    if (!app) return;
+    app.classList.remove("page-exit", "page-exit-video", "page-enter", "page-enter-video");
+    if (prefersReducedMotion()) return;
+    // reflow so enter animation restarts after innerHTML swap
+    void app.offsetWidth;
+    app.classList.add(video ? "page-enter-video" : "page-enter");
+    const done = () => {
+      app.classList.remove("page-enter", "page-enter-video");
+      app.removeEventListener("animationend", done);
+    };
+    app.addEventListener("animationend", done);
+  }
+
   async function navigate(path, replace = false) {
+    const nextPath = path.split("?")[0];
+    const toVideo = isVideoPath(nextPath);
+    const fromVideo = isVideoPath(location.pathname);
+    await transitionOut({ toVideo, fromVideo });
     if (replace) history.replaceState({}, "", path);
     else if (location.pathname + location.search !== path) history.pushState({}, "", path);
     await route();
+    transitionIn({ video: isVideoPath(location.pathname) });
   }
 
   async function route() {
@@ -2532,7 +2568,12 @@
     return renderHome();
   }
 
-  window.addEventListener("popstate", () => route());
+  window.addEventListener("popstate", async () => {
+    const video = isVideoPath(location.pathname);
+    await transitionOut({ fromVideo: true, toVideo: video });
+    await route();
+    transitionIn({ video });
+  });
   document.querySelectorAll("#bottom-nav button").forEach((b) => {
     b.onclick = () => navigate(b.getAttribute("data-route"));
   });

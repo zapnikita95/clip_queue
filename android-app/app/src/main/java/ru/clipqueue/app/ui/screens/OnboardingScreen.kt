@@ -40,10 +40,10 @@ fun OnboardingScreen(
     var step by remember { mutableIntStateOf(0) }
     val scope = rememberCoroutineScope()
     val pages = listOf(
-        Triple("Kyeye", "Очередь YouTube на телефоне.", "Дальше"),
+        Triple("Kyro", "Очередь YouTube на телефоне.", "Дальше"),
         Triple("Синк", "Лайки и плейлисты.", "Синхронизировать"),
         Triple("Папки и теги", "Раскладка и фильтры.", "Дальше"),
-        Triple("Share", "Из YouTube → Kyeye.", "Готово"),
+        Triple("Share", "Из YouTube → Kyro.", "Готово"),
     )
     val (title, body, cta) = pages[step]
 
