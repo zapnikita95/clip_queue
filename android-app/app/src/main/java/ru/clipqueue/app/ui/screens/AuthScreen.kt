@@ -28,6 +28,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
@@ -73,7 +74,7 @@ fun AuthScreen(
         Text("Clip Queue", style = MaterialTheme.typography.displayLarge)
         Spacer(Modifier.height(10.dp))
         Text(
-            text = "РЎРѕС…СЂР°РЅСЏР№ РёР· YouTube РІ РѕРґРЅРѕ РєР°СЃР°РЅРёРµ.\nРЎРѕСЂС‚РёСЂРѕРІРєР° Рё СЂРµРєРѕРјРµРЅРґР°С†РёРё вЂ” РЅР° Р±СЌРєРµ.",
+            text = "Сохраняй из YouTube в одно касание.\nСортировка и рекомендации — на бэке.",
             style = MaterialTheme.typography.bodyMedium,
             color = CqMuted,
             textAlign = TextAlign.Center,
@@ -89,7 +90,7 @@ fun AuthScreen(
             shape = RoundedCornerShape(12.dp),
             colors = ButtonDefaults.buttonColors(containerColor = CqAccent, contentColor = CqText),
         ) {
-            Text("Р’РѕР№С‚Рё С‡РµСЂРµР· Google", fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+            Text("Войти через Google", fontWeight = FontWeight.Bold)
         }
         Spacer(Modifier.height(10.dp))
         OutlinedButton(
@@ -104,10 +105,10 @@ fun AuthScreen(
                             session.email = r.user?.email
                             onLoggedIn()
                         } else {
-                            error = r.error ?: "DEV_LOGIN РЅРµРґРѕСЃС‚СѓРїРµРЅ РЅР° РїСЂРѕРґРµ"
+                            error = r.error ?: "DEV_LOGIN недоступен на проде"
                         }
                     } catch (e: Exception) {
-                        error = e.message ?: "РћС€РёР±РєР° РІС…РѕРґР°"
+                        error = e.message ?: "Ошибка входа"
                     } finally {
                         busy = false
                     }

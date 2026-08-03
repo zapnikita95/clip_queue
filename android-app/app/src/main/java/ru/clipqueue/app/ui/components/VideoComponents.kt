@@ -100,7 +100,7 @@ fun VideoThumbCard(
         }
         Spacer(Modifier.height(6.dp))
         Text(
-            text = card.title.orEmpty().ifBlank { "Р‘РµР· РЅР°Р·РІР°РЅРёСЏ" },
+            text = card.title.orEmpty().ifBlank { "Без названия" },
             style = androidx.compose.material3.MaterialTheme.typography.titleMedium,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,

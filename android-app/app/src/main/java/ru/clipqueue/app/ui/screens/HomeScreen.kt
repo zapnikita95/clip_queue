@@ -15,7 +15,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -30,6 +33,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -44,6 +48,7 @@ import ru.clipqueue.app.ui.theme.CqBg
 import ru.clipqueue.app.ui.theme.CqBorder
 import ru.clipqueue.app.ui.theme.CqElev
 import ru.clipqueue.app.ui.theme.CqMuted
+import ru.clipqueue.app.ui.theme.CqText
 
 @Composable
 fun HomeScreen(
@@ -59,7 +64,7 @@ fun HomeScreen(
     var recent by remember { mutableStateOf<List<VideoCard>>(emptyList()) }
     var vibe by remember { mutableStateOf<List<VideoCard>>(emptyList()) }
     var fromPlaylists by remember { mutableStateOf<List<VideoCard>>(emptyList()) }
-    var folders by remember { mutableStateOf<List<ListCard>>(emptyList()) }
+    var topFolders by remember { mutableStateOf<List<ListCard>>(emptyList()) }
 
     suspend fun openVideo(card: VideoCard) {
         val id = card.video_id ?: return
@@ -75,10 +80,7 @@ fun HomeScreen(
         loading = true
         error = null
         try {
-            // Fire-and-forget playlist sync on entry
-            launch {
-                runCatching { api.startYoutubeSync(full = false) }
-            }
+            launch { runCatching { api.startYoutubeSync(full = false) } }
             coroutineScope {
                 val recentDef = async { api.homeRail("queue") }
                 val vibeDef = async { api.homeRail("continue_vibe") }
@@ -87,10 +89,13 @@ fun HomeScreen(
                 recent = recentDef.await().items.orEmpty()
                 vibe = vibeDef.await().items.orEmpty()
                 fromPlaylists = plDef.await().items.orEmpty()
-                folders = listsDef.await().lists.orEmpty().take(6)
+                // Top frequent = biggest folders by video count
+                topFolders = listsDef.await().lists.orEmpty()
+                    .sortedByDescending { it.count ?: 0 }
+                    .take(8)
             }
         } catch (e: Exception) {
-            error = e.message ?: "РќРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РіСЂСѓР·РёС‚СЊ"
+            error = e.message ?: "Не удалось загрузить"
         } finally {
             loading = false
         }
@@ -104,7 +109,11 @@ fun HomeScreen(
     ) {
         Spacer(Modifier.height(18.dp))
         Text("Clip Queue", style = MaterialTheme.typography.titleLarge)
-        Text("РёР· С‚РІРѕРµРіРѕ В· РЅРµ Р»РµРЅС‚Р° YouTube", style = MaterialTheme.typography.bodySmall, color = CqMuted)
+        Text(
+            "из твоего · не лента YouTube",
+            style = MaterialTheme.typography.bodySmall,
+            color = CqMuted,
+        )
 
         when {
             loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -118,64 +127,115 @@ fun HomeScreen(
                 contentPadding = PaddingValues(bottom = 12.dp),
             ) {
                 item {
-                    SectionLabel("РќРµРґР°РІРЅРѕ РґРѕР±Р°РІР»РµРЅРЅС‹Рµ")
+                    SectionLabel("Недавно добавленные")
                     if (recent.isEmpty()) {
-                        Text("РџРѕРєР° РїСѓСЃС‚Рѕ вЂ” РїРѕРґРµР»РёСЃСЊ СЂРѕР»РёРєРѕРј РёР· YouTube", color = CqMuted)
+                        Text("Пока пусто — поделись роликом из YouTube", color = CqMuted)
                     } else {
                         VideoRail(recent) { scope.launch { openVideo(it) } }
                     }
                 }
                 item {
-                    SectionLabel("РњРѕРіСѓС‚ РїРѕРЅСЂР°РІРёС‚СЊСЃСЏ")
+                    SectionLabel("Могут понравиться")
                     val recs = if (vibe.isNotEmpty()) vibe else fromPlaylists
                     if (recs.isEmpty()) {
-                        Text("РЎРјРѕС‚СЂРё СЂРѕР»РёРєРё вЂ” РїРѕРґС‚СЏРЅРµРј РІР°Р№Р±", color = CqMuted)
+                        Text("Смотри ролики — подтянем вайб", color = CqMuted)
                     } else {
                         VideoRail(recs) { scope.launch { openVideo(it) } }
                     }
                 }
                 if (fromPlaylists.isNotEmpty() && vibe.isNotEmpty()) {
                     item {
-                        SectionLabel("РР· РїР»РµР№Р»РёСЃС‚РѕРІ")
+                        SectionLabel("Из плейлистов")
                         VideoRail(fromPlaylists) { scope.launch { openVideo(it) } }
                     }
                 }
                 item {
-                    SectionLabel("РџР°РїРєРё")
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 18.dp, bottom = 10.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        folders.take(4).forEach { folder ->
-                            Column(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .background(CqElev, RoundedCornerShape(12.dp))
-                                    .border(1.dp, CqBorder, RoundedCornerShape(12.dp))
-                                    .clickable { onOpenFolder(folder) }
-                                    .padding(12.dp),
-                            ) {
-                                Text(
-                                    folder.title.orEmpty(),
-                                    style = MaterialTheme.typography.titleMedium,
-                                    maxLines = 1,
-                                )
-                                Text(
-                                    "${folder.count ?: 0} РІРёРґРµРѕ",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = CqMuted,
-                                )
-                            }
-                        }
+                        Text(
+                            "ТОП ПАПКИ",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = CqMuted,
+                        )
+                        Text(
+                            "все →",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = CqAccent,
+                            modifier = Modifier.clickable(onClick = onOpenFolders),
+                        )
                     }
-                    if (folders.isEmpty()) {
-                        Text("РџР°РїРєРё РїРѕСЏРІСЏС‚СЃСЏ РїРѕСЃР»Рµ organize / share", color = CqMuted)
+                    if (topFolders.isEmpty()) {
+                        Text("Папки появятся после organize / share", color = CqMuted)
+                    } else {
+                        FolderCarousel(
+                            folders = topFolders,
+                            onOpenFolder = onOpenFolder,
+                            onSeeAll = onOpenFolders,
+                        )
                     }
                 }
             }
         }
 
         BottomBar(selected = 0, onHome = {}, onFolders = onOpenFolders, onProfile = onOpenProfile)
+    }
+}
+
+@Composable
+fun FolderCarousel(
+    folders: List<ListCard>,
+    onOpenFolder: (ListCard) -> Unit,
+    onSeeAll: () -> Unit,
+) {
+    LazyRow(
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        contentPadding = PaddingValues(end = 8.dp),
+    ) {
+        items(folders, key = { it.id ?: it.title.orEmpty() }) { folder ->
+            Column(
+                modifier = Modifier
+                    .width(132.dp)
+                    .height(88.dp)
+                    .background(CqElev, RoundedCornerShape(14.dp))
+                    .border(1.dp, CqBorder, RoundedCornerShape(14.dp))
+                    .clickable { onOpenFolder(folder) }
+                    .padding(14.dp),
+                verticalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text(
+                    text = folder.title.orEmpty(),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = CqText,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = "${folder.count ?: 0} видео",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = CqMuted,
+                )
+            }
+        }
+        item {
+            Column(
+                modifier = Modifier
+                    .width(100.dp)
+                    .height(88.dp)
+                    .border(1.dp, CqBorder, RoundedCornerShape(14.dp))
+                    .clickable(onClick = onSeeAll)
+                    .padding(14.dp),
+                verticalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text("Все", color = CqAccent, style = MaterialTheme.typography.titleMedium)
+                Text("папки", color = CqMuted, style = MaterialTheme.typography.bodySmall)
+            }
+        }
     }
 }
 
@@ -193,9 +253,9 @@ fun BottomBar(
         horizontalArrangement = Arrangement.SpaceAround,
     ) {
         listOf(
-            Triple(0, "Р›РµРЅС‚Р°", onHome),
-            Triple(1, "РџР°РїРєРё", onFolders),
-            Triple(2, "РџСЂРѕС„РёР»СЊ", onProfile),
+            Triple(0, "Лента", onHome),
+            Triple(1, "Папки", onFolders),
+            Triple(2, "Профиль", onProfile),
         ).forEach { (idx, label, action) ->
             Text(
                 text = label,

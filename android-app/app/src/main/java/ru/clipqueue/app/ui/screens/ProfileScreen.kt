@@ -58,9 +58,9 @@ fun ProfileScreen(
             .padding(horizontal = 20.dp),
     ) {
         Spacer(Modifier.height(18.dp))
-        Text("РџСЂРѕС„РёР»СЊ", style = MaterialTheme.typography.titleLarge)
+        Text("Профиль", style = MaterialTheme.typography.titleLarge)
         Text(
-            me?.user?.email ?: session.email ?: "вЂ”",
+            me?.user?.email ?: session.email ?: "—",
             style = MaterialTheme.typography.bodySmall,
             color = CqMuted,
         )
@@ -68,33 +68,33 @@ fun ProfileScreen(
 
         ProfileBlock(
             title = "YouTube",
-            body = "Р›Р°Р№РєРё Рё РїР»РµР№Р»РёСЃС‚С‹ СЃРёРЅС…СЂРѕРЅРёР·РёСЂСѓСЋС‚СЃСЏ РїСЂРё РѕС‚РєСЂС‹С‚РёРё РїСЂРёР»РѕР¶РµРЅРёСЏ.",
-            chip = if (me?.youtube_connected == true) "РїРѕРґРєР»СЋС‡РµРЅРѕ" else "РЅРµ РїРѕРґРєР»СЋС‡РµРЅРѕ",
+            body = "Лайки и плейлисты синхронизируются при открытии приложения.",
+            chip = if (me?.youtube_connected == true) "подключено" else "не подключено",
             chipOk = me?.youtube_connected == true,
         )
         ProfileBlock(
-            title = "РџРѕСЃР»РµРґРЅРёР№ СЃРёРЅРє",
-            body = me?.last_youtube_sync?.at?.ifBlank { null } ?: "РµС‰С‘ РЅРµ Р±С‹Р»Рѕ",
+            title = "Последний синк",
+            body = me?.last_youtube_sync?.at?.ifBlank { null } ?: "ещё не было",
         )
         ProfileBlock(
-            title = "Р‘РёР±Р»РёРѕС‚РµРєР°",
-            body = "${me?.library_count ?: 0} СЃРѕС…СЂР°РЅС‘РЅРЅС‹С…",
+            title = "Библиотека",
+            body = "${me?.library_count ?: 0} сохранённых",
         )
 
         Spacer(Modifier.height(8.dp))
         OutlinedButton(
             onClick = {
                 scope.launch {
-                    syncMsg = "СЃРёРЅРєвЂ¦"
+                    syncMsg = "синк…"
                     val r = runCatching { api.startYoutubeSync(full = false) }.getOrNull()
-                    syncMsg = if (r?.ok == true) "СЃРёРЅРє Р·Р°РїСѓС‰РµРЅ" else (r?.error ?: "РѕС€РёР±РєР° СЃРёРЅРєР°")
+                    syncMsg = if (r?.ok == true) "синк запущен" else (r?.error ?: "ошибка синка")
                     me = runCatching { api.me() }.getOrNull()
                 }
             },
             modifier = Modifier.fillMaxWidth().height(48.dp),
             shape = RoundedCornerShape(12.dp),
         ) {
-            Text(syncMsg ?: "РЎРёРЅС…СЂРѕРЅРёР·РёСЂРѕРІР°С‚СЊ СЃРµР№С‡Р°СЃ")
+            Text(syncMsg ?: "Синхронизировать сейчас")
         }
 
         Spacer(Modifier.height(10.dp))
@@ -107,7 +107,7 @@ fun ProfileScreen(
             shape = RoundedCornerShape(12.dp),
             colors = ButtonDefaults.buttonColors(containerColor = CqElev, contentColor = CqText),
         ) {
-            Text("Р’С‹Р№С‚Рё")
+            Text("Выйти")
         }
 
         Spacer(Modifier.weight(1f))

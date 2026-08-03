@@ -57,6 +57,7 @@ fun FoldersScreen(
         loading = true
         try {
             folders = api.lists().lists.orEmpty()
+                .sortedByDescending { it.count ?: 0 }
         } catch (e: Exception) {
             error = e.message
         } finally {
@@ -71,14 +72,21 @@ fun FoldersScreen(
             .padding(horizontal = 20.dp),
     ) {
         Spacer(Modifier.height(18.dp))
-        Text("РџР°РїРєРё", style = MaterialTheme.typography.titleLarge)
-        Text("СЂР°Р·Р»РѕР¶РµРЅРѕ РЅР° Р±СЌРєРµ", style = MaterialTheme.typography.bodySmall, color = CqMuted)
+        Text("Папки", style = MaterialTheme.typography.titleLarge)
+        Text(
+            "все папки · сначала самые наполненные",
+            style = MaterialTheme.typography.bodySmall,
+            color = CqMuted,
+        )
 
         when {
             loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator(color = CqAccent)
             }
             error != null -> Text(error.orEmpty(), color = CqAccent)
+            folders.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text("Пока пусто — сохрани видео или сделай organize", color = CqMuted)
+            }
             else -> LazyColumn(
                 modifier = Modifier.weight(1f),
                 contentPadding = PaddingValues(vertical = 12.dp),
@@ -95,7 +103,7 @@ fun FoldersScreen(
                     ) {
                         Text(folder.title.orEmpty(), style = MaterialTheme.typography.titleMedium)
                         Text(
-                            "${folder.count ?: 0} РІРёРґРµРѕ",
+                            "${folder.count ?: 0} видео",
                             style = MaterialTheme.typography.bodySmall,
                             color = CqMuted,
                         )
@@ -140,20 +148,29 @@ fun FolderDetailScreen(
     ) {
         Spacer(Modifier.height(18.dp))
         Text(
-            "в†ђ РїР°РїРєРё",
+            "← все папки",
             color = CqMuted,
             style = MaterialTheme.typography.bodySmall,
             modifier = Modifier.clickable(onClick = onBack),
         )
         Spacer(Modifier.height(6.dp))
         Text(title, style = MaterialTheme.typography.titleLarge)
+        Text(
+            "${items.size} видео",
+            style = MaterialTheme.typography.bodySmall,
+            color = CqMuted,
+        )
 
         if (loading) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator(color = CqAccent)
             }
+        } else if (items.isEmpty()) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text("В папке пока пусто", color = CqMuted)
+            }
         } else {
-            LazyColumn(modifier = Modifier.weight(1f)) {
+            LazyColumn(modifier = Modifier.weight(1f), contentPadding = PaddingValues(top = 8.dp)) {
                 items(items, key = { it.video_id.orEmpty() }) { card ->
                     VideoListRow(card) {
                         scope.launch {

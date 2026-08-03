@@ -142,18 +142,40 @@
       display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
     }
     .cmeta { font-size: 10px; color: var(--muted); }
-    .folders {
-      display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px;
+    .folders-grid {
+      display: flex; flex-direction: column; gap: 8px; margin-top: 4px;
+      flex: 1; overflow: hidden;
     }
-    .folder {
+    .folder-row {
       background: var(--bg-elev);
       border: 1px solid var(--border);
       border-radius: 12px;
-      padding: 12px;
-      min-height: 64px;
+      padding: 12px 14px;
     }
-    .folder strong { display: block; font-size: 13px; margin-bottom: 4px; }
-    .folder span { font-size: 11px; color: var(--muted); }
+    .folder-row strong { display: block; font-size: 13px; margin-bottom: 2px; }
+    .folder-row span { font-size: 11px; color: var(--muted); }
+    .rail-head {
+      display: flex; align-items: baseline; justify-content: space-between;
+      margin: 14px 0 8px;
+    }
+    .rail-head .rail-title { margin: 0; }
+    .rail-head .more { font-size: 12px; color: var(--accent); }
+    .folder-chip {
+      flex: 0 0 124px;
+      height: 78px;
+      background: var(--bg-elev);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 12px;
+      display: flex; flex-direction: column; justify-content: space-between;
+    }
+    .folder-chip strong { font-size: 13px; line-height: 1.25; }
+    .folder-chip span { font-size: 11px; color: var(--muted); }
+    .folder-chip.all {
+      background: transparent;
+      align-items: center; justify-content: center; text-align: center;
+    }
+    .folder-chip.all strong { color: var(--accent); }
     .bottom-nav {
       margin-top: auto;
       display: flex; justify-content: space-around;
@@ -280,8 +302,9 @@
     </div>
     <nav class="nav">
       <a href="#share">Share toast</a>
-      <a href="#home">Home</a>
-      <a href="#folder">Папка</a>
+      <a href="#home">Лента</a>
+      <a href="#folders-tab">Папки</a>
+      <a href="#folder">Внутри папки</a>
       <a href="#auth">Вход</a>
       <a href="#profile">Профиль</a>
     </nav>
@@ -304,8 +327,8 @@
       </div>
 
       <div class="shot" id="home">
-        <h2>Home</h2>
-        <p class="cap">Недавно + вайб по просмотрам + папки. Без дашборд-мусора.</p>
+        <h2>Home · лента</h2>
+        <p class="cap">Видео + топ папки каруселью. Все папки — во вкладке «Папки».</p>
         <div class="phone">
           <div class="screen">
             <div class="brand">Clip Queue</div>
@@ -339,12 +362,15 @@
               </div>
             </div>
 
-            <div class="rail-title">Папки</div>
-            <div class="folders">
-              <div class="folder"><strong>История</strong><span>24 видео</span></div>
-              <div class="folder"><strong>Продукт</strong><span>11 видео</span></div>
-              <div class="folder"><strong>Длинное</strong><span>8 видео</span></div>
-              <div class="folder"><strong>Музыка</strong><span>архив</span></div>
+            <div class="rail-head">
+              <div class="rail-title">Топ папки</div>
+              <div class="more">все →</div>
+            </div>
+            <div class="rail">
+              <div class="folder-chip"><strong>История</strong><span>24 видео</span></div>
+              <div class="folder-chip"><strong>Продукт</strong><span>11 видео</span></div>
+              <div class="folder-chip"><strong>Длинное</strong><span>8 видео</span></div>
+              <div class="folder-chip all"><strong>Все</strong><span>папки</span></div>
             </div>
 
             <div class="bottom-nav">
@@ -356,13 +382,38 @@
         </div>
       </div>
 
+      <div class="shot" id="folders-tab">
+        <h2>Папки · полный список</h2>
+        <p class="cap">Вкладка «Папки»: все папки, сверху самые наполненные.</p>
+        <div class="phone">
+          <div class="screen">
+            <div class="brand">Папки</div>
+            <div class="sub">все папки · сначала самые наполненные</div>
+            <div class="folders-grid">
+              <div class="folder-row"><strong>История</strong><span>24 видео</span></div>
+              <div class="folder-row"><strong>Продукт</strong><span>11 видео</span></div>
+              <div class="folder-row"><strong>Длинное</strong><span>8 видео</span></div>
+              <div class="folder-row"><strong>Музыка</strong><span>6 видео · архив</span></div>
+              <div class="folder-row"><strong>Подкасты</strong><span>5 видео</span></div>
+              <div class="folder-row"><strong>Разобрать</strong><span>3 видео</span></div>
+            </div>
+            <div class="bottom-nav">
+              <span>Лента</span>
+              <span class="on">Папки</span>
+              <span>Профиль</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div class="shot" id="folder">
         <h2>Папка</h2>
         <p class="cap">AI уже разложил на бэке. Тап → YouTube.</p>
         <div class="phone">
           <div class="screen">
-            <div class="sub" style="margin-bottom:4px">← папки</div>
-            <div class="brand" style="font-size:1.5rem;margin-bottom:16px">История</div>
+            <div class="sub" style="margin-bottom:4px">← все папки</div>
+            <div class="brand" style="font-size:1.5rem;margin-bottom:4px">История</div>
+            <div class="sub" style="margin-bottom:12px">4 видео</div>
             <div class="list-row">
               <div class="t thumb warm"></div>
               <div class="b"><strong>Легенды мегаполисов</strong><span>Varlamov · 18:42</span></div>
