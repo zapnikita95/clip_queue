@@ -62,8 +62,23 @@ data class VideoCard(
     val channel_title: String? = null,
     val thumb_url: String? = null,
     val duration_sec: Int? = null,
+    val duration_label: String? = null,
     val status: String? = null,
+    val interest: Int? = null,
     val watch_url: String? = null,
+    val description: String? = null,
+    val note: String? = null,
+)
+
+data class VideoDetailResponse(
+    val ok: Boolean? = null,
+    val item: VideoCard? = null,
+    val error: String? = null,
+)
+
+data class OkResponse(
+    val ok: Boolean? = null,
+    val error: String? = null,
 )
 
 data class ListsResponse(
@@ -72,16 +87,46 @@ data class ListsResponse(
     val error: String? = null,
 )
 
+data class CoverDto(
+    val thumb_url: String? = null,
+    val title: String? = null,
+)
+
 data class ListCard(
     val id: Int? = null,
     val title: String? = null,
     val count: Int? = null,
+    val covers: List<CoverDto>? = null,
 )
 
 data class ListDetailResponse(
     val ok: Boolean? = null,
     val list: ListCard? = null,
     val items: List<VideoCard>? = null,
+    val error: String? = null,
+)
+
+data class CreateListResponse(
+    val ok: Boolean? = null,
+    val list: ListCard? = null,
+    val error: String? = null,
+)
+
+data class TagsResponse(
+    val ok: Boolean? = null,
+    val tags: List<TagDto>? = null,
+    val error: String? = null,
+)
+
+data class TagDto(
+    val id: Int? = null,
+    val name: String? = null,
+    val emoji: String? = null,
+)
+
+data class CreateTagResponse(
+    val ok: Boolean? = null,
+    val tag: TagDto? = null,
     val error: String? = null,
 )
 
@@ -95,4 +140,9 @@ data class SyncStartResponse(
     val ok: Boolean? = null,
     val job: Map<String, Any?>? = null,
     val error: String? = null,
+)
+
+data class SimilarResponse(
+    val ok: Boolean? = null,
+    val items: List<VideoCard>? = null,
 )

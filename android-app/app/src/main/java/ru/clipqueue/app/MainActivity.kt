@@ -26,6 +26,7 @@ import ru.clipqueue.app.ui.screens.FolderDetailScreen
 import ru.clipqueue.app.ui.screens.FoldersScreen
 import ru.clipqueue.app.ui.screens.HomeScreen
 import ru.clipqueue.app.ui.screens.ProfileScreen
+import ru.clipqueue.app.ui.screens.VideoDetailScreen
 import ru.clipqueue.app.ui.theme.ClipQueueTheme
 import ru.clipqueue.app.ui.theme.CqBg
 
@@ -100,10 +101,16 @@ private fun ClipQueueNav(
         nav.navigate("folder/$id?title=$title")
     }
 
+    fun openVideo(videoId: String) {
+        if (videoId.isBlank()) return
+        nav.navigate("video/${Uri.encode(videoId)}")
+    }
+
     NavHost(navController = nav, startDestination = "home") {
         composable("home") {
             HomeScreen(
                 api = api,
+                onOpenVideo = ::openVideo,
                 onOpenFolder = ::openFolder,
                 onOpenFolders = { nav.navigate("folders") },
                 onOpenProfile = { nav.navigate("profile") },
@@ -119,6 +126,7 @@ private fun ClipQueueNav(
                 },
                 onOpenFolder = ::openFolder,
                 onOpenProfile = { nav.navigate("profile") },
+                onOpenVideo = ::openVideo,
             )
         }
         composable(
@@ -137,6 +145,19 @@ private fun ClipQueueNav(
                 api = api,
                 folder = ListCard(id = id, title = title),
                 onBack = { nav.popBackStack() },
+                onOpenVideo = ::openVideo,
+            )
+        }
+        composable(
+            route = "video/{id}",
+            arguments = listOf(navArgument("id") { type = NavType.StringType }),
+        ) { entry ->
+            val id = Uri.decode(entry.arguments?.getString("id").orEmpty())
+            VideoDetailScreen(
+                api = api,
+                videoId = id,
+                onBack = { nav.popBackStack() },
+                onOpenVideo = ::openVideo,
             )
         }
         composable("profile") {
