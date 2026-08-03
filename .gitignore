@@ -22,3 +22,6 @@ android-app/**/build/
 
 # Local SQLite / runtime data (repo root only)
 /data/
+*.db
+*.sqlite
+*.sqlite3
