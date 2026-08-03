@@ -80,6 +80,28 @@ fun SectionLabel(text: String, modifier: Modifier = Modifier) {
 }
 
 @Composable
+fun ToolIconButton(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    icon: @Composable () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(20.dp))
+            .background(if (selected) CqAccent.copy(alpha = 0.35f) else CqElev)
+            .border(1.dp, if (selected) CqAccent else CqBorder, RoundedCornerShape(20.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        icon()
+        Text(label, color = if (selected) CqText else CqMuted, style = MaterialTheme.typography.bodySmall)
+    }
+}
+
+@Composable
 fun FilterChip(
     label: String,
     selected: Boolean,

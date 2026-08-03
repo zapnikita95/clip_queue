@@ -13,14 +13,20 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Sort
+import androidx.compose.material.icons.filled.FilterList
+import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -46,7 +52,9 @@ import ru.clipqueue.app.ui.TagPickerDialog
 import ru.clipqueue.app.ui.components.BottomBar
 import ru.clipqueue.app.ui.components.FilterChip
 import ru.clipqueue.app.ui.components.FolderGrid
+import ru.clipqueue.app.ui.components.SearchBarWithMic
 import ru.clipqueue.app.ui.components.TagChip
+import ru.clipqueue.app.ui.components.ToolIconButton
 import ru.clipqueue.app.ui.components.VideoListRow
 import ru.clipqueue.app.ui.components.VideoRail
 import ru.clipqueue.app.ui.rememberVideoActions
@@ -84,6 +92,8 @@ fun FoldersScreen(
     var query by remember { mutableStateOf("") }
     var sort by remember { mutableStateOf(FolderSort.Count) }
     var minCount by remember { mutableStateOf(0) }
+    var sortMenu by remember { mutableStateOf(false) }
+    var filterMenu by remember { mutableStateOf(false) }
     var tagCard by remember { mutableStateOf<VideoCard?>(null) }
     var moveCard by remember { mutableStateOf<VideoCard?>(null) }
     val railCache = remember { mutableStateMapOf<Int, List<VideoCard>>() }
@@ -100,7 +110,10 @@ fun FoldersScreen(
         error = null
         try {
             folders = api.lists().lists.orEmpty()
-            tags = usedTags(runCatching { api.tags(onlyUsed = true) }.getOrNull()?.tags.orEmpty())
+            val used = usedTags(runCatching { api.tags(onlyUsed = true) }.getOrNull()?.tags.orEmpty())
+            tags = used.ifEmpty {
+                usedTags(runCatching { api.tags(onlyUsed = false) }.getOrNull()?.tags.orEmpty())
+            }
             appCache.folders = AppCache.Folders(folders = folders, tags = tags)
         } catch (e: Exception) {
             if (folders.isEmpty()) error = e.message
@@ -155,6 +168,12 @@ fun FoldersScreen(
         cache = appCache,
     )
 
+    val sortLabel = when (sort) {
+        FolderSort.Count -> "По числу"
+        FolderSort.Name -> "А–Я"
+        FolderSort.EmptyLast -> "Пустые вниз"
+    }
+
     tagCard?.let { c ->
         TagPickerDialog(api, c, appCache, onDismiss = { tagCard = null })
     }
@@ -168,30 +187,72 @@ fun FoldersScreen(
         Column(modifier = Modifier.padding(horizontal = 12.dp)) {
             Spacer(Modifier.height(14.dp))
             Text("Папки", style = MaterialTheme.typography.titleLarge)
-            Spacer(Modifier.height(8.dp))
-            OutlinedTextField(
+            Spacer(Modifier.height(10.dp))
+            SearchBarWithMic(
                 value = query,
                 onValueChange = { query = it },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                placeholder = { Text("Найти папку") },
-                shape = RoundedCornerShape(12.dp),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = CqAccent,
-                    unfocusedBorderColor = CqBorder,
-                    focusedTextColor = CqText,
-                    unfocusedTextColor = CqText,
-                    cursorColor = CqAccent,
-                ),
+                placeholder = "Найти папку",
             )
-            Spacer(Modifier.height(8.dp))
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                item { FilterChip("По числу", sort == FolderSort.Count) { sort = FolderSort.Count } }
-                item { FilterChip("А–Я", sort == FolderSort.Name) { sort = FolderSort.Name } }
-                item { FilterChip("С видео", minCount == 1) { minCount = if (minCount == 1) 0 else 1 } }
+            Spacer(Modifier.height(10.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Box {
+                    ToolIconButton(
+                        label = sortLabel,
+                        selected = true,
+                        onClick = { sortMenu = true },
+                    ) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.Sort,
+                            contentDescription = null,
+                            tint = CqText,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
+                    DropdownMenu(expanded = sortMenu, onDismissRequest = { sortMenu = false }) {
+                        DropdownMenuItem(
+                            text = { Text("По числу") },
+                            onClick = { sort = FolderSort.Count; sortMenu = false },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("А–Я") },
+                            onClick = { sort = FolderSort.Name; sortMenu = false },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Пустые вниз") },
+                            onClick = { sort = FolderSort.EmptyLast; sortMenu = false },
+                        )
+                    }
+                }
+                Box {
+                    ToolIconButton(
+                        label = if (minCount == 1) "С видео" else "Фильтр",
+                        selected = minCount == 1 || filterMenu,
+                        onClick = { filterMenu = true },
+                    ) {
+                        Icon(
+                            if (minCount == 1) Icons.Default.Videocam else Icons.Default.FilterList,
+                            contentDescription = null,
+                            tint = if (minCount == 1) CqText else CqMuted,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
+                    DropdownMenu(expanded = filterMenu, onDismissRequest = { filterMenu = false }) {
+                        DropdownMenuItem(
+                            text = { Text(if (minCount == 1) "Все папки" else "Только с видео") },
+                            onClick = {
+                                minCount = if (minCount == 1) 0 else 1
+                                filterMenu = false
+                            },
+                        )
+                    }
+                }
             }
-            if (tags.isNotEmpty()) {
-                Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(12.dp))
+            Text("Теги", style = MaterialTheme.typography.labelSmall, color = CqMuted)
+            Spacer(Modifier.height(6.dp))
+            if (tags.isEmpty()) {
+                Text("Нет тегов", color = CqMuted, style = MaterialTheme.typography.bodySmall)
+            } else {
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     item { TagChip("Все", selectedTagId == null) { selectedTagId = null } }
                     items(tags, key = { it.id ?: 0 }) { t ->
@@ -202,6 +263,7 @@ fun FoldersScreen(
                     }
                 }
             }
+            Spacer(Modifier.height(14.dp))
         }
 
         when {
@@ -210,23 +272,26 @@ fun FoldersScreen(
             }
             error != null && folders.isEmpty() -> Text(error.orEmpty(), color = CqAccent, modifier = Modifier.padding(12.dp))
             selectedTagId != null -> {
-                LazyColumn(modifier = Modifier.weight(1f), contentPadding = PaddingValues(vertical = 8.dp)) {
+                LazyColumn(
+                    modifier = Modifier.weight(1f),
+                    contentPadding = PaddingValues(top = 4.dp, bottom = 8.dp),
+                ) {
                     item {
                         Text(
-                            "Папки с тегом",
+                            "Папки",
                             style = MaterialTheme.typography.labelSmall,
                             color = CqMuted,
                             modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
                         )
                     }
                     if (taggedFolders.isEmpty()) {
-                        item { Text("Нет папок", color = CqMuted, modifier = Modifier.padding(12.dp)) }
+                        item { Text("Пусто", color = CqMuted, modifier = Modifier.padding(12.dp)) }
                     } else {
                         item { FolderGrid(taggedFolders, onOpenFolder) }
                     }
                     item {
                         Text(
-                            "${taggedVideos.size} видео с тегом",
+                            "${taggedVideos.size} видео",
                             color = CqMuted,
                             modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
                         )
@@ -245,7 +310,7 @@ fun FoldersScreen(
             }
             else -> LazyColumn(
                 modifier = Modifier.weight(1f),
-                contentPadding = PaddingValues(vertical = 10.dp),
+                contentPadding = PaddingValues(top = 4.dp, bottom = 10.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 items(topCarousel, key = { "top-${it.id}" }) { folder ->
@@ -431,13 +496,10 @@ fun FolderDetailScreen(
             Text(title, style = MaterialTheme.typography.titleLarge)
             Text("${filtered.size} / ${items.size}", style = MaterialTheme.typography.bodySmall, color = CqMuted)
             Spacer(Modifier.height(8.dp))
-            OutlinedTextField(
-                value = q, onValueChange = { q = it }, modifier = Modifier.fillMaxWidth(), singleLine = true,
-                placeholder = { Text("Поиск в папке") }, shape = RoundedCornerShape(12.dp),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = CqAccent, unfocusedBorderColor = CqBorder,
-                    focusedTextColor = CqText, unfocusedTextColor = CqText, cursorColor = CqAccent,
-                ),
+            SearchBarWithMic(
+                value = q,
+                onValueChange = { q = it },
+                placeholder = "Поиск в папке",
             )
             Spacer(Modifier.height(8.dp))
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
