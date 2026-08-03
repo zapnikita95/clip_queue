@@ -380,6 +380,22 @@ def create_app() -> Flask:
             }
         )
 
+    @app.post("/api/organize/retag")
+    @require_auth
+    def organize_retag():
+        """Backfill thematic tags on library videos that have none."""
+        uid = current_user()["user_id"]
+        body = request.get_json(silent=True) or {}
+        limit = min(200, max(5, int(body.get("limit") or 80)))
+        use_llm = body.get("use_llm")
+        if use_llm is None:
+            use_llm = True
+        llm_budget = min(100, max(0, int(body.get("llm_budget") or 50)))
+        result = organize.retag_library_batch(
+            uid, limit=limit, use_llm=bool(use_llm), llm_budget=llm_budget
+        )
+        return jsonify(result)
+
     @app.post("/api/organize/apply")
     @require_auth
     def organize_apply():
@@ -2327,6 +2343,21 @@ def create_app() -> Flask:
         ("юмор", "😂"),
         ("спорт", "⚽️"),
         ("кино", "🎬"),
+        ("история", "🏛"),
+        ("наука", "🔬"),
+        ("технологии", "💻"),
+        ("бизнес", "💼"),
+        ("психология", "🧠"),
+        ("путешествия", "✈️"),
+        ("дизайн", "🎨"),
+        ("политика", "🏛"),
+        ("здоровье", "💚"),
+        ("авто", "🚗"),
+        ("языки", "🗣"),
+        ("искусство", "🖼"),
+        ("экономика", "📈"),
+        ("программирование", "⌨️"),
+        ("мода", "👗"),
     ]
 
     @app.get("/api/tags")

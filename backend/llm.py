@@ -114,6 +114,15 @@ def chat_json(
     return None
 
 
+# Canonical short themes — safe to create during classify without title overlap.
+CLASSIFY_THEME_TAGS = {
+    "готовка", "музыка", "игры", "обзоры", "новости", "подкаст", "обучение",
+    "история", "наука", "кино", "технологии", "спорт", "бизнес", "психология",
+    "путешествия", "дизайн", "политика", "здоровье", "авто", "языки", "юмор",
+    "искусство", "экономика", "программирование", "реклама", "мода",
+}
+
+
 def _tag_has_text_evidence(tag: str, title: str, channel: str, description: str) -> bool:
     """Reject slang/custom tags that have no lexical overlap with the video."""
     blob = f"{title or ''} {channel or ''} {description or ''}".lower()
@@ -123,12 +132,74 @@ def _tag_has_text_evidence(tag: str, title: str, channel: str, description: str)
     return any(t in blob for t in tokens)
 
 
+def _heuristic_tags(title: str, channel: str, description: str) -> list[str]:
+    tags: list[str] = []
+    blob = f"{title} {channel} {description}".lower()
+    for word, tag in (
+        ("cook", "готовка"),
+        ("recipe", "готовка"),
+        ("рецепт", "готовка"),
+        ("готов", "готовка"),
+        ("music", "музыка"),
+        ("музык", "музыка"),
+        ("game", "игры"),
+        ("игр", "игры"),
+        ("гейм", "игры"),
+        ("review", "обзоры"),
+        ("обзор", "обзоры"),
+        ("news", "новости"),
+        ("новост", "новости"),
+        ("podcast", "подкаст"),
+        ("подкаст", "подкаст"),
+        ("tutorial", "обучение"),
+        ("лекци", "обучение"),
+        ("курс ", "обучение"),
+        ("как ", "обучение"),
+        ("истори", "история"),
+        ("войн", "история"),
+        ("наук", "наука"),
+        ("космос", "наука"),
+        ("физик", "наука"),
+        ("фильм", "кино"),
+        ("сериал", "кино"),
+        ("кино", "кино"),
+        ("программ", "программирование"),
+        ("python", "программирование"),
+        ("код", "программирование"),
+        ("технолог", "технологии"),
+        ("гаджет", "технологии"),
+        ("бизнес", "бизнес"),
+        ("деньг", "бизнес"),
+        ("инвест", "бизнес"),
+        ("стартап", "бизнес"),
+        ("спорт", "спорт"),
+        ("футбол", "спорт"),
+        ("психолог", "психология"),
+        ("путешеств", "путешествия"),
+        ("политик", "политика"),
+        ("здоров", "здоровье"),
+        ("авто ", "авто"),
+        ("машин", "авто"),
+        ("язык", "языки"),
+        ("english", "языки"),
+        ("юмор", "юмор"),
+        ("стендап", "юмор"),
+        ("дизайн", "дизайн"),
+        ("искусств", "искусство"),
+    ):
+        if word in blob and tag not in tags:
+            tags.append(tag)
+    return tags[:4]
+
+
 def suggest_video_themes(
     title: str,
     channel: str,
     description: str,
     existing_tags: list[str],
     existing_lists: list[str],
+    *,
+    for_classify: bool = False,
 ) -> dict[str, Any]:
     """Suggest tags + list folder for one video."""
     fallback = {
@@ -137,52 +208,43 @@ def suggest_video_themes(
         "reason": "LLM недоступен — теги вручную",
         "engine": "none",
     }
-    data = chat_json(
-        system=(
+    if for_classify:
+        system = (
+            "Ты классификатор YouTube-видео для личной библиотеки. "
+            "Верни JSON: {\"tags\": [\"1–4 коротких тематических тега на русском\"], "
+            "\"list_title\": \"название папки из existing_lists или null\", \"reason\": \"кратко почему\"}. "
+            "Теги обязательны, если тема понятна: история, наука, кино, бизнес, игры, обучение и т.п. "
+            "Предпочитай existing_tags, если подходят. Можно создать новый короткий тег (1–2 слова). "
+            "Не ставь личный сленг пользователя без явных доказательств в названии/описании. "
+            "Не оставляй tags пустым, если тема ролика ясна."
+        )
+    else:
+        system = (
             "Ты классификатор YouTube-видео для личного планировщика. "
             "Верни JSON: {\"tags\": [\"до 3 коротких тегов на русском\"], "
             "\"list_title\": \"название папки или null\", \"reason\": \"кратко почему\"}. "
             "Ставь тег ТОЛЬКО если он следует из названия/описания/канала. "
             "Не переиспользуй сленговые или личные теги пользователя без явных доказательств в тексте. "
             "Если уверенности нет — верни пустой tags. Не выдумывай длинные фразы — теги 1–2 слова."
-        ),
+        )
+    data = chat_json(
+        system=system,
         user=json.dumps(
             {
                 "title": (title or "")[:160],
                 "channel": (channel or "")[:80],
                 "description": (description or "")[:400],
-                "existing_tags": existing_tags[:40],
+                "existing_tags": existing_tags[:60],
                 "existing_lists": existing_lists[:40],
+                "allowed_themes": sorted(CLASSIFY_THEME_TAGS) if for_classify else [],
             },
             ensure_ascii=False,
         ),
     )
     if not data:
-        # cheap heuristic fallback
-        tags = []
-        blob = f"{title} {channel} {description}".lower()
-        for word, tag in (
-            ("cook", "готовка"),
-            ("recipe", "готовка"),
-            ("рецепт", "готовка"),
-            ("готов", "готовка"),
-            ("music", "музыка"),
-            ("музык", "музыка"),
-            ("game", "игры"),
-            ("игр", "игры"),
-            ("review", "обзоры"),
-            ("обзор", "обзоры"),
-            ("news", "новости"),
-            ("новост", "новости"),
-            ("podcast", "подкаст"),
-            ("подкаст", "подкаст"),
-            ("tutorial", "обучение"),
-            ("как ", "обучение"),
-        ):
-            if word in blob and tag not in tags:
-                tags.append(tag)
+        tags = _heuristic_tags(title, channel, description)
         return {
-            "tags": tags[:3],
+            "tags": tags,
             "list_title": tags[0] if tags else None,
             "reason": "Эвристика по словам (без LLM)",
             "engine": "heuristic",
@@ -192,21 +254,25 @@ def suggest_video_themes(
         name = str(t).strip()[:40]
         if name and name not in tags:
             tags.append(name)
-    # Prefer existing tag names only when there is text evidence
+    # Prefer existing tag names; gate slang; allow canonical themes on classify
     lower_map = {x.lower(): x for x in existing_tags}
     remapped = []
     for t in tags:
         canon = lower_map.get(t.lower(), t)
-        if canon.lower() in lower_map and not _tag_has_text_evidence(canon, title, channel, description):
+        is_existing = canon.lower() in lower_map
+        is_theme = canon.lower() in CLASSIFY_THEME_TAGS
+        has_ev = _tag_has_text_evidence(canon, title, channel, description)
+        if is_existing and not has_ev and not is_theme:
             continue
-        if not _tag_has_text_evidence(canon, title, channel, description) and canon.lower() not in {
-            "готовка", "музыка", "игры", "обзоры", "новости", "подкаст", "обучение",
-            "история", "наука", "кино", "технологии", "спорт",
-        }:
-            # New slang-like tags without evidence — drop
+        if not is_existing and not has_ev and not (for_classify and is_theme):
+            continue
+        # Reject long slang phrases even on classify
+        if len(canon.split()) >= 3 and not has_ev:
             continue
         remapped.append(canon)
-    tags = remapped[:3]
+    if for_classify and not remapped:
+        remapped = _heuristic_tags(title, channel, description)
+    tags = remapped[:4]
     list_title = data.get("list_title")
     if list_title:
         list_title = str(list_title).strip()[:80] or None

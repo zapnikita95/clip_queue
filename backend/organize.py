@@ -490,6 +490,354 @@ def _add_list_item(list_id: int, video_id: str, position: int = 0) -> None:
     )
 
 
+def _ensure_tag_on_item(user_id: int, video_id: str, name: str) -> dict[str, Any] | None:
+    name = (name or "").strip()[:60]
+    if not name:
+        return None
+    tag = db.fetchone(
+        "SELECT * FROM user_tags WHERE user_id = ? AND name = ?",
+        (user_id, name),
+    )
+    if not tag:
+        # Case-insensitive reuse
+        for row in db.fetchall(
+            "SELECT * FROM user_tags WHERE user_id = ?", (user_id,)
+        ):
+            if (row.get("name") or "").strip().lower() == name.lower():
+                tag = row
+                name = row.get("name") or name
+                break
+    if not tag:
+        if db.is_postgres():
+            with db.connect() as conn:
+                cur = conn.execute(
+                    "INSERT INTO user_tags (user_id, name, emoji) VALUES (%s, %s, %s) "
+                    "RETURNING id, name, emoji, color",
+                    (user_id, name, ""),
+                )
+                tag = dict(cur.fetchone())
+        else:
+            db.execute(
+                "INSERT INTO user_tags (user_id, name, emoji) VALUES (?, ?, ?)",
+                (user_id, name, ""),
+            )
+            tag = db.fetchone(
+                "SELECT * FROM user_tags WHERE user_id = ? AND name = ?",
+                (user_id, name),
+            )
+    if not tag:
+        return None
+    tag_id = int(tag["id"])
+    db.execute(
+        "INSERT INTO item_tags (user_id, video_id, tag_id) VALUES (?, ?, ?) "
+        + (
+            "ON CONFLICT DO NOTHING"
+            if db.is_postgres()
+            else "ON CONFLICT(user_id, video_id, tag_id) DO NOTHING"
+        ),
+        (user_id, video_id, tag_id),
+    )
+    return {
+        "id": tag_id,
+        "name": tag.get("name") or name,
+        "emoji": tag.get("emoji") or "",
+    }
+
+
+def _folder_title_as_tag(title: str) -> str | None:
+    """Derive a short tag from a folder title (strip emoji / YT: prefix)."""
+    t = (title or "").strip()
+    t = re.sub(r"^YT:\s*", "", t, flags=re.I)
+    t = re.sub(r"^[\s\U0001F300-\U0001FAFF\u2600-\u27BF🔥]+", "", t).strip()
+    t = re.sub(r"\s+", " ", t)
+    if not t or _is_catchall_list_title(t) or _is_sync_dump_list(t):
+        return None
+    if "скрыто" in t.lower():
+        return None
+    # Keep first 2 words max
+    parts = t.split()
+    if len(parts) > 3:
+        t = " ".join(parts[:2])
+    return t[:40] if t else None
+
+
+def apply_tags_for_video(
+    user_id: int,
+    video_id: str,
+    *,
+    title: str | None = None,
+    channel_title: str | None = None,
+    description: str | None = None,
+    folder_hints: list[str] | None = None,
+    use_llm: bool = True,
+) -> list[dict[str, Any]]:
+    """Attach thematic tags via LLM/heuristic (+ folder titles as soft hints)."""
+    existing = [
+        (r.get("name") or "").strip()
+        for r in db.fetchall(
+            "SELECT name FROM user_tags WHERE user_id = ? ORDER BY name",
+            (user_id,),
+        )
+        if (r.get("name") or "").strip()
+    ]
+    lists = [
+        (r.get("title") or "").strip()
+        for r in db.fetchall("SELECT title FROM lists WHERE user_id = ?", (user_id,))
+        if (r.get("title") or "").strip()
+    ]
+    suggestion = (
+        llm.suggest_video_themes(
+            title or "",
+            channel_title or "",
+            description or "",
+            existing_tags=existing,
+            existing_lists=lists,
+            for_classify=True,
+        )
+        if use_llm
+        else {
+            "tags": llm._heuristic_tags(title or "", channel_title or "", description or ""),
+            "engine": "heuristic",
+        }
+    )
+    names: list[str] = []
+    for n in suggestion.get("tags") or []:
+        n = str(n).strip()
+        if n and n.lower() not in {x.lower() for x in names}:
+            names.append(n)
+    for hint in folder_hints or []:
+        ht = _folder_title_as_tag(hint)
+        if ht and ht.lower() not in {x.lower() for x in names}:
+            names.append(ht)
+    applied: list[dict[str, Any]] = []
+    for name in names[:5]:
+        try:
+            tag = _ensure_tag_on_item(user_id, video_id, name)
+            if tag:
+                applied.append(tag)
+        except Exception:
+            pass
+    return applied
+
+
+def classify_new_video(
+    user_id: int,
+    video_id: str,
+    *,
+    title: str | None = None,
+    channel_title: str | None = None,
+    duration_sec: int | None = None,
+    description: str | None = None,
+    use_llm: bool = True,
+) -> dict[str, Any]:
+    """Rules → theme folders → optional LLM into existing folders + auto tags."""
+    row = db.fetchone("SELECT * FROM videos WHERE video_id = ?", (video_id,))
+    if row:
+        title = title if title is not None else row.get("title")
+        channel_title = channel_title if channel_title is not None else row.get("channel_title")
+        duration_sec = duration_sec if duration_sec is not None else row.get("duration_sec")
+        description = description if description is not None else row.get("description")
+
+    matched = apply_rules_to_video(
+        user_id,
+        video_id,
+        title=title,
+        channel_title=channel_title,
+        duration_sec=duration_sec,
+    )
+    # Real folders (not just «длинные» / music dump)
+    theme_like = [
+        m
+        for m in matched
+        if (m.get("rule_type") or "") in ("theme", "channel", "keyword")
+        or (
+            (m.get("rule_type") or "") == "content_kind"
+            and (m.get("rule_value") or "") != "music"
+        )
+    ]
+    if not theme_like:
+        theme_hits = _match_theme_folders(
+            user_id,
+            video_id,
+            title=title,
+            channel_title=channel_title,
+            description=description,
+        )
+        theme_like = theme_hits
+        matched = list(matched) + theme_hits
+
+    def _with_tags(payload: dict[str, Any], folder_hints: list[str] | None = None) -> dict[str, Any]:
+        tags = apply_tags_for_video(
+            user_id,
+            video_id,
+            title=title,
+            channel_title=channel_title,
+            description=description,
+            folder_hints=folder_hints,
+            use_llm=False,
+        )
+        if not tags and use_llm:
+            tags = apply_tags_for_video(
+                user_id,
+                video_id,
+                title=title,
+                channel_title=channel_title,
+                description=description,
+                folder_hints=folder_hints,
+                use_llm=True,
+            )
+        payload["tags"] = tags
+        return payload
+
+    if theme_like:
+        _remove_from_catchall(user_id, video_id)
+        eng = "rules"
+        if all((m.get("rule_type") or "") == "theme" for m in theme_like):
+            eng = "themes"
+        hints = [(m.get("list_title") or "") for m in theme_like]
+        return _with_tags(
+            {
+                "matched": theme_like,
+                "engine": eng,
+                "reason": "Совпадение с правилами / темами",
+            },
+            folder_hints=hints,
+        )
+
+    if not use_llm:
+        return _with_tags({"matched": [], "engine": "none", "reason": "Нет совпадения (без LLM)"})
+
+    rules = [
+        r
+        for r in list_rules(user_id)
+        if (r.get("list_title") or "")
+        and "скрыто" not in (r.get("list_title") or "").lower()
+        and not _is_catchall_list_title(r.get("list_title") or "")
+        and r.get("rule_type") != "content_kind"
+    ]
+    existing_lists = []
+    seen_titles = set()
+    for r in rules:
+        t = (r.get("list_title") or "").strip()
+        if t and t.lower() not in seen_titles:
+            seen_titles.add(t.lower())
+            existing_lists.append(t)
+    for lst in db.fetchall(
+        "SELECT title FROM lists WHERE user_id = ?", (user_id,)
+    ):
+        t = (lst.get("title") or "").strip()
+        if (
+            t
+            and t.lower() not in seen_titles
+            and not _is_catchall_list_title(t)
+            and "скрыто" not in t.lower()
+            and not _is_sync_dump_list(t)
+        ):
+            seen_titles.add(t.lower())
+            existing_lists.append(t)
+
+    existing_tags = [
+        (r.get("name") or "").strip()
+        for r in db.fetchall(
+            "SELECT name FROM user_tags WHERE user_id = ?", (user_id,)
+        )
+        if (r.get("name") or "").strip()
+    ]
+
+    if not existing_lists:
+        # Still tag even without folders
+        return _with_tags(
+            {"matched": [], "engine": "none", "reason": "Нет сохранённых категорий — сначала Разложить"}
+        )
+
+    suggestion = llm.suggest_video_themes(
+        title or "",
+        channel_title or "",
+        description or "",
+        existing_tags=existing_tags,
+        existing_lists=existing_lists,
+        for_classify=True,
+    )
+    pick = (suggestion.get("list_title") or "").strip()
+
+    # Apply tags from this suggestion first (avoid double LLM call)
+    applied_tags: list[dict[str, Any]] = []
+    for name in suggestion.get("tags") or []:
+        try:
+            tag = _ensure_tag_on_item(user_id, video_id, str(name))
+            if tag:
+                applied_tags.append(tag)
+        except Exception:
+            pass
+
+    if not pick:
+        if not applied_tags:
+            applied_tags = apply_tags_for_video(
+                user_id,
+                video_id,
+                title=title,
+                channel_title=channel_title,
+                description=description,
+                use_llm=False,
+            )
+        return {
+            "matched": [],
+            "engine": suggestion.get("engine") or "llm",
+            "reason": suggestion.get("reason") or "Не нашлось категории",
+            "tags": applied_tags,
+        }
+
+    pick_l = pick.lower()
+    chosen = None
+    for r in rules:
+        title_l = (r.get("list_title") or "").lower()
+        if title_l == pick_l or pick_l in title_l or title_l in pick_l:
+            chosen = r
+            break
+    if not chosen:
+        for lst in db.fetchall(
+            "SELECT id, title FROM lists WHERE user_id = ?", (user_id,)
+        ):
+            title_l = (lst.get("title") or "").lower()
+            if title_l == pick_l or pick_l in title_l or title_l in pick_l:
+                if _is_catchall_list_title(title_l) or "скрыто" in title_l:
+                    continue
+                chosen = {
+                    "list_id": lst["id"],
+                    "list_title": lst.get("title"),
+                    "rule_type": "llm",
+                    "rule_value": "",
+                }
+                break
+    if not chosen:
+        return {
+            "matched": [],
+            "engine": suggestion.get("engine") or "llm",
+            "reason": f"LLM предложил «{pick}», но такой папки нет",
+            "suggestion": pick,
+            "tags": applied_tags,
+        }
+
+    _add_list_item(int(chosen["list_id"]), video_id, 0)
+    _remove_from_catchall(user_id, video_id)
+    # Folder title as extra tag if not already
+    ft = _folder_title_as_tag(chosen.get("list_title") or "")
+    if ft:
+        try:
+            tag = _ensure_tag_on_item(user_id, video_id, ft)
+            if tag and tag["id"] not in {t["id"] for t in applied_tags}:
+                applied_tags.append(tag)
+        except Exception:
+            pass
+    return {
+        "matched": [chosen],
+        "engine": suggestion.get("engine") or "llm",
+        "reason": suggestion.get("reason") or f"В «{chosen.get('list_title')}»",
+        "suggestion": pick,
+        "tags": applied_tags,
+    }
+
+
 def purge_unavailable(user_id: int) -> int:
     """Remove private/deleted stubs from planning library."""
     rows = db.fetchall(
@@ -1047,152 +1395,6 @@ def pending_to_classify(user_id: int, *, limit: int = 250) -> list[dict[str, Any
     return out
 
 
-def classify_new_video(
-    user_id: int,
-    video_id: str,
-    *,
-    title: str | None = None,
-    channel_title: str | None = None,
-    duration_sec: int | None = None,
-    description: str | None = None,
-    use_llm: bool = True,
-) -> dict[str, Any]:
-    """Rules → theme folders → optional LLM into existing folders."""
-    row = db.fetchone("SELECT * FROM videos WHERE video_id = ?", (video_id,))
-    if row:
-        title = title if title is not None else row.get("title")
-        channel_title = channel_title if channel_title is not None else row.get("channel_title")
-        duration_sec = duration_sec if duration_sec is not None else row.get("duration_sec")
-        description = description if description is not None else row.get("description")
-
-    matched = apply_rules_to_video(
-        user_id,
-        video_id,
-        title=title,
-        channel_title=channel_title,
-        duration_sec=duration_sec,
-    )
-    # Real folders (not just «длинные» / music dump)
-    theme_like = [
-        m
-        for m in matched
-        if (m.get("rule_type") or "") in ("theme", "channel", "keyword")
-        or (
-            (m.get("rule_type") or "") == "content_kind"
-            and (m.get("rule_value") or "") != "music"
-        )
-    ]
-    if not theme_like:
-        theme_hits = _match_theme_folders(
-            user_id,
-            video_id,
-            title=title,
-            channel_title=channel_title,
-            description=description,
-        )
-        theme_like = theme_hits
-        matched = list(matched) + theme_hits
-
-    if theme_like:
-        _remove_from_catchall(user_id, video_id)
-        eng = "rules"
-        if all((m.get("rule_type") or "") == "theme" for m in theme_like):
-            eng = "themes"
-        return {
-            "matched": theme_like,
-            "engine": eng,
-            "reason": "Совпадение с правилами / темами",
-        }
-
-    if not use_llm:
-        return {"matched": [], "engine": "none", "reason": "Нет совпадения (без LLM)"}
-
-    rules = [
-        r
-        for r in list_rules(user_id)
-        if (r.get("list_title") or "")
-        and "скрыто" not in (r.get("list_title") or "").lower()
-        and not _is_catchall_list_title(r.get("list_title") or "")
-        and r.get("rule_type") != "content_kind"
-    ]
-    existing_lists = []
-    seen_titles = set()
-    for r in rules:
-        t = (r.get("list_title") or "").strip()
-        if t and t.lower() not in seen_titles:
-            seen_titles.add(t.lower())
-            existing_lists.append(t)
-    for lst in db.fetchall(
-        "SELECT title FROM lists WHERE user_id = ?", (user_id,)
-    ):
-        t = (lst.get("title") or "").strip()
-        if (
-            t
-            and t.lower() not in seen_titles
-            and not _is_catchall_list_title(t)
-            and "скрыто" not in t.lower()
-            and not _is_sync_dump_list(t)
-        ):
-            seen_titles.add(t.lower())
-            existing_lists.append(t)
-    if not existing_lists:
-        return {"matched": [], "engine": "none", "reason": "Нет сохранённых категорий — сначала Разложить"}
-
-    suggestion = llm.suggest_video_themes(
-        title or "",
-        channel_title or "",
-        description or "",
-        existing_tags=[],
-        existing_lists=existing_lists,
-    )
-    pick = (suggestion.get("list_title") or "").strip()
-    if not pick:
-        return {
-            "matched": [],
-            "engine": suggestion.get("engine") or "llm",
-            "reason": suggestion.get("reason") or "Не нашлось категории",
-        }
-
-    pick_l = pick.lower()
-    chosen = None
-    for r in rules:
-        title_l = (r.get("list_title") or "").lower()
-        if title_l == pick_l or pick_l in title_l or title_l in pick_l:
-            chosen = r
-            break
-    if not chosen:
-        for lst in db.fetchall(
-            "SELECT id, title FROM lists WHERE user_id = ?", (user_id,)
-        ):
-            title_l = (lst.get("title") or "").lower()
-            if title_l == pick_l or pick_l in title_l or title_l in pick_l:
-                if _is_catchall_list_title(title_l) or "скрыто" in title_l:
-                    continue
-                chosen = {
-                    "list_id": lst["id"],
-                    "list_title": lst.get("title"),
-                    "rule_type": "llm",
-                    "rule_value": "",
-                }
-                break
-    if not chosen:
-        return {
-            "matched": [],
-            "engine": suggestion.get("engine") or "llm",
-            "reason": f"LLM предложил «{pick}», но такой папки нет",
-            "suggestion": pick,
-        }
-
-    _add_list_item(int(chosen["list_id"]), video_id, 0)
-    _remove_from_catchall(user_id, video_id)
-    return {
-        "matched": [chosen],
-        "engine": suggestion.get("engine") or "llm",
-        "reason": suggestion.get("reason") or f"В «{chosen.get('list_title')}»",
-        "suggestion": pick,
-    }
-
-
 def classify_pending_batch(
     user_id: int,
     *,
@@ -1263,6 +1465,75 @@ def classify_pending_batch(
         "llm_used": llm_used,
         "pending_left": len(pending_to_classify(user_id, limit=5)),
         "resumed_from": base_done,
+    }
+
+
+def pending_untagged(user_id: int, *, limit: int = 120) -> list[dict[str, Any]]:
+    """Library videos that have no user tags yet (for backfill)."""
+    rows = db.fetchall(
+        """
+        SELECT li.video_id, v.title, v.channel_title, v.description
+        FROM library_items li
+        JOIN videos v ON v.video_id = li.video_id
+        WHERE li.user_id = ?
+          AND NOT EXISTS (
+            SELECT 1 FROM item_tags it
+            WHERE it.user_id = li.user_id AND it.video_id = li.video_id
+          )
+        ORDER BY li.saved_at DESC
+        LIMIT ?
+        """,
+        (user_id, limit),
+    )
+    return [dict(r) for r in rows]
+
+
+def retag_library_batch(
+    user_id: int,
+    *,
+    limit: int = 80,
+    use_llm: bool = True,
+    llm_budget: int = 50,
+) -> dict[str, Any]:
+    """Attach thematic tags to library items that currently have none."""
+    items = pending_untagged(user_id, limit=limit)
+    tagged = 0
+    llm_used = 0
+    tag_names: set[str] = set()
+    for item in items:
+        vid = item["video_id"]
+        # Prefer cheap heuristic first; LLM only if empty and budget left
+        applied = apply_tags_for_video(
+            user_id,
+            vid,
+            title=item.get("title"),
+            channel_title=item.get("channel_title"),
+            description=item.get("description"),
+            use_llm=False,
+        )
+        if not applied and use_llm and llm_used < llm_budget:
+            applied = apply_tags_for_video(
+                user_id,
+                vid,
+                title=item.get("title"),
+                channel_title=item.get("channel_title"),
+                description=item.get("description"),
+                use_llm=True,
+            )
+            if applied:
+                llm_used += 1
+        if applied:
+            tagged += 1
+            for t in applied:
+                if t.get("name"):
+                    tag_names.add(t["name"])
+    return {
+        "ok": True,
+        "scanned": len(items),
+        "tagged": tagged,
+        "llm_used": llm_used,
+        "unique_tags": sorted(tag_names),
+        "untagged_left": len(pending_untagged(user_id, limit=5)),
     }
 
 
