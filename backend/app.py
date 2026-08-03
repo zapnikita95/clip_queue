@@ -580,11 +580,19 @@ def create_app() -> Flask:
             (uid, vid),
         )
         if existing:
-            db.execute(
-                "UPDATE library_items SET status = ?, note = ?, source = ? "
-                "WHERE user_id = ? AND video_id = ?",
-                (status, note or existing.get("note") or "", source, uid, vid),
-            )
+            # Always bump saved_at so share/paste lands in «Недавно»
+            if db.is_postgres():
+                db.execute(
+                    "UPDATE library_items SET status = ?, note = ?, source = ?, "
+                    "saved_at = NOW() WHERE user_id = ? AND video_id = ?",
+                    (status, note or existing.get("note") or "", source, uid, vid),
+                )
+            else:
+                db.execute(
+                    "UPDATE library_items SET status = ?, note = ?, source = ?, "
+                    "saved_at = datetime('now') WHERE user_id = ? AND video_id = ?",
+                    (status, note or existing.get("note") or "", source, uid, vid),
+                )
         else:
             db.execute(
                 "INSERT INTO library_items (user_id, video_id, status, note, source) "
@@ -856,6 +864,11 @@ def create_app() -> Flask:
         channel = (request.args.get("channel") or "").strip()
         theme = (request.args.get("theme") or "").strip().lower()
         try:
+            tag_id = int(request.args.get("tag_id") or 0)
+        except ValueError:
+            tag_id = 0
+        tag_name = (request.args.get("tag") or "").strip().lower()
+        try:
             dur_min = int(request.args.get("dur_min") or 0)
         except ValueError:
             dur_min = 0
@@ -922,6 +935,10 @@ def create_app() -> Flask:
                 """,
                 (uid, row["video_id"]),
             )
+            if tag_id and not any(int(t["id"]) == tag_id for t in tags):
+                continue
+            if tag_name and not any(tag_name in (t.get("name") or "").lower() for t in tags):
+                continue
             card = yt.card_from_video_row(
                 row,
                 {
@@ -1636,7 +1653,18 @@ def create_app() -> Flask:
                 (uid, max(limit * 16, 200)),
             )
             pool = _clean_lib_rows(pool, allow_music=False)
-            rows = _diversify_lib_rows(pool, limit) if offset == 0 else pool[offset : offset + limit]
+            if offset == 0:
+                # Pin manual adds (share/paste) so they always show in «Недавно»
+                pin_sources = {"android_share", "paste", "share", "add"}
+                pinned = [
+                    r for r in pool
+                    if (r.get("source") or "").strip().lower() in pin_sources
+                ][: max(6, limit // 2)]
+                pinned_ids = {r.get("video_id") for r in pinned}
+                rest = [r for r in pool if r.get("video_id") not in pinned_ids]
+                rows = (pinned + _diversify_lib_rows(rest, limit))[:limit]
+            else:
+                rows = pool[offset : offset + limit]
             return jsonify({"ok": True, "rail": rail_id, "items": _cards_from_lib_rows(rows)})
 
         if rail_id == "started":
@@ -2040,11 +2068,32 @@ def create_app() -> Flask:
             """,
             (uid, list_id),
         )
+        cards = []
+        for r in rows:
+            tags = db.fetchall(
+                """
+                SELECT t.id, t.name, t.emoji, t.color
+                FROM item_tags it
+                JOIN user_tags t ON t.id = it.tag_id
+                WHERE it.user_id = ? AND it.video_id = ?
+                """,
+                (uid, r["video_id"]),
+            )
+            cards.append(
+                yt.card_from_video_row(
+                    r,
+                    {
+                        "status": r.get("status"),
+                        "saved_at": str(r.get("saved_at") or ""),
+                        "user_tags": tags,
+                    },
+                )
+            )
         return jsonify(
             {
                 "ok": True,
                 "list": {"id": lst["id"], "title": lst["title"]},
-                "items": _cards_from_lib_rows(rows),
+                "items": cards,
             }
         )
 

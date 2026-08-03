@@ -29,7 +29,6 @@ import androidx.compose.material.icons.filled.RemoveRedEye
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -43,6 +42,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -66,11 +66,12 @@ enum class CardAction {
 }
 
 @Composable
-fun SectionLabel(text: String) {
+fun SectionLabel(text: String, modifier: Modifier = Modifier) {
     Text(
         text = text.uppercase(),
         style = MaterialTheme.typography.labelSmall,
-        modifier = Modifier.padding(top = 18.dp, bottom = 10.dp),
+        color = CqMuted,
+        modifier = modifier.padding(top = 14.dp, bottom = 8.dp),
     )
 }
 
@@ -89,8 +90,35 @@ fun FilterChip(
             .background(if (selected) CqAccent.copy(alpha = 0.35f) else CqElev)
             .border(1.dp, if (selected) CqAccent else CqBorder, RoundedCornerShape(20.dp))
             .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 8.dp),
+            .padding(horizontal = 12.dp, vertical = 7.dp),
     )
+}
+
+@Composable
+fun TagChip(label: String, selected: Boolean = false, onClick: (() -> Unit)? = null) {
+    val mod = Modifier
+        .clip(RoundedCornerShape(999.dp))
+        .background(if (selected) CqAccent.copy(alpha = 0.4f) else CqElev2)
+        .border(1.dp, if (selected) CqAccent else CqBorder, RoundedCornerShape(999.dp))
+        .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+        .padding(horizontal = 10.dp, vertical = 6.dp)
+    Text(label, color = if (selected) CqText else CqMuted, style = MaterialTheme.typography.bodySmall, modifier = mod)
+}
+
+@Composable
+private fun ThumbOverlayButton(
+    modifier: Modifier,
+    onClick: () -> Unit,
+    content: @Composable () -> Unit,
+) {
+    Box(
+        modifier = modifier
+            .size(22.dp)
+            .clip(CircleShape)
+            .background(CqElev.copy(alpha = 0.55f))
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) { content() }
 }
 
 @Composable
@@ -98,12 +126,15 @@ fun VideoRail(
     items: List<VideoCard>,
     onAction: (VideoCard, CardAction) -> Unit,
 ) {
+    val screenW = LocalConfiguration.current.screenWidthDp
+    val cardW = (screenW * 0.72f).coerceIn(200f, 280f).dp
     LazyRow(
         horizontalArrangement = Arrangement.spacedBy(10.dp),
-        contentPadding = PaddingValues(end = 8.dp),
+        contentPadding = PaddingValues(horizontal = 12.dp),
+        modifier = Modifier.fillMaxWidth(),
     ) {
         items(items, key = { it.video_id ?: it.title.orEmpty() }) { card ->
-            VideoThumbCard(card, onAction)
+            VideoThumbCard(card, onAction, width = cardW)
         }
     }
 }
@@ -112,13 +143,14 @@ fun VideoRail(
 fun VideoThumbCard(
     card: VideoCard,
     onAction: (VideoCard, CardAction) -> Unit,
+    width: androidx.compose.ui.unit.Dp = 200.dp,
 ) {
     var menu by remember { mutableStateOf(false) }
-    Column(modifier = Modifier.width(156.dp)) {
+    Column(modifier = Modifier.width(width)) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .aspectRatio(16f / 10f)
+                .aspectRatio(16f / 9f)
                 .clip(RoundedCornerShape(10.dp))
                 .background(Brush.linearGradient(listOf(CqElev2, CqElev)))
                 .clickable { onAction(card, CardAction.Open) },
@@ -131,57 +163,22 @@ fun VideoThumbCard(
                     modifier = Modifier.fillMaxSize(),
                 )
             }
-            IconButton(
+            ThumbOverlayButton(
+                modifier = Modifier.align(Alignment.TopStart).padding(6.dp),
                 onClick = { onAction(card, CardAction.Watched) },
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .padding(2.dp)
-                    .size(36.dp)
-                    .background(CqElev.copy(alpha = 0.72f), CircleShape),
             ) {
-                Icon(
-                    Icons.Default.RemoveRedEye,
-                    contentDescription = "Просмотрено",
-                    tint = CqText,
-                    modifier = Modifier.size(18.dp),
-                )
+                Icon(Icons.Default.RemoveRedEye, "Просмотрено", tint = CqText, modifier = Modifier.size(13.dp))
             }
-            Box(modifier = Modifier.align(Alignment.TopEnd)) {
-                IconButton(
-                    onClick = { menu = true },
-                    modifier = Modifier
-                        .padding(2.dp)
-                        .size(36.dp)
-                        .background(CqElev.copy(alpha = 0.72f), CircleShape),
-                ) {
-                    Icon(
-                        Icons.Default.MoreVert,
-                        contentDescription = "Ещё",
-                        tint = CqText,
-                        modifier = Modifier.size(18.dp),
-                    )
+            Box(modifier = Modifier.align(Alignment.TopEnd).padding(6.dp)) {
+                ThumbOverlayButton(modifier = Modifier, onClick = { menu = true }) {
+                    Icon(Icons.Default.MoreVert, "Ещё", tint = CqText, modifier = Modifier.size(13.dp))
                 }
                 DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                    DropdownMenuItem(
-                        text = { Text("Очень интересно") },
-                        onClick = { menu = false; onAction(card, CardAction.InterestHot) },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Интересно") },
-                        onClick = { menu = false; onAction(card, CardAction.InterestOk) },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Менее интересно") },
-                        onClick = { menu = false; onAction(card, CardAction.InterestLow) },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Просмотрено") },
-                        onClick = { menu = false; onAction(card, CardAction.Watched) },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Удалить") },
-                        onClick = { menu = false; onAction(card, CardAction.Dismiss) },
-                    )
+                    DropdownMenuItem(text = { Text("Очень интересно") }, onClick = { menu = false; onAction(card, CardAction.InterestHot) })
+                    DropdownMenuItem(text = { Text("Интересно") }, onClick = { menu = false; onAction(card, CardAction.InterestOk) })
+                    DropdownMenuItem(text = { Text("Менее интересно") }, onClick = { menu = false; onAction(card, CardAction.InterestLow) })
+                    DropdownMenuItem(text = { Text("Просмотрено") }, onClick = { menu = false; onAction(card, CardAction.Watched) })
+                    DropdownMenuItem(text = { Text("Удалить") }, onClick = { menu = false; onAction(card, CardAction.Dismiss) })
                 }
             }
             val dur = card.duration_label ?: formatDuration(card.duration_sec)
@@ -189,7 +186,7 @@ fun VideoThumbCard(
                 Text(
                     text = dur,
                     color = CqText,
-                    style = MaterialTheme.typography.bodySmall,
+                    fontSize = 11.sp,
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
                         .padding(6.dp)
@@ -228,14 +225,14 @@ fun VideoListRow(
         modifier = Modifier
             .fillMaxWidth()
             .clickable { onAction(card, CardAction.Open) }
-            .padding(vertical = 10.dp),
+            .padding(horizontal = 12.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
             modifier = Modifier
-                .width(96.dp)
-                .aspectRatio(16f / 10f)
+                .width(108.dp)
+                .aspectRatio(16f / 9f)
                 .clip(RoundedCornerShape(8.dp))
                 .background(CqElev2),
         ) {
@@ -247,25 +244,17 @@ fun VideoListRow(
                     modifier = Modifier.fillMaxSize(),
                 )
             }
-            IconButton(
+            ThumbOverlayButton(
+                modifier = Modifier.align(Alignment.TopStart).padding(4.dp),
                 onClick = { onAction(card, CardAction.Watched) },
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .size(32.dp)
-                    .background(CqElev.copy(alpha = 0.7f), CircleShape),
             ) {
-                Icon(Icons.Default.RemoveRedEye, null, tint = CqText, modifier = Modifier.size(16.dp))
+                Icon(Icons.Default.RemoveRedEye, null, tint = CqText, modifier = Modifier.size(12.dp))
             }
         }
         Column(modifier = Modifier.weight(1f)) {
+            Text(card.title.orEmpty(), style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
             Text(
-                text = card.title.orEmpty(),
-                style = MaterialTheme.typography.titleMedium,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text = listOfNotNull(
+                listOfNotNull(
                     card.channel_title?.takeIf { it.isNotBlank() },
                     card.duration_label ?: formatDuration(card.duration_sec),
                     card.status?.takeIf { it.isNotBlank() },
@@ -275,8 +264,8 @@ fun VideoListRow(
             )
         }
         Box {
-            IconButton(onClick = { menu = true }) {
-                Icon(Icons.Default.MoreVert, contentDescription = "Ещё", tint = CqMuted)
+            ThumbOverlayButton(modifier = Modifier, onClick = { menu = true }) {
+                Icon(Icons.Default.MoreVert, "Ещё", tint = CqMuted, modifier = Modifier.size(14.dp))
             }
             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                 DropdownMenuItem(text = { Text("Просмотрено") }, onClick = { menu = false; onAction(card, CardAction.Watched) })
@@ -288,75 +277,65 @@ fun VideoListRow(
 }
 
 @Composable
-fun FolderCarousel(
+fun FolderGrid(
     folders: List<ListCard>,
     onOpenFolder: (ListCard) -> Unit,
-    onOpenAll: () -> Unit = {},
+    modifier: Modifier = Modifier,
 ) {
-    LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        items(folders, key = { it.id ?: 0 }) { folder ->
-            Column(
-                modifier = Modifier
-                    .width(148.dp)
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(CqElev)
-                    .border(1.dp, CqBorder, RoundedCornerShape(14.dp))
-                    .clickable { onOpenFolder(folder) }
-                    .padding(10.dp),
-            ) {
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    val covers = folder.covers.orEmpty().take(3)
-                    if (covers.isEmpty()) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(64.dp)
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(CqElev2),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Icon(Icons.Default.Folder, null, tint = CqMuted)
-                        }
-                    } else {
-                        covers.forEach { c ->
-                            AsyncImage(
-                                model = c.thumb_url,
-                                contentDescription = null,
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .height(64.dp)
-                                    .clip(RoundedCornerShape(6.dp)),
-                            )
-                        }
-                    }
+    Column(
+        modifier = modifier.fillMaxWidth().padding(horizontal = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        folders.chunked(2).forEach { row ->
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                row.forEach { folder ->
+                    FolderGridCell(folder, onOpenFolder, Modifier.weight(1f))
                 }
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    folder.title.orEmpty(),
-                    style = MaterialTheme.typography.titleMedium,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text("${folder.count ?: 0} видео", color = CqMuted, style = MaterialTheme.typography.bodySmall)
+                if (row.size == 1) Spacer(Modifier.weight(1f))
             }
         }
-        item {
-            Column(
-                modifier = Modifier
-                    .width(110.dp)
-                    .height(120.dp)
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(CqElev)
-                    .border(1.dp, CqBorder, RoundedCornerShape(14.dp))
-                    .clickable(onClick = onOpenAll)
-                    .padding(12.dp),
-                verticalArrangement = Arrangement.Center,
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                Text("Все →", color = CqAccent, style = MaterialTheme.typography.titleMedium)
+    }
+}
+
+@Composable
+private fun FolderGridCell(
+    folder: ListCard,
+    onOpenFolder: (ListCard) -> Unit,
+    modifier: Modifier,
+) {
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(14.dp))
+            .background(CqElev)
+            .border(1.dp, CqBorder, RoundedCornerShape(14.dp))
+            .clickable { onOpenFolder(folder) }
+            .padding(10.dp),
+    ) {
+        Row(horizontalArrangement = Arrangement.spacedBy(3.dp), modifier = Modifier.fillMaxWidth()) {
+            val covers = folder.covers.orEmpty().take(3)
+            if (covers.isEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(56.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(CqElev2),
+                    contentAlignment = Alignment.Center,
+                ) { Icon(Icons.Default.Folder, null, tint = CqMuted, modifier = Modifier.size(22.dp)) }
+            } else {
+                covers.forEach { c ->
+                    AsyncImage(
+                        model = c.thumb_url,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.weight(1f).height(56.dp).clip(RoundedCornerShape(6.dp)),
+                    )
+                }
             }
         }
+        Spacer(Modifier.height(8.dp))
+        Text(folder.title.orEmpty(), style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        Text("${folder.count ?: 0} видео", color = CqMuted, style = MaterialTheme.typography.bodySmall)
     }
 }
 
@@ -372,12 +351,13 @@ fun BottomBar(
             .fillMaxWidth()
             .background(CqElev)
             .border(width = 1.dp, color = CqBorder, shape = RoundedCornerShape(0))
-            .padding(top = 12.dp, bottom = 14.dp),
+            .padding(horizontal = 4.dp, vertical = 6.dp),
         horizontalArrangement = Arrangement.SpaceEvenly,
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        BottomTab(0, selected, "Лента", Icons.Default.Home, onHome)
-        BottomTab(1, selected, "Папки", Icons.Default.Folder, onFolders)
-        BottomTab(2, selected, "Ещё", Icons.Default.Person, onProfile)
+        BottomTab(0, selected, "Лента", Icons.Default.Home, onHome, Modifier.weight(1f))
+        BottomTab(1, selected, "Папки", Icons.Default.Folder, onFolders, Modifier.weight(1f))
+        BottomTab(2, selected, "Ещё", Icons.Default.Person, onProfile, Modifier.weight(1f))
     }
 }
 
@@ -388,28 +368,21 @@ private fun BottomTab(
     label: String,
     icon: ImageVector,
     onClick: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val on = selected == index
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier
-            .clip(RoundedCornerShape(16.dp))
+        verticalArrangement = Arrangement.Center,
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(if (on) CqAccent.copy(alpha = 0.18f) else androidx.compose.ui.graphics.Color.Transparent)
             .clickable(onClick = onClick)
-            .padding(horizontal = 22.dp, vertical = 8.dp),
+            .padding(vertical = 8.dp),
     ) {
-        Icon(
-            icon,
-            contentDescription = label,
-            tint = if (on) CqAccent else CqMuted,
-            modifier = Modifier.size(32.dp),
-        )
-        Spacer(Modifier.height(6.dp))
-        Text(
-            label,
-            color = if (on) CqAccent else CqMuted,
-            fontSize = 13.sp,
-            style = MaterialTheme.typography.labelSmall,
-        )
+        Icon(icon, label, tint = if (on) CqAccent else CqMuted, modifier = Modifier.size(26.dp))
+        Spacer(Modifier.height(2.dp))
+        Text(label, color = if (on) CqAccent else CqMuted, fontSize = 12.sp)
     }
 }
 

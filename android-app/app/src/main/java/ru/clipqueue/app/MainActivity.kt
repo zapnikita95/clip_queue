@@ -26,6 +26,7 @@ import ru.clipqueue.app.ui.screens.AuthScreen
 import ru.clipqueue.app.ui.screens.FolderDetailScreen
 import ru.clipqueue.app.ui.screens.FoldersScreen
 import ru.clipqueue.app.ui.screens.HomeScreen
+import ru.clipqueue.app.ui.screens.OnboardingScreen
 import ru.clipqueue.app.ui.screens.ProfileScreen
 import ru.clipqueue.app.ui.screens.SaveHistoryScreen
 import ru.clipqueue.app.ui.screens.VideoDetailScreen
@@ -92,6 +93,12 @@ private fun ClipQueueNav(
 
     if (!loggedIn) {
         AuthScreen(api, session) { loggedIn = true }
+        return
+    }
+
+    var needOnboard by remember { mutableStateOf(!session.onboardingDone) }
+    if (needOnboard) {
+        OnboardingScreen(api, session) { needOnboard = false }
         return
     }
 

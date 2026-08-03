@@ -117,5 +117,28 @@ class ApiClient(private val session: SessionStore) {
     suspend fun saveHistory(limit: Int = 40): SaveHistoryResponse =
         get("/api/saves/history?limit=$limit")
 
+    suspend fun library(
+        status: String = "queue",
+        tagId: Int? = null,
+        kind: String = "all",
+        limit: Int = 60,
+    ): RailResponse {
+        val qs = buildString {
+            append("status=$status&kind=$kind&limit=$limit")
+            if (tagId != null && tagId > 0) append("&tag_id=$tagId")
+        }
+        return get("/api/library?$qs")
+    }
+
+    suspend fun startClassifyPending(limit: Int = 200): OkResponse =
+        post("/api/organize/classify-pending", mapOf("limit" to limit, "use_llm" to true))
+
+    suspend fun uploadTakeout(jsonBody: String): OkResponse {
+        return client.post("/api/youtube/takeout") {
+            authHeaders().forEach { (k, v) -> header(k, v) }
+            setBody(io.ktor.http.content.TextContent(jsonBody, ContentType.Application.Json))
+        }.body()
+    }
+
     fun googleStartUrl(): String = "$baseUrl/api/auth/google/start?client=android"
 }

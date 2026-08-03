@@ -41,6 +41,13 @@ class SessionStore(context: Context) {
 
     val isLoggedIn: Boolean get() = !token.isNullOrBlank()
 
+    var onboardingDone: Boolean
+        get() = prefs.getBoolean(KEY_ONBOARD, false) || mirror.getBoolean(KEY_ONBOARD, false)
+        set(value) {
+            prefs.edit { putBoolean(KEY_ONBOARD, value) }
+            mirror.edit { putBoolean(KEY_ONBOARD, value) }
+        }
+
     fun clear() {
         prefs.edit { clear() }
         mirror.edit { clear() }
@@ -49,6 +56,7 @@ class SessionStore(context: Context) {
     companion object {
         const val KEY_TOKEN = "token"
         const val KEY_EMAIL = "email"
+        const val KEY_ONBOARD = "onboarding_done"
 
         fun readMirrorToken(context: Context): String? =
             context.applicationContext

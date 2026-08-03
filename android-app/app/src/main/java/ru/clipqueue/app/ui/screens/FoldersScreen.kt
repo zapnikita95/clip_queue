@@ -37,14 +37,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
 import ru.clipqueue.app.ApiClient
 import ru.clipqueue.app.data.ListCard
+import ru.clipqueue.app.data.TagDto
 import ru.clipqueue.app.data.VideoCard
 import ru.clipqueue.app.ui.components.BottomBar
 import ru.clipqueue.app.ui.components.FilterChip
+import ru.clipqueue.app.ui.components.FolderGrid
+import ru.clipqueue.app.ui.components.TagChip
 import ru.clipqueue.app.ui.components.VideoListRow
 import ru.clipqueue.app.ui.components.VideoRail
 import ru.clipqueue.app.ui.rememberVideoActions
@@ -68,6 +68,9 @@ fun FoldersScreen(
 ) {
     var loading by remember { mutableStateOf(true) }
     var folders by remember { mutableStateOf<List<ListCard>>(emptyList()) }
+    var tags by remember { mutableStateOf<List<TagDto>>(emptyList()) }
+    var selectedTagId by remember { mutableStateOf<Int?>(null) }
+    var taggedVideos by remember { mutableStateOf<List<VideoCard>>(emptyList()) }
     var error by remember { mutableStateOf<String?>(null) }
     var query by remember { mutableStateOf("") }
     var sort by remember { mutableStateOf(FolderSort.Count) }
@@ -76,26 +79,13 @@ fun FoldersScreen(
     val cache = remember { mutableStateMapOf<Int, List<VideoCard>>() }
     val loadingIds = remember { mutableStateMapOf<Int, Boolean>() }
 
+    // Fast: show folder list immediately (covers already in /api/lists). Details on expand only.
     LaunchedEffect(Unit) {
         loading = true
         error = null
         try {
             folders = api.lists().lists.orEmpty()
-            // Prefetch top folders in parallel for smooth expand
-            val top = folders.sortedByDescending { it.count ?: 0 }.take(6)
-            coroutineScope {
-                top.mapNotNull { f ->
-                    val id = f.id ?: return@mapNotNull null
-                    async {
-                        if (cache.containsKey(id)) return@async
-                        loadingIds[id] = true
-                        val items = runCatching { api.listDetail(id).items.orEmpty() }.getOrDefault(emptyList())
-                        cache[id] = items
-                        loadingIds[id] = false
-                    }
-                }.awaitAll()
-            }
-            expanded = top.mapNotNull { it.id }.toSet()
+            tags = runCatching { api.tags().tags.orEmpty() }.getOrDefault(emptyList())
         } catch (e: Exception) {
             error = e.message
         } finally {
@@ -103,10 +93,13 @@ fun FoldersScreen(
         }
     }
 
-    fun ensureLoaded(id: Int) {
-        if (cache.containsKey(id) || loadingIds[id] == true) return
-        loadingIds[id] = true
-        // fire-and-forget via LaunchedEffect pattern - use rememberCoroutineScope outside
+    LaunchedEffect(selectedTagId) {
+        val tid = selectedTagId ?: run {
+            taggedVideos = emptyList()
+            return@LaunchedEffect
+        }
+        taggedVideos = runCatching { api.library(tagId = tid, kind = "all", limit = 80).items.orEmpty() }
+            .getOrDefault(emptyList())
     }
 
     val visible = remember(folders, query, sort, minCount) {
@@ -124,54 +117,83 @@ fun FoldersScreen(
         }
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(CqBg)
-            .padding(horizontal = 20.dp),
-    ) {
-        Spacer(Modifier.height(18.dp))
-        Text("Папки", style = MaterialTheme.typography.titleLarge)
-        Text("карусели · фильтры · без лишних тапов", style = MaterialTheme.typography.bodySmall, color = CqMuted)
-        Spacer(Modifier.height(10.dp))
-
-        OutlinedTextField(
-            value = query,
-            onValueChange = { query = it },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
-            placeholder = { Text("Найти папку") },
-            shape = RoundedCornerShape(12.dp),
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedBorderColor = CqAccent,
-                unfocusedBorderColor = CqBorder,
-                focusedTextColor = CqText,
-                unfocusedTextColor = CqText,
-                cursorColor = CqAccent,
-            ),
-        )
-        Spacer(Modifier.height(8.dp))
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            item { FilterChip("По числу", sort == FolderSort.Count) { sort = FolderSort.Count } }
-            item { FilterChip("А–Я", sort == FolderSort.Name) { sort = FolderSort.Name } }
-            item { FilterChip("С видео", minCount == 1) { minCount = if (minCount == 1) 0 else 1 } }
-            item { FilterChip("Пустые внизу", sort == FolderSort.EmptyLast) { sort = FolderSort.EmptyLast } }
+    Column(modifier = Modifier.fillMaxSize().background(CqBg)) {
+        Column(modifier = Modifier.padding(horizontal = 12.dp)) {
+            Spacer(Modifier.height(14.dp))
+            Text("Папки", style = MaterialTheme.typography.titleLarge)
+            Text("сетка · теги · детали по тапу", style = MaterialTheme.typography.bodySmall, color = CqMuted)
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                placeholder = { Text("Найти папку") },
+                shape = RoundedCornerShape(12.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = CqAccent,
+                    unfocusedBorderColor = CqBorder,
+                    focusedTextColor = CqText,
+                    unfocusedTextColor = CqText,
+                    cursorColor = CqAccent,
+                ),
+            )
+            Spacer(Modifier.height(8.dp))
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                item { FilterChip("По числу", sort == FolderSort.Count) { sort = FolderSort.Count } }
+                item { FilterChip("А–Я", sort == FolderSort.Name) { sort = FolderSort.Name } }
+                item { FilterChip("С видео", minCount == 1) { minCount = if (minCount == 1) 0 else 1 } }
+            }
+            if (tags.isNotEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                Text("Фильтр по тегам", style = MaterialTheme.typography.labelSmall, color = CqMuted)
+                Spacer(Modifier.height(6.dp))
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    item { TagChip("Все", selectedTagId == null) { selectedTagId = null } }
+                    items(tags, key = { it.id ?: 0 }) { t ->
+                        val label = listOfNotNull(t.emoji?.takeIf { it.isNotBlank() }, t.name).joinToString(" ")
+                        TagChip(label, selectedTagId == t.id) {
+                            selectedTagId = if (selectedTagId == t.id) null else t.id
+                        }
+                    }
+                }
+            }
         }
 
         when {
             loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator(color = CqAccent)
             }
-            error != null -> Text(error.orEmpty(), color = CqAccent)
+            error != null -> Text(error.orEmpty(), color = CqAccent, modifier = Modifier.padding(12.dp))
+            selectedTagId != null -> {
+                val tagActions = rememberVideoActions(api, onOpenVideo)
+                LazyColumn(modifier = Modifier.weight(1f), contentPadding = PaddingValues(vertical = 8.dp)) {
+                    item {
+                        Text(
+                            "${taggedVideos.size} видео с тегом",
+                            color = CqMuted,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                        )
+                    }
+                    if (taggedVideos.isEmpty()) {
+                        item { Text("Пусто", color = CqMuted, modifier = Modifier.padding(12.dp)) }
+                    } else {
+                        items(taggedVideos, key = { it.video_id.orEmpty() }) { card ->
+                            VideoListRow(card) { c, a -> tagActions.handle(c, a) }
+                        }
+                    }
+                }
+            }
             visible.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text("Ничего не найдено", color = CqMuted)
             }
             else -> LazyColumn(
                 modifier = Modifier.weight(1f),
-                contentPadding = PaddingValues(vertical = 12.dp),
+                contentPadding = PaddingValues(vertical = 10.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                items(visible, key = { it.id ?: 0 }) { folder ->
+                item { FolderGrid(visible.take(4), onOpenFolder) }
+                items(visible.drop(4), key = { it.id ?: 0 }) { folder ->
                     FolderExpandRow(
                         api = api,
                         folder = folder,
@@ -210,9 +232,7 @@ private fun FolderExpandRow(
     onOpenVideo: (String) -> Unit,
 ) {
     val id = folder.id ?: return
-    val actions = rememberVideoActions(api, onOpenVideo) { vid ->
-        // local remove from cached rail handled by parent if needed
-    }
+    val actions = rememberVideoActions(api, onOpenVideo)
 
     LaunchedEffect(expanded, id) {
         if (expanded && items == null && !isLoadingItems) {
@@ -225,14 +245,13 @@ private fun FolderExpandRow(
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .padding(horizontal = 12.dp)
             .background(CqElev, RoundedCornerShape(14.dp))
             .border(1.dp, CqBorder, RoundedCornerShape(14.dp))
-            .padding(14.dp),
+            .padding(12.dp),
     ) {
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable { onToggle(id) },
+            modifier = Modifier.fillMaxWidth().clickable { onToggle(id) },
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -240,29 +259,16 @@ private fun FolderExpandRow(
                 Text(folder.title.orEmpty(), style = MaterialTheme.typography.titleMedium)
                 Text("${folder.count ?: 0} видео", color = CqMuted, style = MaterialTheme.typography.bodySmall)
             }
-            Text(
-                if (expanded) "свернуть" else "открыть",
-                color = CqAccent,
-                style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier
-                    .clickable { onOpenFolder(folder) }
-                    .padding(8.dp),
-            )
+            Text("открыть", color = CqAccent, style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.clickable { onOpenFolder(folder) }.padding(8.dp))
             Text(if (expanded) "▾" else "▸", color = CqMuted)
         }
-        AnimatedVisibility(
-            visible = expanded,
-            enter = fadeIn() + expandVertically(),
-            exit = fadeOut() + shrinkVertically(),
-        ) {
+        AnimatedVisibility(visible = expanded, enter = fadeIn() + expandVertically(), exit = fadeOut() + shrinkVertically()) {
             Column {
-                Spacer(Modifier.height(10.dp))
+                Spacer(Modifier.height(8.dp))
                 when {
-                    isLoadingItems || items == null -> {
-                        Box(
-                            Modifier.fillMaxWidth().height(80.dp),
-                            contentAlignment = Alignment.Center,
-                        ) { CircularProgressIndicator(color = CqAccent, strokeWidth = 2.dp) }
+                    isLoadingItems || items == null -> Box(Modifier.fillMaxWidth().height(72.dp), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(color = CqAccent, strokeWidth = 2.dp, modifier = Modifier.height(28.dp))
                     }
                     items.isEmpty() -> Text("Пусто", color = CqMuted)
                     else -> VideoRail(items.take(24)) { card, act -> actions.handle(card, act) }
@@ -286,12 +292,10 @@ fun FolderDetailScreen(
     var sortAlpha by remember { mutableStateOf(false) }
     var hideShorts by remember { mutableStateOf(true) }
     var q by remember { mutableStateOf("") }
+    var tags by remember { mutableStateOf<List<TagDto>>(emptyList()) }
+    var selectedTagId by remember { mutableStateOf<Int?>(null) }
 
-    val actions = rememberVideoActions(
-        api = api,
-        onOpenVideo = onOpenVideo,
-        onRemoved = { id -> items = items.filterNot { it.video_id == id } },
-    )
+    val actions = rememberVideoActions(api, onOpenVideo) { id -> items = items.filterNot { it.video_id == id } }
 
     LaunchedEffect(folder.id) {
         val id = folder.id ?: return@LaunchedEffect
@@ -300,6 +304,7 @@ fun FolderDetailScreen(
             val r = api.listDetail(id)
             title = r.list?.title ?: title
             items = r.items.orEmpty()
+            tags = runCatching { api.tags().tags.orEmpty() }.getOrDefault(emptyList())
         } catch (_: Exception) {
         } finally {
             loading = false
@@ -311,7 +316,7 @@ fun FolderDetailScreen(
         return sec != null && sec > 0 && sec <= 180
     }
 
-    val filtered = remember(items, statusFilter, sortAlpha, hideShorts, q) {
+    val filtered = remember(items, statusFilter, sortAlpha, hideShorts, q, selectedTagId) {
         var list = items
         if (hideShorts) list = list.filterNot { isShort(it) }
         list = when (statusFilter) {
@@ -320,65 +325,57 @@ fun FolderDetailScreen(
             VideoStatusFilter.InProgress -> list.filter { it.status == "in_progress" }
             VideoStatusFilter.Watched -> list.filter { it.status == "watched" }
         }
+        if (selectedTagId != null) {
+            list = list.filter { card -> card.user_tags.orEmpty().any { it.id == selectedTagId } }
+        }
         if (q.isNotBlank()) {
             val qq = q.trim().lowercase()
-            list = list.filter {
-                "${it.title} ${it.channel_title}".lowercase().contains(qq)
-            }
+            list = list.filter { "${it.title} ${it.channel_title}".lowercase().contains(qq) }
         }
         if (sortAlpha) list.sortedBy { it.title.orEmpty().lowercase() } else list
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(CqBg)
-            .padding(horizontal = 20.dp),
-    ) {
-        Spacer(Modifier.height(18.dp))
-        Text(
-            "← все папки",
-            color = CqMuted,
-            style = MaterialTheme.typography.bodySmall,
-            modifier = Modifier.clickable(onClick = onBack),
-        )
-        Spacer(Modifier.height(6.dp))
-        Text(title, style = MaterialTheme.typography.titleLarge)
-        Text("${filtered.size} / ${items.size}", style = MaterialTheme.typography.bodySmall, color = CqMuted)
-        Spacer(Modifier.height(8.dp))
-        OutlinedTextField(
-            value = q,
-            onValueChange = { q = it },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
-            placeholder = { Text("Поиск в папке") },
-            shape = RoundedCornerShape(12.dp),
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedBorderColor = CqAccent,
-                unfocusedBorderColor = CqBorder,
-                focusedTextColor = CqText,
-                unfocusedTextColor = CqText,
-                cursorColor = CqAccent,
-            ),
-        )
-        Spacer(Modifier.height(8.dp))
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            item { FilterChip("Все", statusFilter == VideoStatusFilter.All) { statusFilter = VideoStatusFilter.All } }
-            item { FilterChip("Очередь", statusFilter == VideoStatusFilter.Queue) { statusFilter = VideoStatusFilter.Queue } }
-            item { FilterChip("Начатые", statusFilter == VideoStatusFilter.InProgress) { statusFilter = VideoStatusFilter.InProgress } }
-            item { FilterChip("Просмотренные", statusFilter == VideoStatusFilter.Watched) { statusFilter = VideoStatusFilter.Watched } }
-            item { FilterChip(if (hideShorts) "Без шортов" else "Со шортами", hideShorts) { hideShorts = !hideShorts } }
-            item { FilterChip(if (sortAlpha) "А–Я" else "Как в папке", sortAlpha) { sortAlpha = !sortAlpha } }
+    Column(modifier = Modifier.fillMaxSize().background(CqBg)) {
+        Column(modifier = Modifier.padding(horizontal = 12.dp)) {
+            Spacer(Modifier.height(14.dp))
+            Text("← все папки", color = CqMuted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.clickable(onClick = onBack))
+            Spacer(Modifier.height(6.dp))
+            Text(title, style = MaterialTheme.typography.titleLarge)
+            Text("${filtered.size} / ${items.size}", style = MaterialTheme.typography.bodySmall, color = CqMuted)
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(
+                value = q, onValueChange = { q = it }, modifier = Modifier.fillMaxWidth(), singleLine = true,
+                placeholder = { Text("Поиск в папке") }, shape = RoundedCornerShape(12.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = CqAccent, unfocusedBorderColor = CqBorder,
+                    focusedTextColor = CqText, unfocusedTextColor = CqText, cursorColor = CqAccent,
+                ),
+            )
+            Spacer(Modifier.height(8.dp))
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                item { FilterChip("Все", statusFilter == VideoStatusFilter.All) { statusFilter = VideoStatusFilter.All } }
+                item { FilterChip("Очередь", statusFilter == VideoStatusFilter.Queue) { statusFilter = VideoStatusFilter.Queue } }
+                item { FilterChip("Начатые", statusFilter == VideoStatusFilter.InProgress) { statusFilter = VideoStatusFilter.InProgress } }
+                item { FilterChip("Просмотренные", statusFilter == VideoStatusFilter.Watched) { statusFilter = VideoStatusFilter.Watched } }
+                item { FilterChip(if (hideShorts) "Без шортов" else "Со шортами", hideShorts) { hideShorts = !hideShorts } }
+            }
+            if (tags.isNotEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    item { TagChip("Все теги", selectedTagId == null) { selectedTagId = null } }
+                    items(tags, key = { it.id ?: 0 }) { t ->
+                        val label = listOfNotNull(t.emoji?.takeIf { it.isNotBlank() }, t.name).joinToString(" ")
+                        TagChip(label, selectedTagId == t.id) {
+                            selectedTagId = if (selectedTagId == t.id) null else t.id
+                        }
+                    }
+                }
+            }
         }
-
         when {
-            loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(color = CqAccent)
-            }
-            filtered.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("Ничего по фильтру", color = CqMuted)
-            }
-            else -> LazyColumn(modifier = Modifier.weight(1f), contentPadding = PaddingValues(top = 8.dp)) {
+            loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = CqAccent) }
+            filtered.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Ничего по фильтру", color = CqMuted) }
+            else -> LazyColumn(modifier = Modifier.weight(1f), contentPadding = PaddingValues(top = 8.dp, bottom = 16.dp)) {
                 items(filtered, key = { it.video_id.orEmpty() }) { card ->
                     VideoListRow(card) { c, a -> actions.handle(c, a) }
                 }

@@ -13,12 +13,15 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -27,16 +30,21 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import ru.clipqueue.app.ApiClient
 import ru.clipqueue.app.data.ListCard
+import ru.clipqueue.app.data.TagDto
 import ru.clipqueue.app.data.VideoCard
 import ru.clipqueue.app.ui.components.BottomBar
-import ru.clipqueue.app.ui.components.FolderCarousel
+import ru.clipqueue.app.ui.components.FolderGrid
 import ru.clipqueue.app.ui.components.SectionLabel
+import ru.clipqueue.app.ui.components.TagChip
 import ru.clipqueue.app.ui.components.VideoRail
 import ru.clipqueue.app.ui.rememberVideoActions
 import ru.clipqueue.app.ui.theme.CqAccent
@@ -59,6 +67,9 @@ fun HomeScreen(
     var vibe by remember { mutableStateOf<List<VideoCard>>(emptyList()) }
     var fromPlaylists by remember { mutableStateOf<List<VideoCard>>(emptyList()) }
     var topFolders by remember { mutableStateOf<List<ListCard>>(emptyList()) }
+    var tags by remember { mutableStateOf<List<TagDto>>(emptyList()) }
+    var selectedTagId by remember { mutableStateOf<Int?>(null) }
+    var taggedVideos by remember { mutableStateOf<List<VideoCard>>(emptyList()) }
     val scope = rememberCoroutineScope()
 
     val actions = rememberVideoActions(
@@ -68,6 +79,7 @@ fun HomeScreen(
             recent = recent.filterNot { it.video_id == id }
             vibe = vibe.filterNot { it.video_id == id }
             fromPlaylists = fromPlaylists.filterNot { it.video_id == id }
+            taggedVideos = taggedVideos.filterNot { it.video_id == id }
         },
     )
 
@@ -81,12 +93,19 @@ fun HomeScreen(
                 val vibeDef = async { api.homeRail("continue_vibe") }
                 val plDef = async { api.homeRail("from_playlists") }
                 val listsDef = async { api.lists() }
+                val tagsDef = async { runCatching { api.tags() }.getOrNull() }
                 recent = recentDef.await().items.orEmpty()
                 vibe = vibeDef.await().items.orEmpty()
                 fromPlaylists = plDef.await().items.orEmpty()
                 topFolders = listsDef.await().lists.orEmpty()
                     .sortedByDescending { it.count ?: 0 }
                     .take(8)
+                tags = tagsDef.await()?.tags.orEmpty()
+            }
+            val tid = selectedTagId
+            if (tid != null) {
+                taggedVideos = runCatching { api.library(tagId = tid, kind = "all", limit = 40).items.orEmpty() }
+                    .getOrDefault(emptyList())
             }
         } catch (e: Exception) {
             error = e.message ?: "Не удалось загрузить"
@@ -97,25 +116,41 @@ fun HomeScreen(
     }
 
     LaunchedEffect(Unit) { loadHome(initial = true) }
+    LaunchedEffect(selectedTagId) {
+        val tid = selectedTagId
+        if (tid == null) {
+            taggedVideos = emptyList()
+        } else {
+            taggedVideos = runCatching { api.library(tagId = tid, kind = "all", limit = 40).items.orEmpty() }
+                .getOrDefault(emptyList())
+        }
+    }
+
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val obs = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                scope.launch { loadHome(initial = false) }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(obs)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
+    }
 
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(CqBg)
-            .padding(horizontal = 20.dp),
+        modifier = Modifier.fillMaxSize().background(CqBg),
     ) {
-        Spacer(Modifier.height(18.dp))
-        Text("Clip Queue", style = MaterialTheme.typography.titleLarge)
-        Text("потяни вниз, чтобы обновить", style = MaterialTheme.typography.bodySmall, color = CqMuted)
+        Column(modifier = Modifier.padding(horizontal = 12.dp)) {
+            Spacer(Modifier.height(14.dp))
+            Text("Clip Queue", style = MaterialTheme.typography.titleLarge)
+            Text("потяни вниз · share попадает в «Недавно»", style = MaterialTheme.typography.bodySmall, color = CqMuted)
+        }
 
         when {
             loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator(color = CqAccent)
             }
-            error != null && recent.isEmpty() && vibe.isEmpty() -> Box(
-                Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center,
-            ) {
+            error != null && recent.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(error.orEmpty(), color = CqAccent)
             }
             else -> PullToRefreshBox(
@@ -123,39 +158,56 @@ fun HomeScreen(
                 onRefresh = { scope.launch { loadHome(initial = false) } },
                 modifier = Modifier.weight(1f),
             ) {
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(bottom = 12.dp),
-                ) {
+                LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 8.dp)) {
+                    if (tags.isNotEmpty()) {
+                        item {
+                            SectionLabel("Теги", Modifier.padding(horizontal = 12.dp))
+                            LazyRow(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                contentPadding = PaddingValues(horizontal = 12.dp),
+                            ) {
+                                item {
+                                    TagChip("Все", selected = selectedTagId == null) { selectedTagId = null }
+                                }
+                                items(tags, key = { it.id ?: it.name.orEmpty() }) { t ->
+                                    val label = listOfNotNull(t.emoji?.takeIf { it.isNotBlank() }, t.name).joinToString(" ")
+                                    TagChip(label, selected = selectedTagId == t.id) {
+                                        selectedTagId = if (selectedTagId == t.id) null else t.id
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if (selectedTagId != null) {
+                        item {
+                            SectionLabel("По тегу", Modifier.padding(horizontal = 12.dp))
+                            if (taggedVideos.isEmpty()) Text("Нет видео с этим тегом", color = CqMuted, modifier = Modifier.padding(horizontal = 12.dp))
+                            else VideoRail(taggedVideos) { c, a -> actions.handle(c, a) }
+                        }
+                    }
                     item {
-                        SectionLabel("Недавно")
-                        if (recent.isEmpty()) Text("Пока пусто", color = CqMuted)
+                        SectionLabel("Недавно", Modifier.padding(horizontal = 12.dp))
+                        if (recent.isEmpty()) Text("Пока пусто", color = CqMuted, modifier = Modifier.padding(horizontal = 12.dp))
                         else VideoRail(recent) { c, a -> actions.handle(c, a) }
                     }
                     item {
-                        SectionLabel("Могут понравиться")
+                        SectionLabel("Могут понравиться", Modifier.padding(horizontal = 12.dp))
                         val recs = if (vibe.isNotEmpty()) vibe else fromPlaylists
-                        if (recs.isEmpty()) Text("Смотри ролики — появятся рекомендации", color = CqMuted)
+                        if (recs.isEmpty()) Text("Смотри ролики — появятся рекомендации", color = CqMuted, modifier = Modifier.padding(horizontal = 12.dp))
                         else VideoRail(recs) { c, a -> actions.handle(c, a) }
                     }
                     item {
                         Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(top = 18.dp, bottom = 10.dp),
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp).padding(top = 14.dp, bottom = 8.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Text("ТОП ПАПКИ", style = MaterialTheme.typography.labelSmall, color = CqMuted)
-                            Text(
-                                "все →",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = CqAccent,
-                                modifier = Modifier.clickable(onClick = onOpenFolders),
-                            )
+                            Text("все →", color = CqAccent, style = MaterialTheme.typography.bodySmall, modifier = Modifier.clickable(onClick = onOpenFolders))
                         }
-                        if (topFolders.isEmpty()) Text("Папок пока нет", color = CqMuted)
-                        else FolderCarousel(topFolders, onOpenFolder, onOpenFolders)
+                        if (topFolders.isEmpty()) Text("Папок пока нет", color = CqMuted, modifier = Modifier.padding(horizontal = 12.dp))
+                        else FolderGrid(topFolders, onOpenFolder)
+                        Spacer(Modifier.height(12.dp))
                     }
                 }
             }
