@@ -1,5 +1,6 @@
 package ru.clipqueue.app.ui.screens
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -29,8 +30,10 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import android.widget.Toast
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
@@ -43,7 +46,10 @@ import ru.clipqueue.app.data.VideoCard
 import ru.clipqueue.app.ui.MovePickerDialog
 import ru.clipqueue.app.ui.TagPickerDialog
 import ru.clipqueue.app.ui.components.BottomBar
+import ru.clipqueue.app.ui.components.EditableFolderGrid
 import ru.clipqueue.app.ui.components.FolderGrid
+import ru.clipqueue.app.ui.components.FolderRemoveDialog
+import ru.clipqueue.app.ui.components.FolderTrashZone
 import ru.clipqueue.app.ui.components.SectionLabel
 import ru.clipqueue.app.ui.components.TagChip
 import ru.clipqueue.app.ui.components.VideoRail
@@ -77,7 +83,17 @@ fun HomeScreen(
     var taggedFolders by remember { mutableStateOf<List<ListCard>>(emptyList()) }
     var tagCard by remember { mutableStateOf<VideoCard?>(null) }
     var moveCard by remember { mutableStateOf<VideoCard?>(null) }
+    var folderEdit by remember { mutableStateOf(false) }
+    var trashHot by remember { mutableStateOf(false) }
+    var trashBounds by remember { mutableStateOf<Rect?>(null) }
+    var removeTarget by remember { mutableStateOf<ListCard?>(null) }
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+
+    BackHandler(enabled = folderEdit) {
+        folderEdit = false
+        trashHot = false
+    }
 
     fun usedTags(list: List<TagDto>) = list.filter { (it.video_count ?: 0) > 0 }
 
@@ -96,7 +112,7 @@ fun HomeScreen(
                 val recentDef = async { api.homeRail("queue") }
                 val vibeDef = async { api.homeRail("continue_vibe") }
                 val plDef = async { api.homeRail("from_playlists") }
-                val listsDef = async { api.lists() }
+                val listsDef = async { api.lists(forHome = true) }
                 val tagsDef = async { runCatching { api.tags(onlyUsed = true) }.getOrNull() }
                 recent = recentDef.await().items.orEmpty()
                 vibe = vibeDef.await().items.orEmpty()
@@ -180,6 +196,44 @@ fun HomeScreen(
         })
     }
 
+    removeTarget?.let { folder ->
+        FolderRemoveDialog(
+            folder = folder,
+            onDismiss = { removeTarget = null },
+            onHideFromHome = {
+                val id = folder.id ?: return@FolderRemoveDialog
+                scope.launch {
+                    val r = runCatching { api.hideListFromHome(id, true) }.getOrNull()
+                    if (r?.ok == true) {
+                        topFolders = topFolders.filterNot { it.id == id }
+                        appCache.invalidateHome()
+                        appCache.invalidateFolders()
+                        Toast.makeText(context, "Скрыто", Toast.LENGTH_SHORT).show()
+                    } else {
+                        Toast.makeText(context, r?.error ?: "Ошибка", Toast.LENGTH_SHORT).show()
+                    }
+                    removeTarget = null
+                    folderEdit = false
+                }
+            },
+            onDeleteEverywhere = {
+                val id = folder.id ?: return@FolderRemoveDialog
+                scope.launch {
+                    val r = runCatching { api.deleteList(id) }.getOrNull()
+                    if (r?.ok == true) {
+                        topFolders = topFolders.filterNot { it.id == id }
+                        appCache.invalidateAll()
+                        Toast.makeText(context, "Удалено", Toast.LENGTH_SHORT).show()
+                    } else {
+                        Toast.makeText(context, r?.error ?: "Ошибка", Toast.LENGTH_SHORT).show()
+                    }
+                    removeTarget = null
+                    folderEdit = false
+                }
+            },
+        )
+    }
+
     Column(
         modifier = Modifier.fillMaxSize().background(CqBg),
     ) {
@@ -187,6 +241,15 @@ fun HomeScreen(
             Spacer(Modifier.height(14.dp))
             Text("Clip Queue", style = MaterialTheme.typography.titleLarge)
         }
+        FolderTrashZone(
+            editing = folderEdit,
+            hot = trashHot,
+            onBounds = { trashBounds = it },
+            onDone = {
+                folderEdit = false
+                trashHot = false
+            },
+        )
 
         when {
             loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -264,7 +327,15 @@ fun HomeScreen(
                                 Text("все →", color = CqAccent, style = MaterialTheme.typography.bodySmall, modifier = Modifier.clickable(onClick = onOpenFolders))
                             }
                             if (topFolders.isEmpty()) Text("Пусто", color = CqMuted, modifier = Modifier.padding(horizontal = 12.dp))
-                            else FolderGrid(topFolders, onOpenFolder)
+                            else EditableFolderGrid(
+                                folders = topFolders,
+                                editing = folderEdit,
+                                trashBounds = trashBounds,
+                                onOpenFolder = onOpenFolder,
+                                onEnterEdit = { folderEdit = true },
+                                onDragHotChange = { trashHot = it },
+                                onDropOnTrash = { removeTarget = it },
+                            )
                             Spacer(Modifier.height(12.dp))
                         }
                     }

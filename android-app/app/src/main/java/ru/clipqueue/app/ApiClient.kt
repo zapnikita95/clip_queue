@@ -80,8 +80,13 @@ class ApiClient(private val session: SessionStore) {
 
     suspend fun homeRail(railId: String): RailResponse = get("/api/home/rails/$railId")
 
-    suspend fun lists(tagId: Int? = null): ListsResponse {
-        val qs = if (tagId != null && tagId > 0) "?tag_id=$tagId" else ""
+    suspend fun lists(tagId: Int? = null, forHome: Boolean = false): ListsResponse {
+        val qs = buildString {
+            val parts = mutableListOf<String>()
+            if (tagId != null && tagId > 0) parts += "tag_id=$tagId"
+            if (forHome) parts += "for_home=1"
+            if (parts.isNotEmpty()) append("?").append(parts.joinToString("&"))
+        }
         return get("/api/lists$qs")
     }
 
@@ -89,6 +94,17 @@ class ApiClient(private val session: SessionStore) {
 
     suspend fun createList(title: String): CreateListResponse =
         post("/api/lists", mapOf("title" to title))
+
+    suspend fun patchList(listId: Int, body: Map<String, Any?>): OkResponse =
+        patch("/api/lists/$listId", body)
+
+    suspend fun deleteList(listId: Int): OkResponse =
+        client.delete("/api/lists/$listId") {
+            authHeaders().forEach { (k, v) -> header(k, v) }
+        }.body()
+
+    suspend fun hideListFromHome(listId: Int, hidden: Boolean = true): OkResponse =
+        patchList(listId, mapOf("hidden_from_home" to hidden))
 
     suspend fun video(videoId: String): VideoDetailResponse =
         get("/api/videos/${java.net.URLEncoder.encode(videoId, "UTF-8")}")

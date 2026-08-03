@@ -130,6 +130,7 @@ data class ListCard(
     val title: String? = null,
     val count: Int? = null,
     val covers: List<CoverDto>? = null,
+    val hidden_from_home: Boolean? = null,
 )
 
 data class ListDetailResponse(

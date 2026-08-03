@@ -420,6 +420,7 @@ def _migrate_columns() -> None:
         "ALTER TABLE subscriptions ADD COLUMN thumb_url TEXT NOT NULL DEFAULT ''",
         "ALTER TABLE library_items ADD COLUMN interest INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE lists ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 1000",
+        "ALTER TABLE lists ADD COLUMN hidden_from_home INTEGER NOT NULL DEFAULT 0",
     ]
     for stmt in alters:
         try:

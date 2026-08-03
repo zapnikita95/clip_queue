@@ -2074,6 +2074,7 @@ def create_app() -> Flask:
     @require_auth
     def get_lists():
         uid = current_user()["user_id"]
+        for_home = (request.args.get("for_home") or "").strip() in ("1", "true", "yes")
         try:
             tag_id = int(request.args.get("tag_id") or 0)
         except ValueError:
@@ -2092,11 +2093,14 @@ def create_app() -> Flask:
             )
         else:
             rows = db.fetchall(
-                "SELECT * FROM lists WHERE user_id = ? ORDER BY created_at DESC",
+                "SELECT * FROM lists WHERE user_id = ? ORDER BY COALESCE(sort_order, 1000) ASC, created_at DESC",
                 (uid,),
             )
         out = []
         for r in rows:
+            hidden = int(r.get("hidden_from_home") or 0) != 0
+            if for_home and hidden:
+                continue
             cnt = db.fetchone(
                 "SELECT COUNT(*) AS c FROM list_items WHERE list_id = ?",
                 (r["id"],)
@@ -2120,6 +2124,7 @@ def create_app() -> Flask:
                     "title": r["title"],
                     "created_at": str(r.get("created_at") or ""),
                     "count": int((cnt or {}).get("c") or 0),
+                    "hidden_from_home": hidden,
                     "covers": [
                         {
                             "thumb_url": c.get("thumb_url") or yt.thumb_url(c["video_id"]),
@@ -2130,6 +2135,59 @@ def create_app() -> Flask:
                 }
             )
         return jsonify({"ok": True, "lists": out})
+
+    @app.patch("/api/lists/<int:list_id>")
+    @require_auth
+    def patch_list(list_id: int):
+        uid = current_user()["user_id"]
+        lst = db.fetchone(
+            "SELECT * FROM lists WHERE id = ? AND user_id = ?",
+            (list_id, uid),
+        )
+        if not lst:
+            return json_error("Список не найден", 404)
+        body = request.get_json(silent=True) or {}
+        if "title" in body:
+            title = (body.get("title") or "").strip()[:120]
+            if title:
+                db.execute(
+                    "UPDATE lists SET title = ? WHERE id = ? AND user_id = ?",
+                    (title, list_id, uid),
+                )
+        if "hidden_from_home" in body:
+            hidden = 1 if body.get("hidden_from_home") in (True, 1, "1", "true", "yes") else 0
+            db.execute(
+                "UPDATE lists SET hidden_from_home = ? WHERE id = ? AND user_id = ?",
+                (hidden, list_id, uid),
+            )
+        row = db.fetchone(
+            "SELECT * FROM lists WHERE id = ? AND user_id = ?",
+            (list_id, uid),
+        )
+        return jsonify(
+            {
+                "ok": True,
+                "list": {
+                    "id": row["id"],
+                    "title": row.get("title"),
+                    "hidden_from_home": int(row.get("hidden_from_home") or 0) != 0,
+                },
+            }
+        )
+
+    @app.delete("/api/lists/<int:list_id>")
+    @require_auth
+    def delete_list(list_id: int):
+        uid = current_user()["user_id"]
+        lst = db.fetchone(
+            "SELECT id FROM lists WHERE id = ? AND user_id = ?",
+            (list_id, uid),
+        )
+        if not lst:
+            return json_error("Список не найден", 404)
+        db.execute("DELETE FROM list_items WHERE list_id = ?", (list_id,))
+        db.execute("DELETE FROM lists WHERE id = ? AND user_id = ?", (list_id, uid))
+        return jsonify({"ok": True})
 
     @app.post("/api/lists")
     @require_auth
