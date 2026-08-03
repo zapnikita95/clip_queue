@@ -113,7 +113,7 @@ fun VideoDetailScreen(
                                 model = v.thumb_url,
                                 contentDescription = null,
                                 contentScale = ContentScale.Crop,
-                                modifier = Modifier.matchParentSize(),
+                                modifier = Modifier.fillMaxSize(),
                             )
                         }
                     }
@@ -124,6 +124,28 @@ fun VideoDetailScreen(
                         style = MaterialTheme.typography.bodySmall,
                         color = CqMuted,
                     )
+                    val folderNames = v.in_lists.orEmpty().mapNotNull { it.title?.takeIf { t -> t.isNotBlank() } }
+                    val tagNames = v.user_tags.orEmpty().mapNotNull { t ->
+                        t.name?.takeIf { it.isNotBlank() }?.let { n ->
+                            listOfNotNull(t.emoji?.takeIf { it.isNotBlank() }, n).joinToString(" ")
+                        }
+                    }
+                    if (folderNames.isNotEmpty()) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "Папки: ${folderNames.joinToString(", ")}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = CqAccent,
+                        )
+                    }
+                    if (tagNames.isNotEmpty()) {
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "Теги: ${tagNames.joinToString(", ")}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = CqMuted,
+                        )
+                    }
                     Spacer(Modifier.height(16.dp))
                     Button(
                         onClick = {

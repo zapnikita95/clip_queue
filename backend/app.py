@@ -621,17 +621,87 @@ def create_app() -> Flask:
             matched = classify_meta.get("matched") or []
 
         item = _library_card(uid, vid)
+        classified_into = [
+            {"list_id": m["list_id"], "list_title": m.get("list_title")}
+            for m in matched
+        ]
+        in_lists = _lists_for_video(uid, vid)
+        tags = (item or {}).get("user_tags") or []
+        try:
+            _record_save_event(
+                uid,
+                vid,
+                source=source,
+                title=(meta.get("title") or ""),
+                channel_title=(meta.get("channel_title") or ""),
+                thumb_url=(meta.get("thumb_url") or yt.thumb_url(vid)),
+                classified_into=classified_into,
+                tags=tags,
+                lists=in_lists,
+                classify_engine=str(classify_meta.get("engine") or ""),
+                classify_reason=str(classify_meta.get("reason") or ""),
+            )
+        except Exception as e:
+            log.warning("save_event record failed: %s", e)
         return jsonify(
             {
                 "ok": True,
                 "item": item,
-                "classified_into": [
-                    {"list_id": m["list_id"], "list_title": m.get("list_title")}
-                    for m in matched
-                ],
+                "classified_into": classified_into,
+                "in_lists": in_lists,
+                "tags": tags,
                 "classify_engine": classify_meta.get("engine"),
                 "classify_reason": classify_meta.get("reason"),
             }
+        )
+
+    def _lists_for_video(uid: int, video_id: str) -> list[dict]:
+        rows = db.fetchall(
+            """
+            SELECT l.id, l.title
+            FROM list_items x
+            JOIN lists l ON l.id = x.list_id
+            WHERE x.video_id = ? AND l.user_id = ?
+            ORDER BY l.title
+            """,
+            (video_id, uid),
+        )
+        return [{"id": r["id"], "title": r.get("title") or ""} for r in rows]
+
+    def _record_save_event(
+        uid: int,
+        video_id: str,
+        *,
+        source: str,
+        title: str,
+        channel_title: str,
+        thumb_url: str,
+        classified_into: list,
+        tags: list,
+        lists: list,
+        classify_engine: str,
+        classify_reason: str,
+    ) -> None:
+        db.execute(
+            """
+            INSERT INTO save_events (
+              user_id, video_id, source, title, channel_title, thumb_url,
+              classified_json, tags_json, lists_json, classify_engine, classify_reason
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                uid,
+                video_id,
+                (source or "")[:40],
+                (title or "")[:300],
+                (channel_title or "")[:200],
+                (thumb_url or "")[:500],
+                json.dumps(classified_into, ensure_ascii=False),
+                json.dumps(tags, ensure_ascii=False),
+                json.dumps(lists, ensure_ascii=False),
+                (classify_engine or "")[:40],
+                (classify_reason or "")[:300],
+            ),
         )
 
     def _library_card(uid: int, video_id: str) -> dict | None:
@@ -664,8 +734,57 @@ def create_app() -> Flask:
                 "saved_at": str(row.get("saved_at") or ""),
                 "watched_at": str(row.get("watched_at") or "") or None,
                 "user_tags": tags,
+                "in_lists": _lists_for_video(uid, video_id),
             },
         )
+
+    @app.get("/api/saves/history")
+    @require_auth
+    def saves_history():
+        """Recent save + classify results for debug."""
+        uid = current_user()["user_id"]
+        limit = min(100, max(1, int(request.args.get("limit") or 40)))
+        try:
+            rows = db.fetchall(
+                """
+                SELECT * FROM save_events
+                WHERE user_id = ?
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?
+                """,
+                (uid, limit),
+            )
+        except Exception as e:
+            log.warning("save_events query failed (table missing?): %s", e)
+            rows = []
+        events = []
+        for r in rows:
+            def _parse(key: str):
+                raw = r.get(key) or "[]"
+                if isinstance(raw, (list, dict)):
+                    return raw
+                try:
+                    return json.loads(raw)
+                except Exception:
+                    return []
+
+            events.append(
+                {
+                    "id": r.get("id"),
+                    "video_id": r.get("video_id"),
+                    "title": r.get("title") or "",
+                    "channel_title": r.get("channel_title") or "",
+                    "thumb_url": r.get("thumb_url") or "",
+                    "source": r.get("source") or "",
+                    "classified_into": _parse("classified_json"),
+                    "tags": _parse("tags_json"),
+                    "in_lists": _parse("lists_json"),
+                    "classify_engine": r.get("classify_engine") or "",
+                    "classify_reason": r.get("classify_reason") or "",
+                    "created_at": str(r.get("created_at") or ""),
+                }
+            )
+        return jsonify({"ok": True, "events": events})
 
     def _ensure_tag_on_item(uid: int, video_id: str, name: str, emoji: str = "") -> dict:
         name = (name or "").strip()[:60]
@@ -1073,6 +1192,8 @@ def create_app() -> Flask:
             if not row:
                 return json_error("Не найдено", 404)
             item = yt.card_from_video_row(row)
+            item["in_lists"] = []
+            item["user_tags"] = []
         return jsonify({"ok": True, "item": item})
 
     @app.get("/api/videos/<video_id>/similar")

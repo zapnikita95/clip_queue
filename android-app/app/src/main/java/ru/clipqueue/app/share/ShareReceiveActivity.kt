@@ -4,20 +4,28 @@ import android.app.Activity
 import android.content.Intent
 import android.os.Bundle
 import android.widget.Toast
+import org.json.JSONArray
 import org.json.JSONObject
 import ru.clipqueue.app.BuildConfig
 import ru.clipqueue.app.MainActivity
 import ru.clipqueue.app.R
+import ru.clipqueue.app.SaveHistoryStore
 import ru.clipqueue.app.SessionStore
+import ru.clipqueue.app.data.ClassifiedInto
+import ru.clipqueue.app.data.ListRef
+import ru.clipqueue.app.data.SaveEvent
+import ru.clipqueue.app.data.TagDto
 import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
 import java.net.URL
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import java.util.concurrent.Executors
 import java.util.regex.Pattern
 
 /**
- * Headless share target: save YouTube URL on backend, toast, finish.
- * Does not launch Compose UI.
+ * Headless share target: save YouTube URL on backend, toast with folders, finish.
  */
 class ShareReceiveActivity : Activity() {
     private val executor = Executors.newSingleThreadExecutor()
@@ -45,14 +53,14 @@ class ShareReceiveActivity : Activity() {
 
         val url = extractYoutubeUrl(text)
         if (url == null) {
-            toast(R.string.share_no_url)
+            toast(getString(R.string.share_no_url))
             finish()
             return
         }
 
         val token = SessionStore.readMirrorToken(this)
         if (token.isNullOrBlank()) {
-            toast(R.string.share_need_login)
+            toast(getString(R.string.share_need_login))
             startActivity(
                 Intent(this, MainActivity::class.java).apply {
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
@@ -63,25 +71,42 @@ class ShareReceiveActivity : Activity() {
         }
 
         executor.execute {
-            val ok = saveOnBackend(token, url)
+            val result = saveOnBackend(token, url)
             runOnUiThread {
-                toast(if (ok) R.string.share_saved else R.string.share_error)
+                when {
+                    result == null -> toast(getString(R.string.share_error))
+                    else -> {
+                        SaveHistoryStore(this).add(result)
+                        val folders = result.classified_into.orEmpty()
+                            .mapNotNull { it.list_title?.takeIf { t -> t.isNotBlank() } }
+                            .ifEmpty {
+                                result.in_lists.orEmpty().mapNotNull { it.title?.takeIf { t -> t.isNotBlank() } }
+                            }
+                        val msg = if (folders.isNotEmpty()) {
+                            getString(R.string.share_saved_folders, folders.joinToString(", "))
+                        } else {
+                            getString(R.string.share_saved_none)
+                        }
+                        val engine = result.classify_engine?.takeIf { it.isNotBlank() && it != "none" }
+                        toast(if (engine != null) "$msg · $engine" else msg)
+                    }
+                }
                 finish()
             }
         }
     }
 
-    private fun toast(res: Int) {
-        Toast.makeText(applicationContext, res, Toast.LENGTH_SHORT).show()
+    private fun toast(msg: String) {
+        Toast.makeText(applicationContext, msg, Toast.LENGTH_LONG).show()
     }
 
-    private fun saveOnBackend(token: String, videoUrl: String): Boolean {
+    private fun saveOnBackend(token: String, videoUrl: String): SaveEvent? {
         return try {
             val endpoint = URL("${BuildConfig.API_BASE.trimEnd('/')}/api/videos/save")
             val conn = (endpoint.openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
                 connectTimeout = 20_000
-                readTimeout = 30_000
+                readTimeout = 45_000
                 doOutput = true
                 setRequestProperty("Content-Type", "application/json; charset=utf-8")
                 setRequestProperty("Authorization", "Bearer $token")
@@ -96,12 +121,69 @@ class ShareReceiveActivity : Activity() {
             val code = conn.responseCode
             val stream = if (code in 200..299) conn.inputStream else conn.errorStream
             val raw = stream?.bufferedReader()?.readText().orEmpty()
-            if (code !in 200..299) return false
+            if (code !in 200..299) return null
             val json = JSONObject(if (raw.isBlank()) "{}" else raw)
-            json.optBoolean("ok", code in 200..299)
+            if (!json.optBoolean("ok", true)) return null
+            val item = json.optJSONObject("item")
+            val now = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
+            SaveEvent(
+                video_id = item?.optString("video_id")?.ifBlank { null }
+                    ?: extractIdFromUrl(videoUrl),
+                title = item?.optString("title"),
+                channel_title = item?.optString("channel_title"),
+                thumb_url = item?.optString("thumb_url"),
+                source = "android_share",
+                classified_into = parseClassified(json.optJSONArray("classified_into")),
+                in_lists = parseLists(json.optJSONArray("in_lists")),
+                tags = parseTags(json.optJSONArray("tags") ?: item?.optJSONArray("user_tags")),
+                classify_engine = json.optString("classify_engine"),
+                classify_reason = json.optString("classify_reason"),
+                created_at = now,
+            )
         } catch (_: Exception) {
-            false
+            null
         }
+    }
+
+    private fun parseClassified(arr: JSONArray?): List<ClassifiedInto> {
+        if (arr == null) return emptyList()
+        return (0 until arr.length()).map { i ->
+            val o = arr.getJSONObject(i)
+            ClassifiedInto(
+                list_id = if (o.has("list_id") && !o.isNull("list_id")) o.optInt("list_id") else null,
+                list_title = o.optString("list_title"),
+            )
+        }
+    }
+
+    private fun parseLists(arr: JSONArray?): List<ListRef> {
+        if (arr == null) return emptyList()
+        return (0 until arr.length()).map { i ->
+            val o = arr.getJSONObject(i)
+            ListRef(
+                id = if (o.has("id") && !o.isNull("id")) o.optInt("id") else null,
+                title = o.optString("title"),
+            )
+        }
+    }
+
+    private fun parseTags(arr: JSONArray?): List<TagDto> {
+        if (arr == null) return emptyList()
+        return (0 until arr.length()).map { i ->
+            val o = arr.getJSONObject(i)
+            TagDto(
+                id = if (o.has("id") && !o.isNull("id")) o.optInt("id") else null,
+                name = o.optString("name"),
+                emoji = o.optString("emoji"),
+            )
+        }
+    }
+
+    private fun extractIdFromUrl(url: String): String? {
+        val m = Pattern.compile("[?&]v=([a-zA-Z0-9_-]{11})|youtu\\.be/([a-zA-Z0-9_-]{11})|shorts/([a-zA-Z0-9_-]{11})")
+            .matcher(url)
+        if (!m.find()) return null
+        return m.group(1) ?: m.group(2) ?: m.group(3)
     }
 
     companion object {
@@ -114,7 +196,6 @@ class ShareReceiveActivity : Activity() {
             if (text.isBlank()) return null
             val m = YT.matcher(text)
             if (m.find()) return m.group(1)?.trim()?.trimEnd(')', ',', '.', '"', '\'')
-            // bare video id
             val id = Regex("^[a-zA-Z0-9_-]{11}$").find(text.trim())?.value
             return id?.let { "https://www.youtube.com/watch?v=$it" }
         }

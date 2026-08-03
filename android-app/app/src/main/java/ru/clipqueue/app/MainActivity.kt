@@ -14,6 +14,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Modifier
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -26,6 +27,7 @@ import ru.clipqueue.app.ui.screens.FolderDetailScreen
 import ru.clipqueue.app.ui.screens.FoldersScreen
 import ru.clipqueue.app.ui.screens.HomeScreen
 import ru.clipqueue.app.ui.screens.ProfileScreen
+import ru.clipqueue.app.ui.screens.SaveHistoryScreen
 import ru.clipqueue.app.ui.screens.VideoDetailScreen
 import ru.clipqueue.app.ui.theme.ClipQueueTheme
 import ru.clipqueue.app.ui.theme.CqBg
@@ -170,7 +172,17 @@ private fun ClipQueueNav(
                     }
                 },
                 onFolders = { nav.navigate("folders") },
+                onOpenHistory = { nav.navigate("saves") },
                 onLoggedOut = { loggedIn = false },
+            )
+        }
+        composable("saves") {
+            val app = LocalContext.current.applicationContext as ClipQueueApp
+            SaveHistoryScreen(
+                api = api,
+                localStore = app.saveHistory,
+                onBack = { nav.popBackStack() },
+                onOpenVideo = ::openVideo,
             )
         }
     }

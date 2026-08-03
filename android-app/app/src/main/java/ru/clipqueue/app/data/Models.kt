@@ -31,12 +31,43 @@ data class AuthResponse(
 data class SaveResponse(
     val ok: Boolean? = null,
     val error: String? = null,
+    val item: VideoCard? = null,
     val classified_into: List<ClassifiedInto>? = null,
+    val in_lists: List<ListRef>? = null,
+    val tags: List<TagDto>? = null,
+    val classify_engine: String? = null,
+    val classify_reason: String? = null,
 )
 
 data class ClassifiedInto(
     val list_id: Int? = null,
     val list_title: String? = null,
+)
+
+data class ListRef(
+    val id: Int? = null,
+    val title: String? = null,
+)
+
+data class SaveHistoryResponse(
+    val ok: Boolean? = null,
+    val events: List<SaveEvent>? = null,
+    val error: String? = null,
+)
+
+data class SaveEvent(
+    val id: Int? = null,
+    val video_id: String? = null,
+    val title: String? = null,
+    val channel_title: String? = null,
+    val thumb_url: String? = null,
+    val source: String? = null,
+    val classified_into: List<ClassifiedInto>? = null,
+    val tags: List<TagDto>? = null,
+    val in_lists: List<ListRef>? = null,
+    val classify_engine: String? = null,
+    val classify_reason: String? = null,
+    val created_at: String? = null,
 )
 
 data class HomeShell(
@@ -68,6 +99,8 @@ data class VideoCard(
     val watch_url: String? = null,
     val description: String? = null,
     val note: String? = null,
+    val user_tags: List<TagDto>? = null,
+    val in_lists: List<ListRef>? = null,
 )
 
 data class VideoDetailResponse(

@@ -54,6 +54,7 @@ fun ProfileScreen(
     session: SessionStore,
     onHome: () -> Unit,
     onFolders: () -> Unit,
+    onOpenHistory: () -> Unit,
     onLoggedOut: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
@@ -149,6 +150,11 @@ fun ProfileScreen(
                 )
             }
 
+            OutlinedButton(
+                onClick = onOpenHistory,
+                modifier = Modifier.fillMaxWidth().height(48.dp),
+                shape = RoundedCornerShape(12.dp),
+            ) { Text("История сохранений (debug)") }
             Spacer(Modifier.height(14.dp))
             Text("Настройки с веба", style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(8.dp))

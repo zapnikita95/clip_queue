@@ -342,6 +342,22 @@ CREATE TABLE IF NOT EXISTS organize_proposals (
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   applied INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS save_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  video_id TEXT NOT NULL,
+  source TEXT NOT NULL DEFAULT '',
+  title TEXT NOT NULL DEFAULT '',
+  channel_title TEXT NOT NULL DEFAULT '',
+  thumb_url TEXT NOT NULL DEFAULT '',
+  classified_json TEXT NOT NULL DEFAULT '[]',
+  tags_json TEXT NOT NULL DEFAULT '[]',
+  lists_json TEXT NOT NULL DEFAULT '[]',
+  classify_engine TEXT NOT NULL DEFAULT '',
+  classify_reason TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_save_events_user ON save_events(user_id, created_at DESC);
 """
 
 EXTRA_PG = """
@@ -379,6 +395,22 @@ CREATE TABLE IF NOT EXISTS organize_proposals (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   applied INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS save_events (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  video_id TEXT NOT NULL,
+  source TEXT NOT NULL DEFAULT '',
+  title TEXT NOT NULL DEFAULT '',
+  channel_title TEXT NOT NULL DEFAULT '',
+  thumb_url TEXT NOT NULL DEFAULT '',
+  classified_json TEXT NOT NULL DEFAULT '[]',
+  tags_json TEXT NOT NULL DEFAULT '[]',
+  lists_json TEXT NOT NULL DEFAULT '[]',
+  classify_engine TEXT NOT NULL DEFAULT '',
+  classify_reason TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_save_events_user ON save_events(user_id, created_at DESC);
 """
 
 

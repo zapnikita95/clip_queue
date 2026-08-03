@@ -7,11 +7,14 @@ class ClipQueueApp : Application() {
         private set
     lateinit var api: ApiClient
         private set
+    lateinit var saveHistory: SaveHistoryStore
+        private set
 
     override fun onCreate() {
         super.onCreate()
         session = SessionStore(this)
         api = ApiClient(session)
+        saveHistory = SaveHistoryStore(this)
     }
 }
 

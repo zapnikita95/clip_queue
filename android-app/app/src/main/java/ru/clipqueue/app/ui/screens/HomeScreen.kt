@@ -14,13 +14,16 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -40,6 +43,7 @@ import ru.clipqueue.app.ui.theme.CqAccent
 import ru.clipqueue.app.ui.theme.CqBg
 import ru.clipqueue.app.ui.theme.CqMuted
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
     api: ApiClient,
@@ -49,11 +53,13 @@ fun HomeScreen(
     onOpenProfile: () -> Unit,
 ) {
     var loading by remember { mutableStateOf(true) }
+    var refreshing by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var recent by remember { mutableStateOf<List<VideoCard>>(emptyList()) }
     var vibe by remember { mutableStateOf<List<VideoCard>>(emptyList()) }
     var fromPlaylists by remember { mutableStateOf<List<VideoCard>>(emptyList()) }
     var topFolders by remember { mutableStateOf<List<ListCard>>(emptyList()) }
+    val scope = rememberCoroutineScope()
 
     val actions = rememberVideoActions(
         api = api,
@@ -65,12 +71,12 @@ fun HomeScreen(
         },
     )
 
-    LaunchedEffect(Unit) {
-        loading = true
+    suspend fun loadHome(initial: Boolean) {
+        if (initial) loading = true else refreshing = true
         error = null
         try {
-            launch { runCatching { api.startYoutubeSync(full = false) } }
             coroutineScope {
+                launch { runCatching { api.startYoutubeSync(full = false) } }
                 val recentDef = async { api.homeRail("queue") }
                 val vibeDef = async { api.homeRail("continue_vibe") }
                 val plDef = async { api.homeRail("from_playlists") }
@@ -86,8 +92,11 @@ fun HomeScreen(
             error = e.message ?: "Не удалось загрузить"
         } finally {
             loading = false
+            refreshing = false
         }
     }
+
+    LaunchedEffect(Unit) { loadHome(initial = true) }
 
     Column(
         modifier = Modifier
@@ -97,48 +106,57 @@ fun HomeScreen(
     ) {
         Spacer(Modifier.height(18.dp))
         Text("Clip Queue", style = MaterialTheme.typography.titleLarge)
-        Text("из твоего", style = MaterialTheme.typography.bodySmall, color = CqMuted)
+        Text("потяни вниз, чтобы обновить", style = MaterialTheme.typography.bodySmall, color = CqMuted)
 
         when {
             loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator(color = CqAccent)
             }
-            error != null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            error != null && recent.isEmpty() && vibe.isEmpty() -> Box(
+                Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center,
+            ) {
                 Text(error.orEmpty(), color = CqAccent)
             }
-            else -> LazyColumn(
+            else -> PullToRefreshBox(
+                isRefreshing = refreshing,
+                onRefresh = { scope.launch { loadHome(initial = false) } },
                 modifier = Modifier.weight(1f),
-                contentPadding = PaddingValues(bottom = 12.dp),
             ) {
-                item {
-                    SectionLabel("Недавно")
-                    if (recent.isEmpty()) Text("Пока пусто", color = CqMuted)
-                    else VideoRail(recent) { c, a -> actions.handle(c, a) }
-                }
-                item {
-                    SectionLabel("Могут понравиться")
-                    val recs = if (vibe.isNotEmpty()) vibe else fromPlaylists
-                    if (recs.isEmpty()) Text("Смотри ролики — появятся рекомендации", color = CqMuted)
-                    else VideoRail(recs) { c, a -> actions.handle(c, a) }
-                }
-                item {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 18.dp, bottom = 10.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text("ТОП ПАПКИ", style = MaterialTheme.typography.labelSmall, color = CqMuted)
-                        Text(
-                            "все →",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = CqAccent,
-                            modifier = Modifier.clickable(onClick = onOpenFolders),
-                        )
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(bottom = 12.dp),
+                ) {
+                    item {
+                        SectionLabel("Недавно")
+                        if (recent.isEmpty()) Text("Пока пусто", color = CqMuted)
+                        else VideoRail(recent) { c, a -> actions.handle(c, a) }
                     }
-                    if (topFolders.isEmpty()) Text("Папок пока нет", color = CqMuted)
-                    else FolderCarousel(topFolders, onOpenFolder, onOpenFolders)
+                    item {
+                        SectionLabel("Могут понравиться")
+                        val recs = if (vibe.isNotEmpty()) vibe else fromPlaylists
+                        if (recs.isEmpty()) Text("Смотри ролики — появятся рекомендации", color = CqMuted)
+                        else VideoRail(recs) { c, a -> actions.handle(c, a) }
+                    }
+                    item {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 18.dp, bottom = 10.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text("ТОП ПАПКИ", style = MaterialTheme.typography.labelSmall, color = CqMuted)
+                            Text(
+                                "все →",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = CqAccent,
+                                modifier = Modifier.clickable(onClick = onOpenFolders),
+                            )
+                        }
+                        if (topFolders.isEmpty()) Text("Папок пока нет", color = CqMuted)
+                        else FolderCarousel(topFolders, onOpenFolder, onOpenFolders)
+                    }
                 }
             }
         }

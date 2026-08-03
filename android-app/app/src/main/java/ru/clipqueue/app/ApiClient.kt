@@ -24,6 +24,7 @@ import ru.clipqueue.app.data.MeResponse
 import ru.clipqueue.app.data.OkResponse
 import ru.clipqueue.app.data.OpenResponse
 import ru.clipqueue.app.data.RailResponse
+import ru.clipqueue.app.data.SaveHistoryResponse
 import ru.clipqueue.app.data.SaveResponse
 import ru.clipqueue.app.data.SimilarResponse
 import ru.clipqueue.app.data.SyncStartResponse
@@ -112,6 +113,9 @@ class ApiClient(private val session: SessionStore) {
 
     suspend fun startYoutubeSync(full: Boolean = false): SyncStartResponse =
         post("/api/youtube/sync", mapOf("full" to full))
+
+    suspend fun saveHistory(limit: Int = 40): SaveHistoryResponse =
+        get("/api/saves/history?limit=$limit")
 
     fun googleStartUrl(): String = "$baseUrl/api/auth/google/start?client=android"
 }
