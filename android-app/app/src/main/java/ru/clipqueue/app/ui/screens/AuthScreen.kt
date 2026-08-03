@@ -32,6 +32,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 import ru.clipqueue.app.ApiClient
 import ru.clipqueue.app.SessionStore
@@ -43,6 +44,8 @@ import ru.clipqueue.app.ui.theme.CqMuted
 import ru.clipqueue.app.ui.theme.CqOnAccent
 import ru.clipqueue.app.ui.theme.CqText
 import ru.clipqueue.app.ui.theme.CqWhisper
+import ru.clipqueue.app.ui.theme.KyroBrandStyle
+import ru.clipqueue.app.ui.theme.KyroFont
 
 @Composable
 fun AuthScreen(
@@ -68,20 +71,26 @@ fun AuthScreen(
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Spacer(Modifier.height(72.dp))
+        // Mockup `.auth-center .mark` — Kyro inside rounded square
         Box(
             modifier = Modifier
-                .size(72.dp)
-                .clip(RoundedCornerShape(18.dp))
-                .background(CqElev)
-                .border(1.dp, CqBorder, RoundedCornerShape(18.dp)),
+                .size(88.dp)
+                .clip(RoundedCornerShape(22.dp))
+                .background(CqBg)
+                .border(1.dp, CqBorder, RoundedCornerShape(22.dp)),
             contentAlignment = Alignment.Center,
         ) {
-            Text("Kyro", color = CqText, style = MaterialTheme.typography.titleMedium)
+            Text(
+                "Kyro",
+                style = KyroBrandStyle.copy(fontSize = 15.2.sp, letterSpacing = (-0.03 * 15.2).sp),
+            )
         }
-        Spacer(Modifier.height(20.dp))
+        Spacer(Modifier.height(10.dp))
+        Text("Kyro", style = MaterialTheme.typography.titleLarge)
+        Spacer(Modifier.height(8.dp))
         Text(
             text = "Сохраняйте из YouTube — возвращайтесь в нужный момент.",
-            style = MaterialTheme.typography.bodyMedium,
+            style = MaterialTheme.typography.bodyLarge,
             color = CqMuted,
             textAlign = TextAlign.Center,
         )
@@ -96,7 +105,7 @@ fun AuthScreen(
             shape = RoundedCornerShape(12.dp),
             colors = ButtonDefaults.buttonColors(containerColor = CqAccent, contentColor = CqOnAccent),
         ) {
-            Text("Войти через Google", fontWeight = FontWeight.Bold)
+            Text("Войти через Google", style = MaterialTheme.typography.titleMedium.copy(color = CqOnAccent))
         }
         Spacer(Modifier.height(10.dp))
         OutlinedButton(

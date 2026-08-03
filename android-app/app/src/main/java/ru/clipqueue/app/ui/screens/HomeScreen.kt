@@ -2,7 +2,6 @@ package ru.clipqueue.app.ui.screens
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -14,11 +13,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
@@ -33,10 +30,11 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import android.widget.Toast
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -61,10 +59,11 @@ import ru.clipqueue.app.ui.components.VideoSpine
 import ru.clipqueue.app.ui.rememberVideoActions
 import ru.clipqueue.app.ui.theme.CqAccent
 import ru.clipqueue.app.ui.theme.CqBg
-import ru.clipqueue.app.ui.theme.CqBorder
-import ru.clipqueue.app.ui.theme.CqElev
 import ru.clipqueue.app.ui.theme.CqMuted
 import ru.clipqueue.app.ui.theme.CqText
+import ru.clipqueue.app.ui.theme.KyroBrandStyle
+import ru.clipqueue.app.ui.theme.KyroFont
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
@@ -169,11 +168,11 @@ fun HomeScreen(
     )
 
     LaunchedEffect(Unit) {
-        if (cached != null) {
-            // warm UI already; refresh quietly
-            loadHome(initial = false, force = false)
+        // Disk cache first — no network until pull-to-refresh
+        if (appCache.home != null) {
+            loading = false
         } else {
-            loadHome(initial = true)
+            loadHome(initial = true, force = true)
         }
     }
 
@@ -244,18 +243,30 @@ fun HomeScreen(
     Column(
         modifier = Modifier.fillMaxSize().background(CqBg),
     ) {
-        Column(modifier = Modifier.padding(horizontal = 12.dp)) {
-            Spacer(Modifier.height(14.dp))
-            Box(
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+                .padding(top = 14.dp, bottom = 4.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                "Kyro",
+                style = KyroBrandStyle,
                 modifier = Modifier
-                    .size(44.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(CqElev)
-                    .border(1.dp, CqBorder, RoundedCornerShape(12.dp)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text("Kyro", style = MaterialTheme.typography.labelSmall, color = CqText)
-            }
+                    // soft luminous halo like mockup text-shadow
+                    .padding(end = 4.dp),
+            )
+            Text(
+                "сегодня",
+                style = MaterialTheme.typography.bodySmall.copy(
+                    fontFamily = KyroFont,
+                    fontWeight = FontWeight.Normal,
+                    fontSize = 11.sp,
+                    color = CqMuted,
+                ),
+            )
         }
         FolderTrashZone(
             editing = folderEdit,

@@ -12,8 +12,8 @@ android {
         applicationId = "ru.clipqueue.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 10
-        versionName = "0.1.9"
+        versionCode = 13
+        versionName = "0.1.12"
         buildConfigField(
             "String",
             "API_BASE",
@@ -68,6 +68,7 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-tooling")
 
     implementation("io.coil-kt:coil-compose:2.7.0")
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
     implementation("io.ktor:ktor-client-android:2.3.13")
     implementation("io.ktor:ktor-client-content-negotiation:2.3.13")

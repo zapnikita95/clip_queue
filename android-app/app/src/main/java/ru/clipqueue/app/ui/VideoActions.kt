@@ -65,7 +65,7 @@ class VideoActions(
                 toast(if (r?.ok == true) "Удалено" else (r?.error ?: "Ошибка"))
                 if (r?.ok == true) {
                     onRemoved(id)
-                    cache?.invalidateAll()
+                    cache?.removeVideoEverywhere(id)
                 }
             }
             CardAction.Tag -> onTag(card)

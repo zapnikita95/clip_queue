@@ -1,4 +1,4 @@
-package ru.clipqueue.app.ui.screens
+﻿package ru.clipqueue.app.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -25,13 +25,14 @@ import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -70,6 +71,7 @@ private enum class VideoStatusFilter { All, Queue, InProgress, Watched }
 
 private const val TOP_CAROUSEL_COUNT = 5
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FoldersScreen(
     api: ApiClient,
@@ -83,6 +85,7 @@ fun FoldersScreen(
     val scope = rememberCoroutineScope()
 
     var loading by remember { mutableStateOf(cached == null) }
+    var refreshing by remember { mutableStateOf(false) }
     var folders by remember { mutableStateOf(cached?.folders.orEmpty()) }
     var tags by remember { mutableStateOf(cached?.tags.orEmpty()) }
     var selectedTagId by remember { mutableStateOf<Int?>(null) }
@@ -96,16 +99,22 @@ fun FoldersScreen(
     var filterMenu by remember { mutableStateOf(false) }
     var tagCard by remember { mutableStateOf<VideoCard?>(null) }
     var moveCard by remember { mutableStateOf<VideoCard?>(null) }
-    val railCache = remember { mutableStateMapOf<Int, List<VideoCard>>() }
-    val loadingIds = remember { mutableStateMapOf<Int, Boolean>() }
 
     fun usedTags(list: List<TagDto>) = list.filter { (it.video_count ?: 0) > 0 }
 
-    suspend fun loadFolders(force: Boolean = false) {
-        if (!force && folders.isNotEmpty()) {
-            // quiet refresh
-        } else if (folders.isEmpty()) {
-            loading = true
+    /** Network only when force=true (pull-to-refresh). */
+    suspend fun loadFolders(force: Boolean) {
+        if (!force) {
+            val warm = appCache.folders
+            if (warm != null) {
+                folders = warm.folders
+                tags = warm.tags
+                loading = false
+                return
+            }
+            if (folders.isEmpty()) loading = true
+        } else {
+            refreshing = true
         }
         error = null
         try {
@@ -115,15 +124,28 @@ fun FoldersScreen(
                 usedTags(runCatching { api.tags(onlyUsed = false) }.getOrNull()?.tags.orEmpty())
             }
             appCache.folders = AppCache.Folders(folders = folders, tags = tags)
+            folders.sortedByDescending { it.count ?: 0 }.take(TOP_CAROUSEL_COUNT).forEach { f ->
+                val id = f.id ?: return@forEach
+                runCatching {
+                    appCache.putFolderItems(id, api.listDetail(id).items.orEmpty())
+                }
+            }
         } catch (e: Exception) {
             if (folders.isEmpty()) error = e.message
         } finally {
             loading = false
+            refreshing = false
         }
     }
 
     LaunchedEffect(Unit) {
-        if (cached != null) loadFolders(force = false) else loadFolders(force = true)
+        if (appCache.folders != null) {
+            folders = appCache.folders!!.folders
+            tags = appCache.folders!!.tags
+            loading = false
+        } else {
+            loadFolders(force = true)
+        }
     }
 
     LaunchedEffect(selectedTagId) {
@@ -161,10 +183,12 @@ fun FoldersScreen(
     val actions = rememberVideoActions(
         api = api,
         onOpenVideo = onOpenVideo,
-        onRemoved = { id -> taggedVideos = taggedVideos.filterNot { it.video_id == id } },
+        onRemoved = { id ->
+            taggedVideos = taggedVideos.filterNot { it.video_id == id }
+            appCache.removeVideoEverywhere(id)
+        },
         onTag = { tagCard = it },
         onMove = { moveCard = it },
-        onInterestDone = { scope.launch { loadFolders(force = true) } },
         cache = appCache,
     )
 
@@ -174,9 +198,7 @@ fun FoldersScreen(
         FolderSort.EmptyLast -> "Пустые вниз"
     }
 
-    tagCard?.let { c ->
-        TagPickerDialog(api, c, appCache, onDismiss = { tagCard = null })
-    }
+    tagCard?.let { c -> TagPickerDialog(api, c, appCache, onDismiss = { tagCard = null }) }
     moveCard?.let { c ->
         MovePickerDialog(api, c, appCache, onDismiss = { moveCard = null }, onChanged = {
             scope.launch { loadFolders(force = true) }
@@ -188,39 +210,17 @@ fun FoldersScreen(
             Spacer(Modifier.height(14.dp))
             Text("Папки", style = MaterialTheme.typography.titleLarge)
             Spacer(Modifier.height(10.dp))
-            SearchBarWithMic(
-                value = query,
-                onValueChange = { query = it },
-                placeholder = "Найти папку",
-            )
+            SearchBarWithMic(value = query, onValueChange = { query = it }, placeholder = "Найти папку")
             Spacer(Modifier.height(10.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Box {
-                    ToolIconButton(
-                        label = sortLabel,
-                        selected = true,
-                        onClick = { sortMenu = true },
-                    ) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.Sort,
-                            contentDescription = null,
-                            tint = CqText,
-                            modifier = Modifier.size(16.dp),
-                        )
+                    ToolIconButton(label = sortLabel, selected = true, onClick = { sortMenu = true }) {
+                        Icon(Icons.AutoMirrored.Filled.Sort, null, tint = CqText, modifier = Modifier.size(16.dp))
                     }
                     DropdownMenu(expanded = sortMenu, onDismissRequest = { sortMenu = false }) {
-                        DropdownMenuItem(
-                            text = { Text("По числу") },
-                            onClick = { sort = FolderSort.Count; sortMenu = false },
-                        )
-                        DropdownMenuItem(
-                            text = { Text("А–Я") },
-                            onClick = { sort = FolderSort.Name; sortMenu = false },
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Пустые вниз") },
-                            onClick = { sort = FolderSort.EmptyLast; sortMenu = false },
-                        )
+                        DropdownMenuItem(text = { Text("По числу") }, onClick = { sort = FolderSort.Count; sortMenu = false })
+                        DropdownMenuItem(text = { Text("А–Я") }, onClick = { sort = FolderSort.Name; sortMenu = false })
+                        DropdownMenuItem(text = { Text("Пустые вниз") }, onClick = { sort = FolderSort.EmptyLast; sortMenu = false })
                     }
                 }
                 Box {
@@ -231,7 +231,7 @@ fun FoldersScreen(
                     ) {
                         Icon(
                             if (minCount == 1) Icons.Default.Videocam else Icons.Default.FilterList,
-                            contentDescription = null,
+                            null,
                             tint = if (minCount == 1) CqText else CqMuted,
                             modifier = Modifier.size(16.dp),
                         )
@@ -239,10 +239,7 @@ fun FoldersScreen(
                     DropdownMenu(expanded = filterMenu, onDismissRequest = { filterMenu = false }) {
                         DropdownMenuItem(
                             text = { Text(if (minCount == 1) "Все папки" else "Только с видео") },
-                            onClick = {
-                                minCount = if (minCount == 1) 0 else 1
-                                filterMenu = false
-                            },
+                            onClick = { minCount = if (minCount == 1) 0 else 1; filterMenu = false },
                         )
                     }
                 }
@@ -271,75 +268,59 @@ fun FoldersScreen(
                 CircularProgressIndicator(color = CqAccent)
             }
             error != null && folders.isEmpty() -> Text(error.orEmpty(), color = CqAccent, modifier = Modifier.padding(12.dp))
-            selectedTagId != null -> {
-                LazyColumn(
-                    modifier = Modifier.weight(1f),
-                    contentPadding = PaddingValues(top = 4.dp, bottom = 8.dp),
-                ) {
-                    item {
-                        Text(
-                            "Папки",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = CqMuted,
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                        )
-                    }
-                    if (taggedFolders.isEmpty()) {
-                        item { Text("Пусто", color = CqMuted, modifier = Modifier.padding(12.dp)) }
-                    } else {
-                        item { FolderGrid(taggedFolders, onOpenFolder) }
-                    }
-                    item {
-                        Text(
-                            "${taggedVideos.size} видео",
-                            color = CqMuted,
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                        )
-                    }
-                    if (taggedVideos.isEmpty()) {
-                        item { Text("Пусто", color = CqMuted, modifier = Modifier.padding(12.dp)) }
-                    } else {
-                        items(taggedVideos, key = { it.video_id.orEmpty() }) { card ->
-                            VideoListRow(card) { c, a -> actions.handle(c, a) }
-                        }
+            selectedTagId != null -> LazyColumn(
+                modifier = Modifier.weight(1f),
+                contentPadding = PaddingValues(top = 4.dp, bottom = 8.dp),
+            ) {
+                item {
+                    Text("Папки", style = MaterialTheme.typography.labelSmall, color = CqMuted, modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp))
+                }
+                if (taggedFolders.isEmpty()) {
+                    item { Text("Пусто", color = CqMuted, modifier = Modifier.padding(12.dp)) }
+                } else {
+                    item { FolderGrid(taggedFolders, onOpenFolder) }
+                }
+                item {
+                    Text("${taggedVideos.size} видео", color = CqMuted, modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp))
+                }
+                if (taggedVideos.isEmpty()) {
+                    item { Text("Пусто", color = CqMuted, modifier = Modifier.padding(12.dp)) }
+                } else {
+                    items(taggedVideos, key = { it.video_id.orEmpty() }) { card ->
+                        VideoListRow(card) { c, a -> actions.handle(c, a) }
                     }
                 }
             }
             visible.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text("Ничего не найдено", color = CqMuted)
             }
-            else -> LazyColumn(
+            else -> PullToRefreshBox(
+                isRefreshing = refreshing,
+                onRefresh = { scope.launch { loadFolders(force = true) } },
                 modifier = Modifier.weight(1f),
-                contentPadding = PaddingValues(top = 4.dp, bottom = 10.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                items(topCarousel, key = { "top-${it.id}" }) { folder ->
-                    FolderCarouselBlock(
-                        api = api,
-                        folder = folder,
-                        items = folder.id?.let { railCache[it] },
-                        isLoadingItems = folder.id?.let { loadingIds[it] == true } == true,
-                        onLoaded = { id, items ->
-                            railCache[id] = items
-                            loadingIds[id] = false
-                        },
-                        onLoading = { id -> loadingIds[id] = true },
-                        onOpenFolder = onOpenFolder,
-                        onOpenVideo = onOpenVideo,
-                        onTag = { tagCard = it },
-                        onMove = { moveCard = it },
-                        cache = appCache,
-                    )
-                }
-                if (restGrid.isNotEmpty()) {
-                    item {
-                        Text(
-                            "Все папки",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = CqMuted,
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(top = 4.dp, bottom = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    items(topCarousel, key = { "top-${it.id}" }) { folder ->
+                        FolderCarouselBlock(
+                            api = api,
+                            folder = folder,
+                            appCache = appCache,
+                            forceRefreshTick = refreshing,
+                            onOpenFolder = onOpenFolder,
+                            onOpenVideo = onOpenVideo,
+                            onTag = { tagCard = it },
+                            onMove = { moveCard = it },
                         )
-                        FolderGrid(restGrid, onOpenFolder)
+                    }
+                    if (restGrid.isNotEmpty()) {
+                        item {
+                            Text("Все папки", style = MaterialTheme.typography.labelSmall, color = CqMuted, modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp))
+                            FolderGrid(restGrid, onOpenFolder)
+                        }
                     }
                 }
             }
@@ -352,32 +333,42 @@ fun FoldersScreen(
 private fun FolderCarouselBlock(
     api: ApiClient,
     folder: ListCard,
-    items: List<VideoCard>?,
-    isLoadingItems: Boolean,
-    onLoaded: (Int, List<VideoCard>) -> Unit,
-    onLoading: (Int) -> Unit,
+    appCache: AppCache,
+    forceRefreshTick: Boolean,
     onOpenFolder: (ListCard) -> Unit,
     onOpenVideo: (String) -> Unit,
     onTag: (VideoCard) -> Unit,
     onMove: (VideoCard) -> Unit,
-    cache: AppCache?,
 ) {
     val id = folder.id ?: return
+    val cachedItems = remember(id) { appCache.folderItems(id) }
+    var items by remember(id) { mutableStateOf(cachedItems) }
+    var isLoadingItems by remember(id) { mutableStateOf(cachedItems == null) }
+
     val actions = rememberVideoActions(
         api = api,
         onOpenVideo = onOpenVideo,
         onTag = onTag,
         onMove = onMove,
-        cache = cache,
+        onRemoved = { vid ->
+            items = items?.filterNot { it.video_id == vid }
+            appCache.removeVideoEverywhere(vid)
+        },
+        cache = appCache,
     )
 
-    // Always load carousel for top folders
-    LaunchedEffect(id) {
-        if (items == null && !isLoadingItems) {
-            onLoading(id)
-            val loaded = runCatching { api.listDetail(id).items.orEmpty() }.getOrDefault(emptyList())
-            onLoaded(id, loaded)
+    LaunchedEffect(id, forceRefreshTick) {
+        val warm = appCache.folderItems(id)
+        if (warm != null && !forceRefreshTick) {
+            items = warm
+            isLoadingItems = false
+            return@LaunchedEffect
         }
+        if (warm == null) isLoadingItems = true
+        val loaded = runCatching { api.listDetail(id).items.orEmpty() }.getOrDefault(warm.orEmpty())
+        items = loaded
+        appCache.putFolderItems(id, loaded)
+        isLoadingItems = false
     }
 
     Column(
@@ -400,19 +391,21 @@ private fun FolderCarouselBlock(
             Text("открыть →", color = CqAccent, style = MaterialTheme.typography.bodySmall)
         }
         Spacer(Modifier.height(8.dp))
+        val current = items
         when {
-            isLoadingItems || items == null -> Box(
+            isLoadingItems || current == null -> Box(
                 Modifier.fillMaxWidth().height(100.dp),
                 contentAlignment = Alignment.Center,
             ) {
                 CircularProgressIndicator(color = CqAccent, strokeWidth = 2.dp, modifier = Modifier.height(28.dp))
             }
-            items.isEmpty() -> Text("Пусто", color = CqMuted)
-            else -> VideoRail(items.take(24)) { card, act -> actions.handle(card, act) }
+            current.isEmpty() -> Text("Пусто", color = CqMuted)
+            else -> VideoRail(current.take(24)) { card, act -> actions.handle(card, act) }
         }
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FolderDetailScreen(
     api: ApiClient,
@@ -420,8 +413,14 @@ fun FolderDetailScreen(
     onBack: () -> Unit,
     onOpenVideo: (String) -> Unit,
 ) {
-    var loading by remember { mutableStateOf(true) }
-    var items by remember { mutableStateOf<List<VideoCard>>(emptyList()) }
+    val appCache = (LocalContext.current.applicationContext as ClipQueueApp).cache
+    val id = folder.id
+    val warm = remember(id) { id?.let { appCache.folderItems(it) } }
+    val scope = rememberCoroutineScope()
+
+    var loading by remember { mutableStateOf(warm == null) }
+    var refreshing by remember { mutableStateOf(false) }
+    var items by remember { mutableStateOf(warm.orEmpty()) }
     var title by remember { mutableStateOf(folder.title.orEmpty()) }
     var statusFilter by remember { mutableStateOf(VideoStatusFilter.All) }
     var sortAlpha by remember { mutableStateOf(false) }
@@ -431,38 +430,52 @@ fun FolderDetailScreen(
     var selectedTagId by remember { mutableStateOf<Int?>(null) }
     var tagCard by remember { mutableStateOf<VideoCard?>(null) }
     var moveCard by remember { mutableStateOf<VideoCard?>(null) }
-    val appCache = (LocalContext.current.applicationContext as ClipQueueApp).cache
 
     val actions = rememberVideoActions(
         api = api,
         onOpenVideo = onOpenVideo,
-        onRemoved = { id -> items = items.filterNot { it.video_id == id } },
+        onRemoved = { vid ->
+            items = items.filterNot { it.video_id == vid }
+            appCache.removeVideoEverywhere(vid)
+        },
         onTag = { tagCard = it },
         onMove = { moveCard = it },
         cache = appCache,
     )
 
-    LaunchedEffect(folder.id) {
-        val id = folder.id ?: return@LaunchedEffect
-        loading = true
+    suspend fun loadDetail(force: Boolean) {
+        val listId = id ?: return
+        if (!force) {
+            val cached = appCache.folderItems(listId)
+            if (cached != null) {
+                items = cached
+                loading = false
+                return
+            }
+            loading = true
+        } else {
+            refreshing = true
+        }
         try {
-            val r = api.listDetail(id)
+            val r = api.listDetail(listId)
             title = r.list?.title ?: title
             items = r.items.orEmpty()
+            appCache.putFolderItems(listId, items)
             tags = runCatching { api.tags(onlyUsed = true) }.getOrNull()?.tags.orEmpty()
                 .filter { (it.video_count ?: 0) > 0 }
         } catch (_: Exception) {
         } finally {
             loading = false
+            refreshing = false
         }
     }
 
-    tagCard?.let { c -> TagPickerDialog(api, c, appCache, onDismiss = { tagCard = null }) }
-    moveCard?.let { c ->
-        MovePickerDialog(api, c, appCache, onDismiss = { moveCard = null }) {
-            // refresh membership indicators later
-        }
+    LaunchedEffect(folder.id) {
+        loadDetail(force = false)
     }
+
+    tagCard?.let { c -> TagPickerDialog(api, c, appCache, onDismiss = { tagCard = null }) }
+    moveCard?.let { c -> MovePickerDialog(api, c, appCache, onDismiss = { moveCard = null }) { } }
 
     fun isShort(v: VideoCard): Boolean {
         val sec = v.duration_sec
@@ -496,15 +509,11 @@ fun FolderDetailScreen(
             Text(title, style = MaterialTheme.typography.titleLarge)
             Text("${filtered.size} / ${items.size}", style = MaterialTheme.typography.bodySmall, color = CqMuted)
             Spacer(Modifier.height(8.dp))
-            SearchBarWithMic(
-                value = q,
-                onValueChange = { q = it },
-                placeholder = "Поиск в папке",
-            )
+            SearchBarWithMic(value = q, onValueChange = { q = it }, placeholder = "Поиск в папке")
             Spacer(Modifier.height(8.dp))
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 item { FilterChip("Все", statusFilter == VideoStatusFilter.All) { statusFilter = VideoStatusFilter.All } }
-                item { FilterChip("Очередь", statusFilter == VideoStatusFilter.Queue) { statusFilter = VideoStatusFilter.Queue } }
+                item { FilterChip("Сохранённые", statusFilter == VideoStatusFilter.Queue) { statusFilter = VideoStatusFilter.Queue } }
                 item { FilterChip("Начатые", statusFilter == VideoStatusFilter.InProgress) { statusFilter = VideoStatusFilter.InProgress } }
                 item { FilterChip("Просмотренные", statusFilter == VideoStatusFilter.Watched) { statusFilter = VideoStatusFilter.Watched } }
                 item { FilterChip(if (hideShorts) "Без шортов" else "Со шортами", hideShorts) { hideShorts = !hideShorts } }
@@ -523,11 +532,27 @@ fun FolderDetailScreen(
             }
         }
         when {
-            loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = CqAccent) }
-            filtered.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Ничего по фильтру", color = CqMuted) }
-            else -> LazyColumn(modifier = Modifier.weight(1f), contentPadding = PaddingValues(top = 8.dp, bottom = 16.dp)) {
-                items(filtered, key = { it.video_id.orEmpty() }) { card ->
-                    VideoListRow(card) { c, a -> actions.handle(c, a) }
+            loading && items.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(color = CqAccent)
+            }
+            else -> PullToRefreshBox(
+                isRefreshing = refreshing,
+                onRefresh = { scope.launch { loadDetail(force = true) } },
+                modifier = Modifier.weight(1f),
+            ) {
+                if (filtered.isEmpty()) {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text("Ничего по фильтру", color = CqMuted)
+                    }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(top = 8.dp, bottom = 16.dp),
+                    ) {
+                        items(filtered, key = { it.video_id.orEmpty() }) { card ->
+                            VideoListRow(card) { c, a -> actions.handle(c, a) }
+                        }
+                    }
                 }
             }
         }
