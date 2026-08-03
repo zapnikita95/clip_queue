@@ -58,7 +58,6 @@ fun SaveHistoryScreen(
     var loading by remember { mutableStateOf(true) }
     var refreshing by remember { mutableStateOf(false) }
     var events by remember { mutableStateOf<List<SaveEvent>>(emptyList()) }
-    var sourceNote by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
 
     suspend fun load(initial: Boolean) {
@@ -66,7 +65,6 @@ fun SaveHistoryScreen(
         val local = localStore.all()
         val remote = runCatching { api.saveHistory(50).events.orEmpty() }.getOrDefault(emptyList())
         events = mergeEvents(remote, local)
-        sourceNote = if (remote.isNotEmpty()) "сервер + телефон" else "только на телефоне (после деплоя API появится с сервера)"
         loading = false
         refreshing = false
     }
@@ -88,11 +86,6 @@ fun SaveHistoryScreen(
         )
         Spacer(Modifier.height(6.dp))
         Text("История сохранений", style = MaterialTheme.typography.titleLarge)
-        Text(
-            "куда разложило: папки, теги, движок · $sourceNote",
-            style = MaterialTheme.typography.bodySmall,
-            color = CqMuted,
-        )
         Spacer(Modifier.height(10.dp))
 
         when {
@@ -100,7 +93,7 @@ fun SaveHistoryScreen(
                 CircularProgressIndicator(color = CqAccent)
             }
             events.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("Пока пусто — сохрани видео через Share", color = CqMuted)
+                Text("Пусто", color = CqMuted)
             }
             else -> PullToRefreshBox(
                 isRefreshing = refreshing,
@@ -175,21 +168,16 @@ private fun SaveEventCard(ev: SaveEvent, onClick: () -> Unit) {
             }
         }
         Spacer(Modifier.height(8.dp))
-        Text(
-            if (folders.isNotEmpty()) "Папки: ${folders.joinToString(", ")}" else "Папки: не определены",
-            style = MaterialTheme.typography.bodySmall,
-            color = if (folders.isNotEmpty()) CqAccent else CqMuted,
-        )
-        Text(
-            if (tags.isNotEmpty()) "Теги: ${tags.joinToString(", ")}" else "Теги: нет",
-            style = MaterialTheme.typography.bodySmall,
-            color = CqMuted,
-        )
-        val eng = ev.classify_engine?.takeIf { it.isNotBlank() }
-        val reason = ev.classify_reason?.takeIf { it.isNotBlank() }
-        if (eng != null || reason != null) {
+        if (folders.isNotEmpty()) {
             Text(
-                listOfNotNull(eng?.let { "engine=$it" }, reason).joinToString(" · "),
+                folders.joinToString(", "),
+                style = MaterialTheme.typography.bodySmall,
+                color = CqAccent,
+            )
+        }
+        if (tags.isNotEmpty()) {
+            Text(
+                tags.joinToString(", "),
                 style = MaterialTheme.typography.bodySmall,
                 color = CqMuted,
             )

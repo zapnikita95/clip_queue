@@ -168,7 +168,6 @@ fun FoldersScreen(
         Column(modifier = Modifier.padding(horizontal = 12.dp)) {
             Spacer(Modifier.height(14.dp))
             Text("Папки", style = MaterialTheme.typography.titleLarge)
-            Text("сетка · теги · детали по тапу", style = MaterialTheme.typography.bodySmall, color = CqMuted)
             Spacer(Modifier.height(8.dp))
             OutlinedTextField(
                 value = query,
@@ -193,8 +192,6 @@ fun FoldersScreen(
             }
             if (tags.isNotEmpty()) {
                 Spacer(Modifier.height(8.dp))
-                Text("Фильтр по тегам", style = MaterialTheme.typography.labelSmall, color = CqMuted)
-                Spacer(Modifier.height(6.dp))
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     item { TagChip("Все", selectedTagId == null) { selectedTagId = null } }
                     items(tags, key = { it.id ?: 0 }) { t ->

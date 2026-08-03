@@ -76,7 +76,7 @@ fun TagPickerDialog(
                 Spacer(Modifier.height(8.dp))
                 when {
                     loading -> Text("Загрузка…", color = CqMuted)
-                    allTags.isEmpty() -> Text("Тегов пока нет — создайте ниже", color = CqMuted)
+                    allTags.isEmpty() -> Text("Нет тегов", color = CqMuted)
                     else -> {
                         Column(
                             modifier = Modifier

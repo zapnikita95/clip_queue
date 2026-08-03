@@ -38,7 +38,7 @@ class VideoActions(
             }
             CardAction.InterestHot -> scope.launch {
                 val r = runCatching { api.setInterest(id, 2) }.getOrNull()
-                toast(if (r?.ok == true) "Очень интересно — поднято в очереди" else (r?.error ?: "Ошибка"))
+                toast(if (r?.ok == true) "Очень интересно" else (r?.error ?: "Ошибка"))
                 if (r?.ok == true) {
                     cache?.invalidateHome()
                     onInterestDone()
@@ -46,7 +46,7 @@ class VideoActions(
             }
             CardAction.InterestOk -> scope.launch {
                 val r = runCatching { api.setInterest(id, 1) }.getOrNull()
-                toast(if (r?.ok == true) "Интересно — ближе к началу" else (r?.error ?: "Ошибка"))
+                toast(if (r?.ok == true) "Интересно" else (r?.error ?: "Ошибка"))
                 if (r?.ok == true) {
                     cache?.invalidateHome()
                     onInterestDone()
@@ -54,7 +54,7 @@ class VideoActions(
             }
             CardAction.InterestLow -> scope.launch {
                 val r = runCatching { api.setInterest(id, -1) }.getOrNull()
-                toast(if (r?.ok == true) "Менее интересно — отодвинуто" else (r?.error ?: "Ошибка"))
+                toast(if (r?.ok == true) "Менее интересно" else (r?.error ?: "Ошибка"))
                 if (r?.ok == true) {
                     cache?.invalidateHome()
                     onInterestDone()
