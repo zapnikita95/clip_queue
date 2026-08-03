@@ -6,6 +6,13 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.material3.Surface
@@ -165,6 +172,22 @@ private fun ClipQueueNav(
         composable(
             route = "video/{id}",
             arguments = listOf(navArgument("id") { type = NavType.StringType }),
+            enterTransition = {
+                fadeIn(tween(420)) +
+                    scaleIn(initialScale = 0.96f, animationSpec = tween(480)) +
+                    slideInVertically(tween(480)) { it / 14 }
+            },
+            exitTransition = {
+                fadeOut(tween(260)) + scaleOut(targetScale = 0.99f, animationSpec = tween(260))
+            },
+            popEnterTransition = {
+                fadeIn(tween(320)) + scaleIn(initialScale = 0.99f, animationSpec = tween(320))
+            },
+            popExitTransition = {
+                fadeOut(tween(380)) +
+                    scaleOut(targetScale = 0.96f, animationSpec = tween(400)) +
+                    slideOutVertically(tween(400)) { it / 12 }
+            },
         ) { entry ->
             val id = Uri.decode(entry.arguments?.getString("id").orEmpty())
             VideoDetailScreen(

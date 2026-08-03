@@ -53,11 +53,12 @@ import ru.clipqueue.app.ui.components.FolderTrashZone
 import ru.clipqueue.app.ui.components.SectionLabel
 import ru.clipqueue.app.ui.components.TagChip
 import ru.clipqueue.app.ui.components.VideoRail
+import ru.clipqueue.app.ui.components.VideoSpine
 import ru.clipqueue.app.ui.rememberVideoActions
 import ru.clipqueue.app.ui.theme.CqAccent
 import ru.clipqueue.app.ui.theme.CqBg
 import ru.clipqueue.app.ui.theme.CqMuted
-
+import ru.clipqueue.app.ui.theme.CqText
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
@@ -302,14 +303,14 @@ fun HomeScreen(
                             if (taggedVideos.isEmpty()) {
                                 Text("Пусто", color = CqMuted, modifier = Modifier.padding(horizontal = 12.dp))
                             } else {
-                                VideoRail(taggedVideos) { c, a -> actions.handle(c, a) }
+                                VideoSpine(taggedVideos) { c, a -> actions.handle(c, a) }
                             }
                         }
                     } else {
                         item {
-                            SectionLabel("Недавно", Modifier.padding(horizontal = 12.dp))
+                            SectionLabel("Сейчас в очереди", Modifier.padding(horizontal = 12.dp))
                             if (recent.isEmpty()) Text("Пусто", color = CqMuted, modifier = Modifier.padding(horizontal = 12.dp))
-                            else VideoRail(recent) { c, a -> actions.handle(c, a) }
+                            else VideoSpine(recent.take(12)) { c, a -> actions.handle(c, a) }
                         }
                         item {
                             SectionLabel("Могут понравиться", Modifier.padding(horizontal = 12.dp))

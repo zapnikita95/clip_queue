@@ -4,8 +4,8 @@ import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -14,12 +14,17 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -33,6 +38,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -40,12 +46,14 @@ import coil.compose.AsyncImage
 import kotlinx.coroutines.launch
 import ru.clipqueue.app.ApiClient
 import ru.clipqueue.app.data.VideoCard
+import ru.clipqueue.app.ui.components.CardAction
 import ru.clipqueue.app.ui.components.SectionLabel
 import ru.clipqueue.app.ui.components.VideoRail
-import ru.clipqueue.app.ui.components.CardAction
 import ru.clipqueue.app.ui.rememberVideoActions
 import ru.clipqueue.app.ui.theme.CqAccent
 import ru.clipqueue.app.ui.theme.CqBg
+import ru.clipqueue.app.ui.theme.CqBorder
+import ru.clipqueue.app.ui.theme.CqElev
 import ru.clipqueue.app.ui.theme.CqMuted
 import ru.clipqueue.app.ui.theme.CqOnAccent
 import ru.clipqueue.app.ui.theme.CqText
@@ -93,7 +101,7 @@ fun VideoDetailScreen(
                 CircularProgressIndicator(color = CqAccent)
             }
             item == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("Не найдено", color = CqAccent)
+                Text("Не найдено", color = CqMuted)
             }
             else -> {
                 val v = item!!
@@ -107,7 +115,19 @@ fun VideoDetailScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .aspectRatio(16f / 9f)
-                            .clip(RoundedCornerShape(14.dp)),
+                            .clip(RoundedCornerShape(18.dp))
+                            .border(1.dp, CqBorder, RoundedCornerShape(18.dp))
+                            .background(CqElev)
+                            .clickable {
+                                scope.launch {
+                                    val url = runCatching { api.openVideo(videoId).watch_url }.getOrNull()
+                                        ?: v.watch_url
+                                        ?: "https://www.youtube.com/watch?v=$videoId"
+                                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                                    reload()
+                                }
+                            },
+                        contentAlignment = Alignment.Center,
                     ) {
                         if (!v.thumb_url.isNullOrBlank()) {
                             AsyncImage(
@@ -117,112 +137,139 @@ fun VideoDetailScreen(
                                 modifier = Modifier.fillMaxSize(),
                             )
                         }
-                    }
-                    Spacer(Modifier.height(14.dp))
-                    Text(v.title.orEmpty(), style = MaterialTheme.typography.titleLarge)
-                    Text(
-                        listOfNotNull(v.channel_title, v.duration_label, statusLabel(v.status)).joinToString(" · "),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = CqMuted,
-                    )
-                    val folderNames = v.in_lists.orEmpty().mapNotNull { it.title?.takeIf { t -> t.isNotBlank() } }
-                    val tagNames = v.user_tags.orEmpty().mapNotNull { t ->
-                        t.name?.takeIf { it.isNotBlank() }?.let { n ->
-                            listOfNotNull(t.emoji?.takeIf { it.isNotBlank() }, n).joinToString(" ")
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(
+                                    Brush.radialGradient(
+                                        colors = listOf(
+                                            CqText.copy(alpha = 0.08f),
+                                            CqBg.copy(alpha = 0.25f),
+                                        ),
+                                    ),
+                                ),
+                        )
+                        Box(
+                            modifier = Modifier
+                                .size(56.dp)
+                                .clip(CircleShape)
+                                .background(CqText.copy(alpha = 0.14f))
+                                .border(1.dp, CqText.copy(alpha = 0.28f), CircleShape),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                Icons.Default.PlayArrow,
+                                contentDescription = "Смотреть",
+                                tint = CqText,
+                                modifier = Modifier.size(32.dp),
+                            )
                         }
                     }
-                    if (folderNames.isNotEmpty()) {
-                        Spacer(Modifier.height(8.dp))
+                        Spacer(Modifier.height(14.dp))
+                        Text(v.title.orEmpty(), style = MaterialTheme.typography.titleLarge)
                         Text(
-                            "Папки: ${folderNames.joinToString(", ")}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = CqAccent,
-                        )
-                    }
-                    if (tagNames.isNotEmpty()) {
-                        Spacer(Modifier.height(4.dp))
-                        Text(
-                            "Теги: ${tagNames.joinToString(", ")}",
+                            listOfNotNull(v.channel_title, v.duration_label, statusLabel(v.status)).joinToString(" · "),
                             style = MaterialTheme.typography.bodySmall,
                             color = CqMuted,
                         )
-                    }
-                    Spacer(Modifier.height(16.dp))
-                    Button(
-                        onClick = {
-                            scope.launch {
-                                val url = runCatching { api.openVideo(videoId).watch_url }.getOrNull()
-                                    ?: v.watch_url
-                                    ?: "https://www.youtube.com/watch?v=$videoId"
-                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-                                reload()
+                        val folderNames = v.in_lists.orEmpty().mapNotNull { it.title?.takeIf { t -> t.isNotBlank() } }
+                        val tagNames = v.user_tags.orEmpty().mapNotNull { t ->
+                            t.name?.takeIf { it.isNotBlank() }?.let { n ->
+                                listOfNotNull(t.emoji?.takeIf { it.isNotBlank() }, n).joinToString(" ")
                             }
-                        },
-                        modifier = Modifier.fillMaxWidth().height(48.dp),
-                        shape = RoundedCornerShape(12.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = CqAccent, contentColor = CqOnAccent),
-                    ) { Text("Смотреть на YouTube") }
-                    Spacer(Modifier.height(8.dp))
-                    OutlinedButton(
-                        onClick = {
-                            scope.launch {
-                                api.patchLibrary(videoId, mapOf("status" to "watched"))
-                                Toast.makeText(context, "Просмотрено", Toast.LENGTH_SHORT).show()
-                                reload()
-                            }
-                        },
-                        modifier = Modifier.fillMaxWidth().height(48.dp),
-                        shape = RoundedCornerShape(12.dp),
-                        enabled = v.status != "watched",
-                    ) {
-                        Text(if (v.status == "watched") "Уже просмотрено" else "Отметить просмотренным")
-                    }
-                    Spacer(Modifier.height(8.dp))
-                    OutlinedButton(
-                        onClick = {
-                            scope.launch {
-                                api.patchLibrary(videoId, mapOf("status" to "in_progress"))
-                                Toast.makeText(context, "В начатых", Toast.LENGTH_SHORT).show()
-                                reload()
-                            }
-                        },
-                        modifier = Modifier.fillMaxWidth().height(48.dp),
-                        shape = RoundedCornerShape(12.dp),
-                    ) { Text("Отметить начатым") }
-                    Spacer(Modifier.height(8.dp))
-                    OutlinedButton(
-                        onClick = {
-                            scope.launch {
-                                api.patchLibrary(videoId, mapOf("status" to "queue"))
-                                Toast.makeText(context, "В очереди", Toast.LENGTH_SHORT).show()
-                                reload()
-                            }
-                        },
-                        modifier = Modifier.fillMaxWidth().height(48.dp),
-                        shape = RoundedCornerShape(12.dp),
-                    ) { Text("Вернуть в очередь") }
-                    Spacer(Modifier.height(8.dp))
-                    OutlinedButton(
-                        onClick = {
-                            scope.launch {
-                                api.deleteLibrary(videoId)
-                                Toast.makeText(context, "Удалено", Toast.LENGTH_SHORT).show()
-                                onBack()
-                            }
-                        },
-                        modifier = Modifier.fillMaxWidth().height(48.dp),
-                        shape = RoundedCornerShape(12.dp),
-                    ) { Text("Убрать из библиотеки") }
-
-                    if (similar.isNotEmpty()) {
-                        SectionLabel("Похожие из твоих")
-                        VideoRail(similar) { card, act ->
-                            if (act == CardAction.Open) onOpenVideo(card.video_id.orEmpty())
-                            else actions.handle(card, act)
                         }
+                        if (folderNames.isNotEmpty()) {
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                "Папки: ${folderNames.joinToString(", ")}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = CqMuted,
+                            )
+                        }
+                        if (tagNames.isNotEmpty()) {
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                "Теги: ${tagNames.joinToString(", ")}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = CqMuted,
+                            )
+                        }
+                        Spacer(Modifier.height(16.dp))
+                        Button(
+                            onClick = {
+                                scope.launch {
+                                    val url = runCatching { api.openVideo(videoId).watch_url }.getOrNull()
+                                        ?: v.watch_url
+                                        ?: "https://www.youtube.com/watch?v=$videoId"
+                                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                                    reload()
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth().height(48.dp),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = CqAccent, contentColor = CqOnAccent),
+                        ) { Text("Смотреть на YouTube") }
+                        Spacer(Modifier.height(8.dp))
+                        OutlinedButton(
+                            onClick = {
+                                scope.launch {
+                                    api.patchLibrary(videoId, mapOf("status" to "watched"))
+                                    Toast.makeText(context, "Просмотрено", Toast.LENGTH_SHORT).show()
+                                    reload()
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth().height(48.dp),
+                            shape = RoundedCornerShape(12.dp),
+                            enabled = v.status != "watched",
+                        ) {
+                            Text(if (v.status == "watched") "Уже просмотрено" else "Отметить просмотренным")
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        OutlinedButton(
+                            onClick = {
+                                scope.launch {
+                                    api.patchLibrary(videoId, mapOf("status" to "in_progress"))
+                                    Toast.makeText(context, "В начатых", Toast.LENGTH_SHORT).show()
+                                    reload()
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth().height(48.dp),
+                            shape = RoundedCornerShape(12.dp),
+                        ) { Text("Отметить начатым") }
+                        Spacer(Modifier.height(8.dp))
+                        OutlinedButton(
+                            onClick = {
+                                scope.launch {
+                                    api.patchLibrary(videoId, mapOf("status" to "queue"))
+                                    Toast.makeText(context, "В очереди", Toast.LENGTH_SHORT).show()
+                                    reload()
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth().height(48.dp),
+                            shape = RoundedCornerShape(12.dp),
+                        ) { Text("Вернуть в очередь") }
+                        Spacer(Modifier.height(8.dp))
+                        OutlinedButton(
+                            onClick = {
+                                scope.launch {
+                                    api.deleteLibrary(videoId)
+                                    Toast.makeText(context, "Удалено", Toast.LENGTH_SHORT).show()
+                                    onBack()
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth().height(48.dp),
+                            shape = RoundedCornerShape(12.dp),
+                        ) { Text("Убрать из библиотеки") }
+
+                        if (similar.isNotEmpty()) {
+                            SectionLabel("Похожие из твоих")
+                            VideoRail(similar) { card, act ->
+                                if (act == CardAction.Open) onOpenVideo(card.video_id.orEmpty())
+                                else actions.handle(card, act)
+                            }
+                        }
+                        Spacer(Modifier.height(24.dp))
                     }
-                    Spacer(Modifier.height(24.dp))
-                }
             }
         }
     }

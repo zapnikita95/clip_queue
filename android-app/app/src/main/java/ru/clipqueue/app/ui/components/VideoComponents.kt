@@ -248,62 +248,142 @@ fun VideoListRow(
     card: VideoCard,
     onAction: (VideoCard, CardAction) -> Unit,
 ) {
+    VideoSpineItem(card = card, onAction = onAction)
+}
+
+/** Vertical Kyro queue: luminous spine + thumbnail rows. */
+@Composable
+fun VideoSpine(
+    items: List<VideoCard>,
+    modifier: Modifier = Modifier,
+    onAction: (VideoCard, CardAction) -> Unit,
+) {
+    Column(
+        modifier = modifier.fillMaxWidth().padding(horizontal = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(0.dp),
+    ) {
+        items.forEach { card ->
+            VideoSpineItem(card = card, onAction = onAction)
+        }
+    }
+}
+
+@Composable
+fun VideoSpineItem(
+    card: VideoCard,
+    onAction: (VideoCard, CardAction) -> Unit,
+) {
     var menu by remember { mutableStateOf(false) }
-    Row(
+    Box(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { onAction(card, CardAction.Open) }
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalAlignment = Alignment.CenterVertically,
+            .padding(horizontal = 8.dp, vertical = 5.dp),
     ) {
         Box(
             modifier = Modifier
-                .width(108.dp)
-                .aspectRatio(16f / 9f)
-                .clip(RoundedCornerShape(8.dp))
-                .background(CqElev2),
+                .align(Alignment.CenterStart)
+                .padding(start = 10.dp)
+                .width(1.dp)
+                .fillMaxHeight()
+                .background(CqText.copy(alpha = 0.18f)),
+        )
+        Box(
+            modifier = Modifier
+                .align(Alignment.CenterStart)
+                .padding(start = 7.dp)
+                .size(7.dp)
+                .clip(CircleShape)
+                .background(CqText.copy(alpha = 0.45f)),
+        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 28.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .background(CqElev.copy(alpha = 0.55f))
+                .border(1.dp, CqBorder, RoundedCornerShape(14.dp))
+                .clickable { onAction(card, CardAction.Open) }
+                .padding(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            if (!card.thumb_url.isNullOrBlank()) {
-                AsyncImage(
-                    model = card.thumb_url,
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize(),
+            Box(
+                modifier = Modifier
+                    .width(120.dp)
+                    .aspectRatio(16f / 9f)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(CqElev2),
+            ) {
+                if (!card.thumb_url.isNullOrBlank()) {
+                    AsyncImage(
+                        model = card.thumb_url,
+                        contentDescription = card.title,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
+                ThumbOverlayButton(
+                    modifier = Modifier.align(Alignment.TopStart).padding(4.dp),
+                    onClick = { onAction(card, CardAction.Watched) },
+                ) {
+                    Icon(Icons.Default.RemoveRedEye, null, tint = CqText, modifier = Modifier.size(12.dp))
+                }
+                val dur = card.duration_label ?: formatDuration(card.duration_sec)
+                if (!dur.isNullOrBlank()) {
+                    Text(
+                        text = dur,
+                        color = CqText,
+                        fontSize = 10.sp,
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(4.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(CqElev.copy(alpha = 0.85f))
+                            .padding(horizontal = 4.dp, vertical = 1.dp),
+                    )
+                }
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    card.title.orEmpty().ifBlank { "Без названия" },
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    color = CqText,
+                )
+                Text(
+                    listOfNotNull(
+                        card.channel_title?.takeIf { it.isNotBlank() },
+                        card.status?.takeIf { it.isNotBlank() }?.let { statusShort(it) },
+                    ).joinToString(" · "),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = CqMuted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
-            ThumbOverlayButton(
-                modifier = Modifier.align(Alignment.TopStart).padding(4.dp),
-                onClick = { onAction(card, CardAction.Watched) },
-            ) {
-                Icon(Icons.Default.RemoveRedEye, null, tint = CqText, modifier = Modifier.size(12.dp))
-            }
-        }
-        Column(modifier = Modifier.weight(1f)) {
-            Text(card.title.orEmpty(), style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            Text(
-                listOfNotNull(
-                    card.channel_title?.takeIf { it.isNotBlank() },
-                    card.duration_label ?: formatDuration(card.duration_sec),
-                    card.status?.takeIf { it.isNotBlank() },
-                ).joinToString(" · "),
-                style = MaterialTheme.typography.bodySmall,
-                color = CqMuted,
-            )
-        }
-        Box {
-            ThumbOverlayButton(modifier = Modifier, onClick = { menu = true }) {
-                Icon(Icons.Default.MoreVert, "Ещё", tint = CqMuted, modifier = Modifier.size(14.dp))
-            }
-            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                DropdownMenuItem(text = { Text("Просмотрено") }, onClick = { menu = false; onAction(card, CardAction.Watched) })
-                DropdownMenuItem(text = { Text("Очень интересно") }, onClick = { menu = false; onAction(card, CardAction.InterestHot) })
-                DropdownMenuItem(text = { Text("Тег") }, onClick = { menu = false; onAction(card, CardAction.Tag) })
-                DropdownMenuItem(text = { Text("Перенести") }, onClick = { menu = false; onAction(card, CardAction.Move) })
-                DropdownMenuItem(text = { Text("Удалить") }, onClick = { menu = false; onAction(card, CardAction.Dismiss) })
+            Box {
+                ThumbOverlayButton(modifier = Modifier, onClick = { menu = true }) {
+                    Icon(Icons.Default.MoreVert, "Ещё", tint = CqMuted, modifier = Modifier.size(14.dp))
+                }
+                DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                    DropdownMenuItem(text = { Text("Просмотрено") }, onClick = { menu = false; onAction(card, CardAction.Watched) })
+                    DropdownMenuItem(text = { Text("Очень интересно") }, onClick = { menu = false; onAction(card, CardAction.InterestHot) })
+                    DropdownMenuItem(text = { Text("Тег") }, onClick = { menu = false; onAction(card, CardAction.Tag) })
+                    DropdownMenuItem(text = { Text("Перенести") }, onClick = { menu = false; onAction(card, CardAction.Move) })
+                    DropdownMenuItem(text = { Text("Удалить") }, onClick = { menu = false; onAction(card, CardAction.Dismiss) })
+                }
             }
         }
     }
+}
+
+private fun statusShort(status: String): String? = when (status) {
+    "watched" -> "смотрели"
+    "in_progress" -> "начато"
+    "archived" -> "архив"
+    "queue" -> "в очереди"
+    else -> null
 }
 
 @Composable
