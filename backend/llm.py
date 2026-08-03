@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from typing import Any, Optional
 
 import requests
@@ -113,6 +114,15 @@ def chat_json(
     return None
 
 
+def _tag_has_text_evidence(tag: str, title: str, channel: str, description: str) -> bool:
+    """Reject slang/custom tags that have no lexical overlap with the video."""
+    blob = f"{title or ''} {channel or ''} {description or ''}".lower()
+    tokens = [t for t in re.split(r"[^\wа-яё]+", (tag or "").lower(), flags=re.I) if len(t) >= 3]
+    if not tokens:
+        return True
+    return any(t in blob for t in tokens)
+
+
 def suggest_video_themes(
     title: str,
     channel: str,
@@ -132,8 +142,9 @@ def suggest_video_themes(
             "Ты классификатор YouTube-видео для личного планировщика. "
             "Верни JSON: {\"tags\": [\"до 3 коротких тегов на русском\"], "
             "\"list_title\": \"название папки или null\", \"reason\": \"кратко почему\"}. "
-            "Предпочитай существующие теги/папки пользователя, если подходят. "
-            "Не выдумывай длинные фразы — теги 1–2 слова."
+            "Ставь тег ТОЛЬКО если он следует из названия/описания/канала. "
+            "Не переиспользуй сленговые или личные теги пользователя без явных доказательств в тексте. "
+            "Если уверенности нет — верни пустой tags. Не выдумывай длинные фразы — теги 1–2 слова."
         ),
         user=json.dumps(
             {
@@ -181,9 +192,21 @@ def suggest_video_themes(
         name = str(t).strip()[:40]
         if name and name not in tags:
             tags.append(name)
-    # prefer existing tag names case-insensitive
+    # Prefer existing tag names only when there is text evidence
     lower_map = {x.lower(): x for x in existing_tags}
-    tags = [lower_map.get(t.lower(), t) for t in tags][:3]
+    remapped = []
+    for t in tags:
+        canon = lower_map.get(t.lower(), t)
+        if canon.lower() in lower_map and not _tag_has_text_evidence(canon, title, channel, description):
+            continue
+        if not _tag_has_text_evidence(canon, title, channel, description) and canon.lower() not in {
+            "готовка", "музыка", "игры", "обзоры", "новости", "подкаст", "обучение",
+            "история", "наука", "кино", "технологии", "спорт",
+        }:
+            # New slang-like tags without evidence — drop
+            continue
+        remapped.append(canon)
+    tags = remapped[:3]
     list_title = data.get("list_title")
     if list_title:
         list_title = str(list_title).strip()[:80] or None

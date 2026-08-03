@@ -61,15 +61,15 @@ Curate — идея отбора и создания коллекции. Kyro н
     },
     {
       q: "Что такое Kyro?",
-      a: "Kyro — спокойное место для вашей очереди YouTube. Вы сохраняете ролики, раскладываете их по папкам и тегам и возвращаетесь к ним в нужный момент — без шума чужой ленты.",
+      a: "Kyro — спокойное место для вашей библиотеки YouTube. Вы сохраняете ролики, раскладываете их по папкам и тегам и возвращаетесь к ним в нужный момент — без шума чужой ленты.",
     },
     {
       q: "Как добавить видео?",
       a: "В Android откройте ролик в YouTube и нажмите «Поделиться» → Kyro. В вебе вставьте ссылку через «Добавить» или сохраните из браузера. Мы бережно положим видео в вашу библиотеку.",
     },
     {
-      q: "Что такое очередь?",
-      a: "Очередь — то, что вы хотите посмотреть позже. Это не бесконечная лента рекомендаций, а ваш личный список: смотрите в подходящее время, отмечайте просмотренное и двигайтесь дальше.",
+      q: "Что такое сохранённые?",
+      a: "Это ролики, которые вы хотите посмотреть позже. Не бесконечная лента рекомендаций, а ваша личная библиотека: смотрите в подходящее время, отмечайте просмотренное и двигайтесь дальше.",
     },
     {
       q: "Как работает синхронизация с YouTube?",
@@ -373,7 +373,10 @@ Curate — идея отбора и создания коллекции. Kyro н
     return tags.map((t) => {
       const label = `${t.emoji ? t.emoji + " " : ""}${t.name}`;
       if (removable && videoId) {
-        return `<button type="button" class="tag-pill tag-pill-btn" data-untag="${t.id}" title="Снять тег">${escapeHtml(label)} ×</button>`;
+        return `<span class="tag-pill tag-pill-edit" data-tag-id="${t.id}">
+          <span>${escapeHtml(label)}</span>
+          <button type="button" class="tag-x" data-untag="${t.id}" title="Снять тег" aria-label="Снять тег">×</button>
+        </span>`;
       }
       return `<span class="tag-pill">${escapeHtml(label)}</span>`;
     }).join("");
@@ -402,16 +405,19 @@ Curate — идея отбора и создания коллекции. Kyro н
 
   function cardHtml(item, opts = {}) {
     const listId = opts.listId || "";
-    const spine = !!opts.spine;
+    const row = !!opts.row;
     const dur = item.duration_label ? `<span class="badge">${escapeHtml(item.duration_label)}</span>` : "";
     const boost = Number(item.interest || 0);
     const boostMark = boost >= 2 ? "🔥🔥" : boost === 1 ? "🔥" : boost < 0 ? "↓" : "";
     const pills = (item.user_tags || []).slice(0, 3).map((t) =>
       `<span class="tag-pill tag-pill-sm">${escapeHtml((t.emoji || "") + " " + t.name)}</span>`
     ).join("");
-    const cls = spine ? "card q-item" : "card";
+    const cls = row ? "card card-row" : "card";
     return `
-      <div class="${cls}" data-video-id="${escapeHtml(item.video_id)}" data-list-id="${escapeHtml(String(listId || ""))}">
+      <div class="${cls}" data-video-id="${escapeHtml(item.video_id)}" data-list-id="${escapeHtml(String(listId || ""))}" data-interest="${boost}">
+        <span class="moth" aria-hidden="true"></span>
+        <span class="moth" aria-hidden="true"></span>
+        <span class="moth" aria-hidden="true"></span>
         ${cardMenuHtml(item, { listId })}
         <a class="card-main" href="/v/${encodeURIComponent(item.video_id)}" data-nav draggable="false">
           <div class="card-thumb">
@@ -432,9 +438,49 @@ Curate — идея отбора и создания коллекции. Kyro н
       </div>`;
   }
 
-  function spineListHtml(items, opts = {}) {
+  function recentListHtml(items, opts = {}) {
     if (!items.length) return `<div class="empty">Пусто</div>`;
-    return `<div class="spine-list">${items.map((it) => cardHtml(it, { ...opts, spine: true })).join("")}</div>`;
+    return `<div class="recent-list">${items.map((it) => cardHtml(it, { ...opts, row: true })).join("")}</div>`;
+  }
+
+  function reorderRailsAfterInterest(videoId, level, boosted = []) {
+    const boostSet = new Set([videoId, ...(boosted || [])].map(String));
+    document.querySelectorAll(".rail-track").forEach((track) => {
+      const cards = [...track.querySelectorAll(".card[data-video-id]")];
+      if (!cards.some((c) => c.getAttribute("data-video-id") === videoId)) return;
+      cards.forEach((c) => {
+        const vid = c.getAttribute("data-video-id");
+        let cur = Number(c.getAttribute("data-interest") || 0);
+        if (vid === videoId) cur = level;
+        else if (boostSet.has(vid) && level >= 1) cur = Math.min(2, Math.max(cur, level >= 2 ? 1 : cur || 1));
+        else if (boostSet.has(vid) && level < 0) cur = Math.max(-1, cur - 1);
+        c.setAttribute("data-interest", String(cur));
+        const mark = c.querySelector(".card-boost");
+        if (mark) mark.remove();
+        if (cur >= 1) {
+          const thumb = c.querySelector(".card-thumb");
+          if (thumb) {
+            const span = document.createElement("span");
+            span.className = "card-boost";
+            span.textContent = cur >= 2 ? "🔥🔥" : "🔥";
+            thumb.appendChild(span);
+          }
+        }
+      });
+      cards
+        .sort((a, b) => Number(b.getAttribute("data-interest") || 0) - Number(a.getAttribute("data-interest") || 0))
+        .forEach((c) => track.appendChild(c));
+      const primary = track.querySelector(`.card[data-video-id="${CSS.escape(videoId)}"]`);
+      if (primary) {
+        primary.classList.add("card-spark");
+        setTimeout(() => primary.classList.remove("card-spark"), 700);
+        if (level >= 1) {
+          primary.scrollIntoView({ inline: "start", behavior: "smooth", block: "nearest" });
+        } else if (level < 0) {
+          primary.scrollIntoView({ inline: "end", behavior: "smooth", block: "nearest" });
+        }
+      }
+    });
   }
 
   function hideCardOptimistic(videoId, listId) {
@@ -459,7 +505,7 @@ Curate — идея отбора и создания коллекции. Kyro н
     try {
       if (act === "boost1" || act === "boost2" || act === "boost0" || act === "boost_down") {
         const level = act === "boost2" ? 2 : act === "boost1" ? 1 : act === "boost_down" ? -1 : 0;
-        await api(`/api/library/${encodeURIComponent(videoId)}`, {
+        const r = await api(`/api/library/${encodeURIComponent(videoId)}`, {
           method: "PATCH",
           body: JSON.stringify({ interest: level }),
         });
@@ -470,16 +516,7 @@ Curate — идея отбора и создания коллекции. Kyro н
           [-1]: "Менее интересно — ниже в теме",
         };
         toast(labels[level] || "Ок");
-        // Soft visual: refresh boost marks without full reload
-        document.querySelectorAll(`.card[data-video-id="${CSS.escape(videoId)}"] .card-boost`).forEach((el) => el.remove());
-        if (level >= 1) {
-          document.querySelectorAll(`.card[data-video-id="${CSS.escape(videoId)}"] .card-thumb`).forEach((thumb) => {
-            const span = document.createElement("span");
-            span.className = "card-boost";
-            span.textContent = level >= 2 ? "🔥🔥" : "🔥";
-            thumb.appendChild(span);
-          });
-        }
+        reorderRailsAfterInterest(videoId, level, r.boosted || []);
       } else if (act === "watched") {
         const restore = hideCardOptimistic(videoId, listId);
         const title = meta.title || "";
@@ -610,11 +647,10 @@ Curate — идея отбора и создания коллекции. Kyro н
     const name = me?.name || me?.email || "";
     return `
       <header class="topbar">
-        <a class="brand" href="/home" data-nav>
-          <div class="brand-mark" aria-hidden="true">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.2" fill="#fff" opacity="0.92"/></svg>
+        <a class="brand" href="/home" data-nav aria-label="Kyro">
+          <div class="brand-mark">
+            <span class="brand-mark-text">Kyro</span>
           </div>
-          <div class="brand-name">Kyro</div>
         </a>
         <form class="smart-search" id="smart-search" action="/search" method="get">
           <input type="search" name="q" id="smart-q" placeholder="Что хотите посмотреть?" autocomplete="off" enterkeyhint="search" />
@@ -623,7 +659,7 @@ Curate — идея отбора и создания коллекции. Kyro н
         </form>
         <nav class="nav">
           <button class="nav-btn ${active === "home" ? "active" : ""}" data-route="/home">Главная</button>
-          <button class="nav-btn ${active === "queue" ? "active" : ""}" data-route="/queue">Очередь</button>
+          <button class="nav-btn ${active === "queue" ? "active" : ""}" data-route="/queue">Библиотека</button>
           <button class="nav-btn ${active === "channels" ? "active" : ""}" data-route="/channels">Каналы</button>
           <button class="nav-btn ${active === "settings" ? "active" : ""}" data-route="/settings">Настройки</button>
           <button class="nav-btn" id="logout-btn" title="${escapeHtml(name)}">Выйти</button>
@@ -1508,7 +1544,7 @@ Curate — идея отбора и создания коллекции. Kyro н
         <h1>${has ? "Что посмотреть" : "Разложите видео"}</h1>
         <div class="stats stats-compact">
           <div class="stat"><b>${folders.length}</b> папок</div>
-          <div class="stat"><b>${shell.counts?.queue ?? "—"}</b> в очереди</div>
+          <div class="stat"><b>${shell.counts?.queue ?? "—"}</b> сохранено</div>
           <div class="stat muted" id="home-sync-stat" style="display:none">Синк…</div>
         </div>
         ${classifyOnly}
@@ -1731,10 +1767,10 @@ Curate — идея отбора и создания коллекции. Kyro н
       block.className = "rail";
       block.innerHTML = `
         <div class="rail-head">
-          <h2>Сейчас в очереди</h2>
+          <h2>Недавно сохранили</h2>
           <span class="muted" style="font-size:13px">${recentSource ? escapeHtml(recentSource) + " · " : ""}${recent.length}</span>
         </div>
-        ${spineListHtml(recent.slice(0, 12))}`;
+        ${recentListHtml(recent.slice(0, 12))}`;
       host.appendChild(block);
       wireCardMenus(block);
     }
@@ -1828,15 +1864,15 @@ Curate — идея отбора и создания коллекции. Kyro н
     const data = await api(`/api/library?${qs}`);
     const items = data.items || [];
     const statusTitle = {
-      queue: "Очередь",
+      queue: "Сохранённые",
       in_progress: "Начатые",
       watched: "Просмотренные",
       archived: "Архив",
-    }[status] || "Очередь";
+    }[status] || "Библиотека";
     const statusHint = {
       queue: "Только длинные (6 мин – 10 ч). Короткие, клипы и 10+ часов — вкладками ниже.",
-      in_progress: "Открыл на YouTube или отметил «Начал». Из общей очереди уже убрано.",
-      watched: "Уже посмотрел — в очереди этих роликов больше нет.",
+      in_progress: "Открыл на YouTube или отметил «Начал». Из сохранённых уже убрано.",
+      watched: "Уже посмотрел — в сохранённых этих роликов больше нет.",
       archived: "Скрытые из плана.",
     }[status];
     app.innerHTML = `
@@ -1848,7 +1884,7 @@ Curate — идея отбора и создания коллекции. Kyro н
           : statusHint}</p>
       </section>
       <div class="filter-chips" id="status-chips">
-        <button type="button" class="chip ${status === "queue" ? "active" : ""}" data-status="queue">Очередь</button>
+        <button type="button" class="chip ${status === "queue" ? "active" : ""}" data-status="queue">Сохранённые</button>
         <button type="button" class="chip ${status === "in_progress" ? "active" : ""}" data-status="in_progress">Начатые</button>
         <button type="button" class="chip ${status === "watched" ? "active" : ""}" data-status="watched">Просмотренные</button>
       </div>
@@ -1866,13 +1902,13 @@ Curate — идея отбора и создания коллекции. Kyro н
       </div>
       <div class="muted" style="margin:0 0 12px;font-size:13px">Показано: ${items.length}${channel ? ` · ${escapeHtml(channel)}` : ""}</div>
       <div id="queue-grid">
-        ${items.length ? spineListHtml(items) : `<div class="empty">Очередь пока пуста. ${status === "queue" ? `<a href="/queue?status=in_progress" data-nav>Начатые</a> · <a href="/channels" data-nav>каналы</a>` : `<a href="/queue?status=queue" data-nav>К очереди</a>`}</div>`}
+        ${items.length ? recentListHtml(items) : `<div class="empty">Пока пусто. ${status === "queue" ? `<a href="/queue?status=in_progress" data-nav>Начатые</a> · <a href="/channels" data-nav>каналы</a>` : `<a href="/queue?status=queue" data-nav>К сохранённым</a>`}</div>`}
       </div>`;
     wireNav();
     wireCardMenus(app);
     const paint = (list) => {
       $("#queue-grid").innerHTML = list.length
-        ? spineListHtml(list)
+        ? recentListHtml(list)
         : `<div class="empty">Ничего не нашлось</div>`;
       wireNav();
       wireCardMenus($("#queue-grid"));
@@ -2071,7 +2107,7 @@ Curate — идея отбора и создания коллекции. Kyro н
           <textarea id="yt-urls" rows="4" placeholder="https://youtu.be/…">${escapeHtml(prefill)}</textarea>
         </div>
         <div class="btn-row">
-          <button class="btn" id="save-urls">В очередь</button>
+          <button class="btn" id="save-urls">Сохранить</button>
           <label class="btn secondary file-btn">Файл со ссылками
             <input type="file" id="urls-file" accept=".txt,.csv,text/plain" hidden />
           </label>
@@ -2251,28 +2287,67 @@ Curate — идея отбора и создания коллекции. Kyro н
     }
   }
 
+  async function offerSimilarTag(videoId, tagId, tagName) {
+    let overlay = $("#tag-similar-sheet");
+    if (overlay) overlay.remove();
+    let items = [];
+    try {
+      const sim = await api(`/api/videos/${encodeURIComponent(videoId)}/similar?limit=12`);
+      items = (sim.items || []).filter((it) => it.video_id !== videoId).slice(0, 8);
+    } catch (_) {}
+    if (!items.length) return;
+    overlay = document.createElement("div");
+    overlay.id = "tag-similar-sheet";
+    overlay.className = "sheet-overlay";
+    overlay.innerHTML = `
+      <div class="sheet-card" role="dialog" aria-label="Похожие для тега">
+        <div class="sheet-head">
+          <h2>Ещё с тегом «${escapeHtml(tagName)}»?</h2>
+          <button type="button" class="btn ghost" id="tag-sim-close">Закрыть</button>
+        </div>
+        <p class="hint">Вы отметили одно видео. Отметьте похожие — после нескольких примеров Kyro научится предлагать этот тег точнее.</p>
+        <div class="tag-sim-rail rail-track drag-scroll">
+          ${items.map((it) => `
+            <label class="tag-sim-card">
+              <input type="checkbox" data-sim-vid="${escapeHtml(it.video_id)}" />
+              <img src="${escapeHtml(it.thumb_url || "")}" alt="" loading="lazy" />
+              <span class="tag-sim-title">${escapeHtml(it.title || "")}</span>
+            </label>`).join("")}
+        </div>
+        <div class="btn-row" style="margin-top:14px">
+          <button type="button" class="btn" id="tag-sim-apply">Повесить тег</button>
+          <button type="button" class="btn ghost" id="tag-sim-skip">Позже</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    const close = () => overlay.remove();
+    $("#tag-sim-close").onclick = close;
+    $("#tag-sim-skip").onclick = close;
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+    enableDragScroll(overlay);
+    $("#tag-sim-apply").onclick = async () => {
+      const picked = [...overlay.querySelectorAll("[data-sim-vid]:checked")].map((el) => el.getAttribute("data-sim-vid"));
+      if (!picked.length) return toast("Выберите хотя бы одно видео");
+      let ok = 0;
+      for (const vid of picked) {
+        try {
+          await api(`/api/videos/${encodeURIComponent(vid)}/tags`, {
+            method: "POST",
+            body: JSON.stringify({ tag_id: tagId, name: tagName }),
+          });
+          ok += 1;
+        } catch (_) {}
+      }
+      toast(ok ? `Тег на ${ok} видео` : "Не удалось повесить");
+      close();
+    };
+  }
+
   async function renderVideo(videoId) {
     const data = await api(`/api/videos/${encodeURIComponent(videoId)}`);
     const item = data.item;
-    let allTags = { tags: [] };
-    try { allTags = await api("/api/tags"); } catch (_) {}
-    if (!(allTags.tags || []).length) {
-      try { allTags = await api("/api/tags/seed-defaults", { method: "POST", body: "{}" }); } catch (_) {}
-    }
-    let similar = { items: [] };
-    let ytRelated = { items: [], query: "" };
-    try {
-      similar = await api(`/api/videos/${encodeURIComponent(videoId)}/similar`);
-    } catch (_) {}
-    try {
-      ytRelated = await api(`/api/videos/${encodeURIComponent(videoId)}/yt-related`);
-    } catch (_) {}
-    const assignedIds = new Set((item.user_tags || []).map((t) => t.id));
-    const pickHtml = (allTags.tags || []).map((t) => {
-      const on = assignedIds.has(t.id);
-      const label = `${t.emoji ? t.emoji + " " : ""}${t.name}`;
-      return `<button type="button" class="tag-pill tag-pill-btn ${on ? "tag-pill-on" : ""}" data-toggle-tag="${t.id}" data-tag-name="${escapeHtml(t.name)}">${escapeHtml(label)}${on ? " ✓" : ""}</button>`;
-    }).join("");
+    const tagsPromise = api("/api/tags").catch(() => ({ tags: [] }));
+    const listsPromise = api("/api/lists").catch(() => ({ lists: [] }));
 
     const unavailable = item.is_unavailable || /^(private|deleted) video$/i.test(item.title || "");
     const noteVal = item.note || "";
@@ -2289,13 +2364,31 @@ Curate — идея отбора и создания коллекции. Kyro н
           <div class="muted">${escapeHtml(item.channel_title || "")}${item.duration_label ? " · " + escapeHtml(item.duration_label) : ""}
             ${item.channel_title && !unavailable ? ` · <a href="/queue?kind=video&channel=${encodeURIComponent(item.channel_title)}" data-nav>все с канала</a>` : ""}
           </div>
-          <div id="assigned-tags" class="tags-row" style="margin-top:12px">
-            ${tagPillsHtml(item.user_tags || [], { removable: true, videoId })}
+          <div class="tags-block" style="margin-top:12px">
+            <div class="tags-block-head">
+              <span class="muted" style="font-size:13px">Теги</span>
+              <button type="button" class="btn ghost tags-edit-btn" id="tags-edit-toggle" title="Редактировать теги" aria-label="Редактировать теги">✎</button>
+            </div>
+            <div id="assigned-tags" class="tags-row" data-editing="0">
+              ${tagPillsHtml(item.user_tags || [], { removable: false, videoId })}
+            </div>
+            <div id="tags-edit-panel" class="tags-edit-panel hidden">
+              <div id="tag-picker" class="tags-cloud"></div>
+              <div class="field" style="margin-top:12px">
+                <label>Новый тег</label>
+                <div class="btn-row">
+                  <input id="new-tag" placeholder="название" style="flex:1" />
+                  <button class="btn secondary" id="add-tag">Создать и повесить</button>
+                </div>
+              </div>
+              <button class="btn ghost" id="ai-tag" style="margin-top:8px;width:100%">Подсказать тему (AI)</button>
+              <pre id="ai-out" class="muted" style="white-space:pre-wrap;font-size:12px;margin-top:8px"></pre>
+            </div>
           </div>
           <p class="muted" style="margin-top:14px;line-height:1.5;white-space:pre-wrap">${escapeHtml((item.description || "").slice(0, 600))}</p>
           <div class="field lexicon-field" style="margin-top:16px">
-            <label>Как ты это назовёшь (своя лексика)</label>
-            <textarea id="user-note" rows="2" placeholder="Например: стрёмная хрень / уют на вечер / хуйня для деградантов">${escapeHtml(noteVal)}</textarea>
+            <label>Как Вы это назовёте (своя лексика)</label>
+            <textarea id="user-note" rows="2" placeholder="Например: стрёмная хрень / уют на вечер">${escapeHtml(noteVal)}</textarea>
             <button type="button" class="btn secondary" id="save-note" style="margin-top:8px">Сохранить описание</button>
           </div>
         </div>
@@ -2303,26 +2396,15 @@ Curate — идея отбора и создания коллекции. Kyro н
           <div class="muted" style="margin:0 0 10px;font-size:13px">Статус: <b>${
             item.status === "watched" ? "просмотрено" :
             item.status === "in_progress" ? "начато" :
-            item.status === "archived" ? "архив" : "в очереди"
+            item.status === "archived" ? "архив" : "сохранено"
           }</b></div>
           <div class="btn-row" style="flex-direction:column;align-items:stretch">
             <button class="btn" id="open-yt">Смотреть на YouTube</button>
             <button class="btn secondary" id="mark-started"${item.status === "in_progress" ? " disabled" : ""}>${item.status === "in_progress" ? "Уже в начатых" : "Отметить начатым"}</button>
             <button class="btn secondary" id="mark-watched"${item.status === "watched" ? " disabled" : ""}>${item.status === "watched" ? "Уже в просмотренных" : "Отметить просмотренным"}</button>
-            <button class="btn ghost" id="back-queue">Вернуть в очередь</button>
+            <button class="btn ghost" id="back-queue">Вернуть в сохранённые</button>
             <button class="btn ghost" id="delete-item">Убрать из библиотеки</button>
           </div>
-          <h3 style="margin:18px 0 8px;font-size:15px">Теги</h3>
-          <div id="tag-picker" class="tags-cloud">${pickHtml || `<span class="muted">Сначала создай теги на вкладке «Теги»</span>`}</div>
-          <div class="field" style="margin-top:12px">
-            <label>Или новый тег</label>
-            <div class="btn-row">
-              <input id="new-tag" placeholder="название" style="flex:1" />
-              <button class="btn secondary" id="add-tag">Создать и повесить</button>
-            </div>
-          </div>
-          <button class="btn ghost" id="ai-tag" style="margin-top:8px;width:100%">Подсказать тему (AI)</button>
-          <pre id="ai-out" class="muted" style="white-space:pre-wrap;font-size:12px;margin-top:8px"></pre>
           <div class="field" style="margin-top:16px">
             <label>В список</label>
             <div class="btn-row">
@@ -2334,20 +2416,75 @@ Curate — идея отбора и создания коллекции. Kyro н
         </div>
       </div>
       <section class="rail" style="margin-top:28px">
-        <div class="rail-head"><h2>Похожие из твоих</h2>
+        <div class="rail-head"><h2>Похожие из ваших</h2>
           <span class="muted" style="font-size:13px">по описанию и вайбу</span>
         </div>
-        <div class="rail-track drag-scroll">
-          ${similar.items?.length ? similar.items.map(cardHtml).join("") : `<div class="empty">Добавь ещё видео — появятся похожие по смыслу</div>`}
+        <div class="rail-track drag-scroll" id="similar-rail">
+          <div class="empty">Загружаю похожие…</div>
         </div>
       </section>
       <section class="rail" style="margin-top:18px">
         <div class="rail-head"><h2>Похожие на YouTube</h2>
-          <span class="muted" style="font-size:13px">${ytRelated.query ? escapeHtml(String(ytRelated.query).replace(/^"|"$/g, "")) : "по теме · без шорцов"}</span>
+          <span class="muted" style="font-size:13px" id="yt-related-hint">подгружаю…</span>
         </div>
         <div class="rail-track drag-scroll" id="yt-related-rail">
-          ${(ytRelated.items || []).length
-            ? ytRelated.items.map((it) => `
+          <div class="empty">Загружаю…</div>
+        </div>
+      </section>
+      <div id="note-sheet" class="note-sheet hidden"></div>`;
+    wireNav();
+    enableDragScroll(app);
+    wireCardMenus(app);
+
+    let allTags = await tagsPromise;
+    if (!(allTags.tags || []).length) {
+      try { allTags = await api("/api/tags/seed-defaults", { method: "POST", body: "{}" }); } catch (_) {}
+    }
+    const assignedIds = new Set((item.user_tags || []).map((t) => t.id));
+    const pickHtml = (allTags.tags || []).map((t) => {
+      const on = assignedIds.has(t.id);
+      const label = `${t.emoji ? t.emoji + " " : ""}${t.name}`;
+      return `<button type="button" class="tag-pill tag-pill-btn ${on ? "tag-pill-on" : ""}" data-toggle-tag="${t.id}" data-tag-name="${escapeHtml(t.name)}">${escapeHtml(label)}${on ? " ✓" : ""}</button>`;
+    }).join("");
+    const picker = $("#tag-picker");
+    if (picker) picker.innerHTML = pickHtml || `<span class="muted">Сначала создайте теги</span>`;
+
+    const lists = await listsPromise;
+    const sel = $("#list-select");
+    if (sel) {
+      sel.innerHTML = (lists.lists || []).map((l) =>
+        `<option value="${l.id}">${escapeHtml(l.title)}</option>`
+      ).join("") || `<option value="">Нет списков</option>`;
+    }
+
+    // Lazy rails — don't block first paint
+    (async () => {
+      const host = $("#similar-rail");
+      try {
+        const similar = await api(`/api/videos/${encodeURIComponent(videoId)}/similar`);
+        if (!host) return;
+        host.innerHTML = similar.items?.length
+          ? similar.items.map(cardHtml).join("")
+          : `<div class="empty">Добавьте ещё видео — появятся похожие по смыслу</div>`;
+        wireCardMenus(host);
+        wireNav();
+      } catch (_) {
+        if (host) host.innerHTML = `<div class="empty">Не удалось загрузить</div>`;
+      }
+    })();
+    (async () => {
+      const host = $("#yt-related-rail");
+      const hint = $("#yt-related-hint");
+      try {
+        const ytRelated = await api(`/api/videos/${encodeURIComponent(videoId)}/yt-related`);
+        if (hint) {
+          hint.textContent = ytRelated.query
+            ? String(ytRelated.query).replace(/^"|"$/g, "")
+            : "по теме · без шорцов";
+        }
+        if (!host) return;
+        host.innerHTML = (ytRelated.items || []).length
+          ? ytRelated.items.map((it) => `
               <div class="card yt-discover-card" data-video-id="${escapeHtml(it.video_id)}">
                 <a class="card-main" href="${escapeHtml(it.watch_url)}" target="_blank" rel="noopener">
                   <div class="card-thumb">
@@ -2361,32 +2498,56 @@ Curate — идея отбора и создания коллекции. Kyro н
                 </a>
                 <div class="card-actions">
                   <a class="btn play-btn" href="${escapeHtml(it.watch_url)}" target="_blank" rel="noopener">▶</a>
-                  <button type="button" class="btn secondary" data-save-yt="${escapeHtml(it.video_id)}">В очередь</button>
+                  <button type="button" class="btn secondary" data-save-yt="${escapeHtml(it.video_id)}">Сохранить</button>
                 </div>
               </div>`).join("")
-            : `<div class="empty">${
-                ytRelated.error === "no_youtube_search_auth"
-                  ? "Нет доступа к YouTube Search — нужен YOUTUBE_API_KEY на сервере"
-                  : (ytRelated.note || "По теме ничего не нашлось — попробуй другой ролик")
-              }</div>`}
-        </div>
-      </section>
-      <div id="note-sheet" class="note-sheet hidden"></div>`;
-    wireNav();
-    enableDragScroll(app);
-    wireCardMenus(app);
-    const lists = await api("/api/lists");
-    const sel = $("#list-select");
-    sel.innerHTML = (lists.lists || []).map((l) =>
-      `<option value="${l.id}">${escapeHtml(l.title)}</option>`
-    ).join("") || `<option value="">Нет списков</option>`;
+          : `<div class="empty">${
+              ytRelated.error === "no_youtube_search_auth"
+                ? "Нет доступа к YouTube Search — нужен YOUTUBE_API_KEY на сервере"
+                : (ytRelated.note || "По теме ничего не нашлось")
+            }</div>`;
+        host.querySelectorAll("[data-save-yt]").forEach((btn) => {
+          btn.onclick = async () => {
+            const vid = btn.getAttribute("data-save-yt");
+            try {
+              await api("/api/videos/save", {
+                method: "POST",
+                body: JSON.stringify({ url: `https://www.youtube.com/watch?v=${vid}` }),
+              });
+              toast("Сохранено");
+              btn.textContent = "Уже есть";
+              btn.disabled = true;
+            } catch (e) {
+              toast(e.message);
+            }
+          };
+        });
+      } catch (_) {
+        if (host) host.innerHTML = `<div class="empty">Не удалось загрузить</div>`;
+        if (hint) hint.textContent = "";
+      }
+    })();
+
+    const setEditing = (on) => {
+      const row = $("#assigned-tags");
+      const panel = $("#tags-edit-panel");
+      const toggle = $("#tags-edit-toggle");
+      if (row) row.setAttribute("data-editing", on ? "1" : "0");
+      if (panel) panel.classList.toggle("hidden", !on);
+      if (toggle) toggle.classList.toggle("active", !!on);
+      if (row) {
+        row.innerHTML = tagPillsHtml(item.user_tags || [], { removable: !!on, videoId });
+        wireUntag();
+      }
+    };
 
     const refreshTags = (nextItem) => {
+      Object.assign(item, { user_tags: nextItem.user_tags || [] });
+      const editing = $("#assigned-tags")?.getAttribute("data-editing") === "1";
       const box = $("#assigned-tags");
-      if (box) box.innerHTML = tagPillsHtml(nextItem.user_tags || [], { removable: true, videoId });
+      if (box) box.innerHTML = tagPillsHtml(item.user_tags || [], { removable: editing, videoId });
       wireUntag();
-      // refresh picker state without full reload
-      const ids = new Set((nextItem.user_tags || []).map((t) => t.id));
+      const ids = new Set((item.user_tags || []).map((t) => t.id));
       document.querySelectorAll("[data-toggle-tag]").forEach((btn) => {
         const id = Number(btn.getAttribute("data-toggle-tag"));
         const on = ids.has(id);
@@ -2400,6 +2561,7 @@ Curate — идея отбора и создания коллекции. Kyro н
       document.querySelectorAll("[data-untag]").forEach((btn) => {
         btn.onclick = async (e) => {
           e.preventDefault();
+          e.stopPropagation();
           try {
             const r = await api(
               `/api/videos/${encodeURIComponent(videoId)}/tags/${btn.getAttribute("data-untag")}`,
@@ -2414,6 +2576,14 @@ Curate — идея отбора и создания коллекции. Kyro н
       });
     }
     wireUntag();
+
+    const editToggle = $("#tags-edit-toggle");
+    if (editToggle) {
+      editToggle.onclick = () => {
+        const on = $("#assigned-tags")?.getAttribute("data-editing") !== "1";
+        setEditing(on);
+      };
+    }
 
     document.querySelectorAll("[data-toggle-tag]").forEach((btn) => {
       btn.onclick = async () => {
@@ -2434,6 +2604,7 @@ Curate — идея отбора и создания коллекции. Kyro н
             });
             refreshTags(r.item || { user_tags: r.user_tags || [] });
             toast(`Тег: ${name}`);
+            offerSimilarTag(videoId, tagId || r.tag?.id, name);
           }
         } catch (err) {
           toast(err.message);
@@ -2448,7 +2619,7 @@ Curate — идея отбора и создания коллекции. Kyro н
           body: "{}",
         });
         window.open(r.watch_url || item.watch_url, "_blank", "noopener");
-        if (r.moved_to_started) toast("Ушло в «Начатые» — из очереди убрано");
+        if (r.moved_to_started) toast("Ушло в «Начатые»");
         else if (item.status === "queue") toast("Открыто");
       } catch (_) {
         window.open(item.watch_url, "_blank", "noopener");
@@ -2459,7 +2630,7 @@ Curate — идея отбора и создания коллекции. Kyro н
         method: "PATCH",
         body: JSON.stringify({ status: "in_progress" }),
       });
-      toast("В «Начатые» — из очереди убрано");
+      toast("В «Начатые»");
       renderVideo(videoId);
     };
     $("#mark-watched").onclick = () => {
@@ -2474,7 +2645,6 @@ Curate — идея отбора и создания коллекции. Kyro н
               body: JSON.stringify({ status: "watched" }),
             });
             openLexiconPrompt(videoId, { note: noteVal, title: item.title || "" });
-            // soft refresh status without killing the prompt
             const btn = $("#mark-watched");
             if (btn) {
               btn.disabled = true;
@@ -2486,7 +2656,6 @@ Curate — идея отбора и создания коллекции. Kyro н
         },
       });
     };
-    // Remove old note-sheet inline handler block — lexicon is global
     const saveNoteBtn = $("#save-note");
     if (saveNoteBtn) {
       saveNoteBtn.onclick = async () => {
@@ -2498,28 +2667,12 @@ Curate — идея отбора и создания коллекции. Kyro н
         toast(note ? "Описание сохранено" : "Описание очищено");
       };
     }
-    document.querySelectorAll("[data-save-yt]").forEach((btn) => {
-      btn.onclick = async () => {
-        const vid = btn.getAttribute("data-save-yt");
-        try {
-          await api("/api/videos/save", {
-            method: "POST",
-            body: JSON.stringify({ url: `https://www.youtube.com/watch?v=${vid}` }),
-          });
-          toast("В очереди");
-          btn.textContent = "Уже есть";
-          btn.disabled = true;
-        } catch (e) {
-          toast(e.message);
-        }
-      };
-    });
     $("#back-queue").onclick = async () => {
       await api(`/api/library/${encodeURIComponent(videoId)}`, {
         method: "PATCH",
         body: JSON.stringify({ status: "queue" }),
       });
-      toast("Снова в очереди");
+      toast("Снова в сохранённых");
       renderVideo(videoId);
     };
     $("#delete-item").onclick = () => {
@@ -2539,16 +2692,18 @@ Curate — идея отбора и создания коллекции. Kyro н
     };
     $("#add-tag").onclick = async () => {
       const name = $("#new-tag").value.trim();
-      if (!name) return toast("Напиши тег");
+      if (!name) return toast("Напишите тег");
       try {
-        // create predefined + assign
         await api("/api/tags", { method: "POST", body: JSON.stringify({ name }) });
         const r = await api(`/api/videos/${encodeURIComponent(videoId)}/tags`, {
           method: "POST",
           body: JSON.stringify({ name }),
         });
         toast(`Тег «${name}»`);
-        renderVideo(videoId);
+        refreshTags(r.item || { user_tags: r.user_tags || [] });
+        const tag = (r.item?.user_tags || r.user_tags || []).find((t) => (t.name || "").toLowerCase() === name.toLowerCase());
+        if (tag) offerSimilarTag(videoId, tag.id, tag.name);
+        setEditing(true);
       } catch (e) {
         toast(e.message);
       }
@@ -2558,24 +2713,54 @@ Curate — идея отбора и создания коллекции. Kyro н
       btn.classList.add("busy");
       const box = mountProgress($("#ai-out"), {
         title: "Смотрю ролик",
-        detail: "Подбираю тему и теги",
+        detail: "Подбираю тему",
       });
       try {
         const r = await runBusySteps(box, [
           { title: "Читаю название и описание", detail: "контекст ролика" },
-          { title: "Спрашиваю модель", detail: "тема и теги" },
-          { title: "Вешаю теги", detail: "в библиотеку" },
+          { title: "Спрашиваю модель", detail: "только по смыслу" },
+          { title: "Готовлю предложения", detail: "без автоприменения" },
         ], api(`/api/videos/${encodeURIComponent(videoId)}/suggest-themes`, {
           method: "POST",
-          body: JSON.stringify({ apply: true }),
+          body: JSON.stringify({ apply: false }),
         }));
+        const suggested = r.suggestion?.tags || [];
         finishProgress(box, {
           ok: true,
-          title: "Теги готовы",
-          detail: (r.suggestion?.tags || []).join(", ") || "без новых тегов",
+          title: suggested.length ? "Предложения" : "Без уверенных тегов",
+          detail: suggested.join(", ") || (r.suggestion?.reason || "ничего не подходит"),
         });
-        toast(r.suggestion?.tags?.length ? `Теги: ${r.suggestion.tags.join(", ")}` : "Готово");
-        setTimeout(() => renderVideo(videoId), 500);
+        if (suggested.length) {
+          const pickerEl = $("#tag-picker");
+          if (pickerEl) {
+            const wrap = document.createElement("div");
+            wrap.className = "ai-suggest-row";
+            wrap.innerHTML = `<div class="muted" style="font-size:12px;margin:8px 0 4px">Предложено — нажмите, чтобы повесить:</div>` +
+              suggested.map((name) =>
+                `<button type="button" class="tag-pill tag-pill-btn" data-apply-suggest="${escapeHtml(name)}">${escapeHtml(name)}</button>`
+              ).join("");
+            pickerEl.prepend(wrap);
+            wrap.querySelectorAll("[data-apply-suggest]").forEach((b) => {
+              b.onclick = async () => {
+                const name = b.getAttribute("data-apply-suggest");
+                try {
+                  const rr = await api(`/api/videos/${encodeURIComponent(videoId)}/tags`, {
+                    method: "POST",
+                    body: JSON.stringify({ name }),
+                  });
+                  refreshTags(rr.item || { user_tags: rr.user_tags || [] });
+                  toast(`Тег: ${name}`);
+                  const tag = (rr.item?.user_tags || []).find((t) => (t.name || "").toLowerCase() === name.toLowerCase());
+                  if (tag) offerSimilarTag(videoId, tag.id, tag.name);
+                } catch (e) {
+                  toast(e.message);
+                }
+              };
+            });
+          }
+        } else {
+          toast("Не нашлось обоснованных тегов");
+        }
       } catch (e) {
         finishProgress(box, { ok: false, title: "Не вышло", detail: e.message });
         toast(e.message);
@@ -2585,7 +2770,7 @@ Curate — идея отбора и создания коллекции. Kyro н
     };
     $("#add-to-list").onclick = async () => {
       const listId = sel.value;
-      if (!listId) return toast("Сначала создай список");
+      if (!listId) return toast("Сначала создайте список");
       await api(`/api/lists/${listId}/items`, {
         method: "POST",
         body: JSON.stringify({ video_id: videoId }),

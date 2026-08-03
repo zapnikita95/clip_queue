@@ -251,7 +251,7 @@ fun VideoListRow(
     VideoSpineItem(card = card, onAction = onAction)
 }
 
-/** Vertical Kyro queue: luminous spine + thumbnail rows. */
+/** Vertical recent saves: thumbnail rows without a queue spine. */
 @Composable
 fun VideoSpine(
     items: List<VideoCard>,
@@ -274,31 +274,14 @@ fun VideoSpineItem(
     onAction: (VideoCard, CardAction) -> Unit,
 ) {
     var menu by remember { mutableStateOf(false) }
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 8.dp, vertical = 5.dp),
-    ) {
         Box(
             modifier = Modifier
-                .align(Alignment.CenterStart)
-                .padding(start = 10.dp)
-                .width(1.dp)
-                .fillMaxHeight()
-                .background(CqText.copy(alpha = 0.18f)),
-        )
-        Box(
-            modifier = Modifier
-                .align(Alignment.CenterStart)
-                .padding(start = 7.dp)
-                .size(7.dp)
-                .clip(CircleShape)
-                .background(CqText.copy(alpha = 0.45f)),
-        )
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = 5.dp),
+        ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(start = 28.dp)
                 .clip(RoundedCornerShape(14.dp))
                 .background(CqElev.copy(alpha = 0.55f))
                 .border(1.dp, CqBorder, RoundedCornerShape(14.dp))
@@ -475,7 +458,7 @@ fun BottomBar(
         horizontalArrangement = Arrangement.SpaceEvenly,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        BottomTab(0, selected, "Очередь", Icons.Default.Home, onHome, Modifier.weight(1f))
+        BottomTab(0, selected, "Библиотека", Icons.Default.Home, onHome, Modifier.weight(1f))
         BottomTab(1, selected, "Папки", Icons.Default.Folder, onFolders, Modifier.weight(1f))
         BottomTab(2, selected, "Профиль", Icons.Default.Person, onProfile, Modifier.weight(1f))
     }

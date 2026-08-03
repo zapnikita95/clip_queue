@@ -3,6 +3,7 @@
 import android.net.Uri
 import androidx.browser.customtabs.CustomTabsIntent
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -36,6 +37,7 @@ import ru.clipqueue.app.ApiClient
 import ru.clipqueue.app.SessionStore
 import ru.clipqueue.app.ui.theme.CqAccent
 import ru.clipqueue.app.ui.theme.CqBg
+import ru.clipqueue.app.ui.theme.CqBorder
 import ru.clipqueue.app.ui.theme.CqElev
 import ru.clipqueue.app.ui.theme.CqMuted
 import ru.clipqueue.app.ui.theme.CqOnAccent
@@ -70,14 +72,13 @@ fun AuthScreen(
             modifier = Modifier
                 .size(72.dp)
                 .clip(RoundedCornerShape(18.dp))
-                .background(CqElev),
+                .background(CqElev)
+                .border(1.dp, CqBorder, RoundedCornerShape(18.dp)),
             contentAlignment = Alignment.Center,
         ) {
-            Text("Kyro", color = CqText, style = MaterialTheme.typography.labelSmall)
+            Text("Kyro", color = CqText, style = MaterialTheme.typography.titleMedium)
         }
         Spacer(Modifier.height(20.dp))
-        Text("Kyro", style = MaterialTheme.typography.displayLarge)
-        Spacer(Modifier.height(10.dp))
         Text(
             text = "Сохраняйте из YouTube — возвращайтесь в нужный момент.",
             style = MaterialTheme.typography.bodyMedium,

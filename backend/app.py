@@ -1248,9 +1248,14 @@ def create_app() -> Flask:
                 interest = max(-1, min(2, int(body.get("interest"))))
             except (TypeError, ValueError):
                 interest = 0
-            _apply_interest_and_queue_boost(uid, video_id, interest)
+            boosted = _apply_interest_and_queue_boost(uid, video_id, interest)
             if status not in ("queue", "in_progress", "watched", "archived", "dismissed") and note is None:
-                return jsonify({"ok": True, "item": _library_card(uid, video_id)})
+                return jsonify({
+                    "ok": True,
+                    "item": _library_card(uid, video_id),
+                    "interest": interest,
+                    "boosted": boosted,
+                })
         if note is not None:
             sets.append("note = ?")
             params.append(str(note)[:2000])
