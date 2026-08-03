@@ -7,10 +7,6 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .DS_Store
-data/
-*.db
-*.sqlite
-*.sqlite3
 .local/
 dist/
 build/
@@ -23,3 +19,6 @@ android-app/.gradle/
 android-app/**/build/
 *.apk
 *.aab
+
+# Local SQLite / runtime data (repo root only)
+/data/

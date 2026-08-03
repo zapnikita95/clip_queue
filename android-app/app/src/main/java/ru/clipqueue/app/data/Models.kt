@@ -1,0 +1,98 @@
+package ru.clipqueue.app.data
+
+data class MeResponse(
+    val ok: Boolean? = null,
+    val user: UserDto? = null,
+    val youtube_connected: Boolean? = null,
+    val library_count: Int? = null,
+    val last_youtube_sync: LastSyncDto? = null,
+    val google_oauth_configured: Boolean? = null,
+    val error: String? = null,
+)
+
+data class LastSyncDto(
+    val status: String? = null,
+    val at: String? = null,
+)
+
+data class UserDto(
+    val id: Int? = null,
+    val email: String? = null,
+    val name: String? = null,
+)
+
+data class AuthResponse(
+    val ok: Boolean? = null,
+    val token: String? = null,
+    val user: UserDto? = null,
+    val error: String? = null,
+)
+
+data class SaveResponse(
+    val ok: Boolean? = null,
+    val error: String? = null,
+    val classified_into: List<ClassifiedInto>? = null,
+)
+
+data class ClassifiedInto(
+    val list_id: Int? = null,
+    val list_title: String? = null,
+)
+
+data class HomeShell(
+    val ok: Boolean? = null,
+    val rails: List<RailMeta>? = null,
+    val error: String? = null,
+)
+
+data class RailMeta(
+    val id: String? = null,
+    val title: String? = null,
+)
+
+data class RailResponse(
+    val ok: Boolean? = null,
+    val items: List<VideoCard>? = null,
+    val error: String? = null,
+)
+
+data class VideoCard(
+    val video_id: String? = null,
+    val title: String? = null,
+    val channel_title: String? = null,
+    val thumb_url: String? = null,
+    val duration_sec: Int? = null,
+    val status: String? = null,
+    val watch_url: String? = null,
+)
+
+data class ListsResponse(
+    val ok: Boolean? = null,
+    val lists: List<ListCard>? = null,
+    val error: String? = null,
+)
+
+data class ListCard(
+    val id: Int? = null,
+    val title: String? = null,
+    val count: Int? = null,
+)
+
+data class ListDetailResponse(
+    val ok: Boolean? = null,
+    val list: ListCard? = null,
+    val items: List<VideoCard>? = null,
+    val error: String? = null,
+)
+
+data class OpenResponse(
+    val ok: Boolean? = null,
+    val watch_url: String? = null,
+    val error: String? = null,
+)
+
+data class SyncStartResponse(
+    val ok: Boolean? = null,
+    val job: Map<String, Any?>? = null,
+    val error: String? = null,
+)
