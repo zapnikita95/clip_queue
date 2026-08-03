@@ -33,6 +33,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -41,6 +42,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -60,35 +62,40 @@ import ru.clipqueue.app.ui.theme.CqElev2
 import ru.clipqueue.app.ui.theme.CqMuted
 import ru.clipqueue.app.ui.theme.CqText
 
+private val TrashHotRed = Color(0xFFE53935)
+
+/**
+ * Floating trash for folder edit mode.
+ * Round invisible hit zone (larger than the icon); icon turns red when a tile is over it.
+ * No label text.
+ */
 @Composable
 fun FolderTrashZone(
     editing: Boolean,
     hot: Boolean,
     onBounds: (Rect) -> Unit,
-    onDone: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     if (!editing) return
     Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 6.dp)
-            .height(64.dp)
-            .clip(RoundedCornerShape(16.dp))
-            .background(if (hot) CqAccent.copy(alpha = 0.35f) else CqElev)
-            .border(1.dp, if (hot) CqAccent else CqBorder, RoundedCornerShape(16.dp))
-            .onGloballyPositioned { onBounds(it.boundsInRoot()) }
-            .clickable(onClick = onDone),
+        modifier = modifier
+            .size(88.dp)
+            .clip(CircleShape)
+            .background(Color.Transparent)
+            .onGloballyPositioned { onBounds(it.boundsInRoot()) },
         contentAlignment = Alignment.Center,
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Icon(
-                Icons.Default.Delete,
-                contentDescription = null,
-                tint = if (hot) CqText else CqMuted,
-                modifier = Modifier.size(22.dp),
-            )
-            Text(if (hot) "Отпусти" else "Готово", color = if (hot) CqText else CqMuted)
-        }
+        Icon(
+            Icons.Default.Delete,
+            contentDescription = null,
+            tint = if (hot) TrashHotRed else CqMuted.copy(alpha = 0.9f),
+            modifier = Modifier
+                .size(if (hot) 30.dp else 26.dp)
+                .graphicsLayer {
+                    scaleX = if (hot) 1.12f else 1f
+                    scaleY = if (hot) 1.12f else 1f
+                },
+        )
     }
 }
 
@@ -101,26 +108,55 @@ fun EditableFolderGrid(
     onEnterEdit: () -> Unit,
     onDragHotChange: (Boolean) -> Unit,
     onDropOnTrash: (ListCard) -> Unit,
+    onReorder: (List<ListCard>) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val cellBounds = remember { mutableStateMapOf<Int, Rect>() }
+
+    fun indexAt(point: Offset): Int? {
+        // Prefer containing cell; else nearest center
+        val containing = cellBounds.entries.filter { it.value.contains(point) }
+        if (containing.isNotEmpty()) {
+            return containing.minByOrNull { (it.value.center - point).getDistance() }?.key
+        }
+        return cellBounds.minByOrNull { (it.value.center - point).getDistance() }?.key
+    }
+
     Column(
         modifier = modifier.fillMaxWidth().padding(horizontal = 12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        folders.chunked(2).forEach { row ->
+        folders.chunked(2).forEachIndexed { rowIdx, row ->
             Row(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min),
             ) {
-                row.forEach { folder ->
+                row.forEachIndexed { colIdx, folder ->
+                    val index = rowIdx * 2 + colIdx
                     EditableFolderCell(
                         folder = folder,
                         editing = editing,
                         trashBounds = trashBounds,
                         onOpenFolder = onOpenFolder,
                         onEnterEdit = onEnterEdit,
+                        onBounds = { cellBounds[index] = it },
                         onDragHotChange = onDragHotChange,
                         onDropOnTrash = onDropOnTrash,
+                        onDragEndAt = { center ->
+                            val hot = trashBounds?.contains(center) == true
+                            onDragHotChange(false)
+                            if (hot) {
+                                onDropOnTrash(folder)
+                                return@EditableFolderCell
+                            }
+                            val to = indexAt(center) ?: return@EditableFolderCell
+                            val from = folders.indexOfFirst { it.id == folder.id }
+                            if (from < 0 || from == to) return@EditableFolderCell
+                            val next = folders.toMutableList()
+                            val item = next.removeAt(from)
+                            next.add(to.coerceIn(0, next.size), item)
+                            onReorder(next)
+                        },
                         modifier = Modifier.weight(1f).fillMaxHeight(),
                     )
                 }
@@ -137,8 +173,10 @@ private fun EditableFolderCell(
     trashBounds: Rect?,
     onOpenFolder: (ListCard) -> Unit,
     onEnterEdit: () -> Unit,
+    onBounds: (Rect) -> Unit,
     onDragHotChange: (Boolean) -> Unit,
     onDropOnTrash: (ListCard) -> Unit,
+    onDragEndAt: (Offset) -> Unit,
     modifier: Modifier,
 ) {
     val haptics = LocalHapticFeedback.current
@@ -165,7 +203,10 @@ private fun EditableFolderCell(
     Box(
         modifier = modifier
             .zIndex(if (dragging) 8f else 0f)
-            .onGloballyPositioned { cellBounds = it.boundsInRoot() }
+            .onGloballyPositioned {
+                cellBounds = it.boundsInRoot()
+                onBounds(cellBounds)
+            }
             .graphicsLayer {
                 rotationZ = jiggle
                 translationX = drag.x
@@ -186,16 +227,13 @@ private fun EditableFolderCell(
                         change.consume()
                         drag += amount
                         val center = cellBounds.center + drag
-                        val hot = trashBounds?.contains(center) == true
-                        onDragHotChange(hot)
+                        onDragHotChange(trashBounds?.contains(center) == true)
                     },
                     onDragEnd = {
                         val center = cellBounds.center + drag
-                        val hot = trashBounds?.contains(center) == true
                         dragging = false
                         drag = Offset.Zero
-                        onDragHotChange(false)
-                        if (hot) onDropOnTrash(folder)
+                        onDragEndAt(center)
                     },
                     onDragCancel = {
                         dragging = false
@@ -277,13 +315,18 @@ fun FolderRemoveDialog(
         title = { Text(folder.title.orEmpty().ifBlank { "Папка" }) },
         text = null,
         confirmButton = {
-            TextButton(onClick = onDeleteEverywhere) { Text("Удалить", color = CqAccent) }
-        },
-        dismissButton = {
-            Row {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 TextButton(onClick = onHideFromHome) { Text("С главной") }
+                TextButton(onClick = onDeleteEverywhere) {
+                    Text("Удалить совсем", color = CqAccent)
+                }
                 TextButton(onClick = onDismiss) { Text("Отмена") }
             }
         },
+        dismissButton = {},
     )
 }

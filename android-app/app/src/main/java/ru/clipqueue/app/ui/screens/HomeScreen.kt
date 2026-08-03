@@ -240,135 +240,146 @@ fun HomeScreen(
         )
     }
 
-    Column(
+    Box(
         modifier = Modifier.fillMaxSize().background(CqBg),
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp)
-                .padding(top = 14.dp, bottom = 4.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                "Kyro",
-                style = KyroBrandStyle,
+        Column(modifier = Modifier.fillMaxSize()) {
+            Row(
                 modifier = Modifier
-                    // soft luminous halo like mockup text-shadow
-                    .padding(end = 4.dp),
-            )
-            Text(
-                "сегодня",
-                style = MaterialTheme.typography.bodySmall.copy(
-                    fontFamily = KyroFont,
-                    fontWeight = FontWeight.Normal,
-                    fontSize = 11.sp,
-                    color = CqMuted,
-                ),
-            )
-        }
-        FolderTrashZone(
-            editing = folderEdit,
-            hot = trashHot,
-            onBounds = { trashBounds = it },
-            onDone = {
-                folderEdit = false
-                trashHot = false
-            },
-        )
-
-        when {
-            loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(color = CqAccent)
-            }
-            error != null && recent.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text(error.orEmpty(), color = CqAccent)
-            }
-            else -> PullToRefreshBox(
-                isRefreshing = refreshing,
-                onRefresh = {
-                    scope.launch {
-                        runCatching { api.startYoutubeSync(full = false) }
-                        loadHome(initial = false, force = true)
-                    }
-                },
-                modifier = Modifier.weight(1f),
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+                    .padding(top = 14.dp, bottom = 4.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 8.dp)) {
-                    if (tags.isNotEmpty()) {
-                        item {
-                            SectionLabel("Теги", Modifier.padding(horizontal = 12.dp))
-                            LazyRow(
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                contentPadding = PaddingValues(horizontal = 12.dp),
-                            ) {
+                Text(
+                    "Kyro",
+                    style = KyroBrandStyle,
+                    modifier = Modifier.padding(end = 4.dp),
+                )
+                Text(
+                    "сегодня",
+                    style = MaterialTheme.typography.bodySmall.copy(
+                        fontFamily = KyroFont,
+                        fontWeight = FontWeight.Normal,
+                        fontSize = 11.sp,
+                        color = CqMuted,
+                    ),
+                )
+            }
+
+            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                when {
+                    loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(color = CqAccent)
+                    }
+                    error != null && recent.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text(error.orEmpty(), color = CqAccent)
+                    }
+                    else -> PullToRefreshBox(
+                        isRefreshing = refreshing,
+                        onRefresh = {
+                            scope.launch {
+                                runCatching { api.startYoutubeSync(full = false) }
+                                loadHome(initial = false, force = true)
+                            }
+                        },
+                        modifier = Modifier.fillMaxSize(),
+                    ) {
+                        LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 8.dp)) {
+                            if (tags.isNotEmpty()) {
                                 item {
-                                    TagChip("Все", selected = selectedTagId == null) { selectedTagId = null }
-                                }
-                                items(tags, key = { it.id ?: it.name.orEmpty() }) { t ->
-                                    val label = listOfNotNull(t.emoji?.takeIf { it.isNotBlank() }, t.name).joinToString(" ")
-                                    TagChip(label, selected = selectedTagId == t.id) {
-                                        selectedTagId = if (selectedTagId == t.id) null else t.id
+                                    SectionLabel("Теги", Modifier.padding(horizontal = 12.dp))
+                                    LazyRow(
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        contentPadding = PaddingValues(horizontal = 12.dp),
+                                    ) {
+                                        item {
+                                            TagChip("Все", selected = selectedTagId == null) { selectedTagId = null }
+                                        }
+                                        items(tags, key = { it.id ?: it.name.orEmpty() }) { t ->
+                                            val label = listOfNotNull(t.emoji?.takeIf { it.isNotBlank() }, t.name).joinToString(" ")
+                                            TagChip(label, selected = selectedTagId == t.id) {
+                                                selectedTagId = if (selectedTagId == t.id) null else t.id
+                                            }
+                                        }
                                     }
                                 }
                             }
-                        }
-                    }
-                    if (selectedTagId != null) {
-                        item {
-                            SectionLabel("Папки с тегом", Modifier.padding(horizontal = 12.dp))
-                            if (taggedFolders.isEmpty()) {
-                                Text("Пока пусто", color = CqMuted, modifier = Modifier.padding(horizontal = 12.dp))
+                            if (selectedTagId != null) {
+                                item {
+                                    SectionLabel("Папки с тегом", Modifier.padding(horizontal = 12.dp))
+                                    if (taggedFolders.isEmpty()) {
+                                        Text("Пока пусто", color = CqMuted, modifier = Modifier.padding(horizontal = 12.dp))
+                                    } else {
+                                        FolderGrid(taggedFolders.take(8), onOpenFolder)
+                                    }
+                                }
+                                item {
+                                    SectionLabel("Видео с тегом", Modifier.padding(horizontal = 12.dp))
+                                    if (taggedVideos.isEmpty()) {
+                                        Text("Пока пусто", color = CqMuted, modifier = Modifier.padding(horizontal = 12.dp))
+                                    } else {
+                                        VideoSpine(taggedVideos) { c, a -> actions.handle(c, a) }
+                                    }
+                                }
                             } else {
-                                FolderGrid(taggedFolders.take(8), onOpenFolder)
+                                item {
+                                    SectionLabel("Недавно сохранили", Modifier.padding(horizontal = 12.dp))
+                                    if (recent.isEmpty()) Text("Пока пусто", color = CqMuted, modifier = Modifier.padding(horizontal = 12.dp))
+                                    else VideoSpine(recent.take(12)) { c, a -> actions.handle(c, a) }
+                                }
+                                item {
+                                    SectionLabel("Могут подойти", Modifier.padding(horizontal = 12.dp))
+                                    val recs = if (vibe.isNotEmpty()) vibe else fromPlaylists
+                                    if (recs.isEmpty()) Text("Пока нечего предложить", color = CqMuted, modifier = Modifier.padding(horizontal = 12.dp))
+                                    else VideoRail(recs) { c, a -> actions.handle(c, a) }
+                                }
+                                item {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp).padding(top = 14.dp, bottom = 8.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        Text("ВАШИ ПАПКИ", style = MaterialTheme.typography.labelSmall, color = CqMuted)
+                                        Text("все →", color = CqText, style = MaterialTheme.typography.bodySmall, modifier = Modifier.clickable(onClick = onOpenFolders))
+                                    }
+                                    if (topFolders.isEmpty()) Text("Папок пока нет", color = CqMuted, modifier = Modifier.padding(horizontal = 12.dp))
+                                    else EditableFolderGrid(
+                                        folders = topFolders,
+                                        editing = folderEdit,
+                                        trashBounds = trashBounds,
+                                        onOpenFolder = onOpenFolder,
+                                        onEnterEdit = { folderEdit = true },
+                                        onDragHotChange = { trashHot = it },
+                                        onDropOnTrash = { removeTarget = it },
+                                        onReorder = { next ->
+                                            topFolders = next
+                                            scope.launch {
+                                                val ids = next.mapNotNull { it.id }
+                                                runCatching { api.reorderLists(ids) }
+                                                appCache.invalidateHome()
+                                                appCache.invalidateFolders()
+                                            }
+                                        },
+                                    )
+                                    Spacer(Modifier.height(12.dp))
+                                }
                             }
-                        }
-                        item {
-                            SectionLabel("Видео с тегом", Modifier.padding(horizontal = 12.dp))
-                            if (taggedVideos.isEmpty()) {
-                                Text("Пока пусто", color = CqMuted, modifier = Modifier.padding(horizontal = 12.dp))
-                            } else {
-                                VideoSpine(taggedVideos) { c, a -> actions.handle(c, a) }
-                            }
-                        }
-                    } else {
-                        item {
-                            SectionLabel("Недавно сохранили", Modifier.padding(horizontal = 12.dp))
-                            if (recent.isEmpty()) Text("Пока пусто", color = CqMuted, modifier = Modifier.padding(horizontal = 12.dp))
-                            else VideoSpine(recent.take(12)) { c, a -> actions.handle(c, a) }
-                        }
-                        item {
-                            SectionLabel("Могут подойти", Modifier.padding(horizontal = 12.dp))
-                            val recs = if (vibe.isNotEmpty()) vibe else fromPlaylists
-                            if (recs.isEmpty()) Text("Пока нечего предложить", color = CqMuted, modifier = Modifier.padding(horizontal = 12.dp))
-                            else VideoRail(recs) { c, a -> actions.handle(c, a) }
-                        }
-                        item {
-                            Row(
-                                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp).padding(top = 14.dp, bottom = 8.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Text("ВАШИ ПАПКИ", style = MaterialTheme.typography.labelSmall, color = CqMuted)
-                                Text("все →", color = CqText, style = MaterialTheme.typography.bodySmall, modifier = Modifier.clickable(onClick = onOpenFolders))
-                            }
-                            if (topFolders.isEmpty()) Text("Папок пока нет", color = CqMuted, modifier = Modifier.padding(horizontal = 12.dp))
-                            else EditableFolderGrid(
-                                folders = topFolders,
-                                editing = folderEdit,
-                                trashBounds = trashBounds,
-                                onOpenFolder = onOpenFolder,
-                                onEnterEdit = { folderEdit = true },
-                                onDragHotChange = { trashHot = it },
-                                onDropOnTrash = { removeTarget = it },
-                            )
-                            Spacer(Modifier.height(12.dp))
                         }
                     }
                 }
             }
+            BottomBar(0, onHome = {}, onFolders = onOpenFolders, onProfile = onOpenProfile)
         }
-        BottomBar(0, onHome = {}, onFolders = onOpenFolders, onProfile = onOpenProfile)
+
+        FolderTrashZone(
+            editing = folderEdit,
+            hot = trashHot,
+            onBounds = { trashBounds = it },
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = 8.dp),
+        )
     }
 }

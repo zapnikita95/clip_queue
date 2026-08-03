@@ -106,6 +106,9 @@ class ApiClient(private val session: SessionStore) {
     suspend fun hideListFromHome(listId: Int, hidden: Boolean = true): OkResponse =
         patchList(listId, mapOf("hidden_from_home" to hidden))
 
+    suspend fun reorderLists(order: List<Int>): OkResponse =
+        post("/api/lists/reorder", mapOf("order" to order))
+
     suspend fun video(videoId: String): VideoDetailResponse =
         get("/api/videos/${java.net.URLEncoder.encode(videoId, "UTF-8")}")
 
