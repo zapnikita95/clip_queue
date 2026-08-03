@@ -1644,3 +1644,76 @@ a.btn.ghost:hover {
   opacity: 0.4;
   pointer-events: none;
 }
+
+
+/* —— FAQ sparkle button (Kyro moths) —— */
+.hero-with-faq {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.faq-sparkle-btn {
+  position: relative;
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 1px solid rgba(255,255,255,0.16);
+  background: var(--bg-elev);
+  color: var(--text);
+  font-size: 1.15rem;
+  font-weight: 500;
+  cursor: pointer;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), 0 0 20px rgba(255,255,255,0.06);
+  transition: transform 0.45s var(--ease), box-shadow 0.45s var(--ease), border-color 0.3s;
+}
+.faq-sparkle-btn:hover {
+  transform: translateY(-2px) scale(1.03);
+  border-color: rgba(255,255,255,0.28);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.12), 0 0 28px rgba(255,255,255,0.1);
+}
+.faq-sparkle-btn .moth {
+  position: absolute;
+  width: 2.5px;
+  height: 2.5px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 6px rgba(255,255,255,0.85);
+  animation: faq-twinkle 3.2s ease-in-out infinite;
+  pointer-events: none;
+}
+.faq-sparkle-btn .moth:nth-child(1) { top: 9px; right: 11px; }
+.faq-sparkle-btn .moth:nth-child(2) { left: 10px; top: 50%; width: 2px; height: 2px; animation-delay: 0.7s; opacity: 0.7; }
+.faq-sparkle-btn .moth:nth-child(3) { bottom: 11px; right: 13px; width: 2px; height: 2px; animation-delay: 1.4s; }
+@keyframes faq-twinkle {
+  0%, 100% { opacity: 0.25; transform: scale(0.7); }
+  45%, 55% { opacity: 1; transform: scale(1); }
+}
+.faq-list { max-width: 720px; display: grid; gap: 10px; }
+.faq-item {
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: rgba(255,255,255,0.035);
+  overflow: hidden;
+  transition: border-color 0.3s, background 0.3s;
+}
+.faq-item[open] {
+  background: rgba(255,255,255,0.06);
+  border-color: rgba(255,255,255,0.18);
+}
+.faq-item summary {
+  cursor: pointer;
+  list-style: none;
+  padding: 16px 18px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+}
+.faq-item summary::-webkit-details-marker { display: none; }
+.faq-item .faq-body {
+  padding: 0 18px 18px;
+  color: var(--muted);
+  font-weight: 300;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}

@@ -56,6 +56,7 @@ import ru.clipqueue.app.data.TagDto
 import ru.clipqueue.app.ui.TimeFormat
 import ru.clipqueue.app.ui.components.BottomBar
 import ru.clipqueue.app.ui.components.TagChip
+import ru.clipqueue.app.ui.screens.FaqSparkleButton
 import ru.clipqueue.app.ui.theme.CqAccent
 import ru.clipqueue.app.ui.theme.CqBg
 import ru.clipqueue.app.ui.theme.CqBorder
@@ -72,6 +73,7 @@ fun ProfileScreen(
     onHome: () -> Unit,
     onFolders: () -> Unit,
     onOpenHistory: () -> Unit,
+    onOpenFaq: () -> Unit,
     onLoggedOut: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
@@ -117,13 +119,31 @@ fun ProfileScreen(
 
     Column(modifier = Modifier.fillMaxSize().background(CqBg).padding(horizontal = 12.dp)) {
         Spacer(Modifier.height(14.dp))
-        Text("Ещё", style = MaterialTheme.typography.titleLarge)
-        Text(me?.user?.email ?: session.email ?: "—", style = MaterialTheme.typography.bodySmall, color = CqMuted)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Настройки", style = MaterialTheme.typography.titleLarge)
+                Text(
+                    me?.user?.email ?: session.email ?: "—",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = CqMuted,
+                )
+            }
+            FaqSparkleButton(onClick = onOpenFaq)
+        }
 
         Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState())) {
             Spacer(Modifier.height(14.dp))
-            ProfileBlock("YouTube", "Лайки и плейлисты подтягиваются при открытии.", if (me?.youtube_connected == true) "подключено" else "не подключено", me?.youtube_connected == true)
-            ProfileBlock("Последний синк", TimeFormat.syncLocal(me?.last_youtube_sync?.at))
+            ProfileBlock(
+                "YouTube",
+                "Мы бережно подтягиваем лайки и плейлисты, когда вы открываете приложение.",
+                if (me?.youtube_connected == true) "подключено" else "нужно подключить",
+                me?.youtube_connected == true,
+            )
+            ProfileBlock("Последнее обновление", TimeFormat.syncLocal(me?.last_youtube_sync?.at))
             ProfileBlock("Библиотека", "${me?.library_count ?: 0} сохранённых")
 
             Spacer(Modifier.height(8.dp))
@@ -158,34 +178,38 @@ fun ProfileScreen(
             OutlinedButton(
                 onClick = {
                     scope.launch {
-                        syncMsg = "синк…"
+                        syncMsg = "Обновляем…"
                         val r = runCatching { api.startYoutubeSync(full = false) }.getOrNull()
-                        syncMsg = if (r?.ok == true) "синк запущен" else (r?.error ?: "ошибка")
+                        syncMsg = if (r?.ok == true) "Обновление запущено" else (r?.error ?: "Не удалось обновить")
                         me = runCatching { api.me() }.getOrNull()
                     }
                 },
                 modifier = Modifier.fillMaxWidth().height(48.dp),
                 shape = RoundedCornerShape(12.dp),
-            ) { Text(syncMsg ?: "Обновить (дельта)") }
+            ) { Text(syncMsg ?: "Обновить библиотеку") }
             Spacer(Modifier.height(8.dp))
             OutlinedButton(
                 onClick = {
                     scope.launch {
-                        syncMsg = "полный синк…"
+                        syncMsg = "Полное обновление…"
                         val r = runCatching { api.startYoutubeSync(full = true) }.getOrNull()
-                        syncMsg = if (r?.ok == true) "полный синк запущен" else (r?.error ?: "ошибка")
+                        syncMsg = if (r?.ok == true) "Полное обновление запущено" else (r?.error ?: "Не удалось обновить")
                         me = runCatching { api.me() }.getOrNull()
                     }
                 },
                 modifier = Modifier.fillMaxWidth().height(48.dp),
                 shape = RoundedCornerShape(12.dp),
-            ) { Text("Полный синк") }
+            ) { Text("Полное обновление") }
             Spacer(Modifier.height(8.dp))
             OutlinedButton(
                 onClick = {
                     scope.launch {
                         val r = runCatching { api.startClassifyPending() }.getOrNull()
-                        Toast.makeText(context, if (r?.ok == true) "Разбор в папки запущен" else (r?.error ?: "ошибка"), Toast.LENGTH_SHORT).show()
+                        Toast.makeText(
+                            context,
+                            if (r?.ok == true) "Раскладываем необработанные видео по папкам" else (r?.error ?: "Не удалось запустить"),
+                            Toast.LENGTH_SHORT,
+                        ).show()
                     }
                 },
                 modifier = Modifier.fillMaxWidth().height(48.dp),
@@ -237,9 +261,9 @@ fun ProfileScreen(
             title = { Text("Что такое Takeout?") },
             text = {
                 Text(
-                    "Google Takeout — выгрузка твоих данных YouTube. Скачай watch-history.json " +
-                        "(история просмотров) на takeout.google.com, затем загрузи сюда. " +
-                        "Мы отметим уже просмотренные ролики в библиотеке.",
+                    "Google Takeout — выгрузка ваших данных YouTube. Скачайте watch-history.json " +
+                        "(история просмотров) на takeout.google.com, затем загрузите сюда. " +
+                        "Мы отметим уже просмотренные ролики в вашей библиотеке.",
                 )
             },
             confirmButton = { TextButton(onClick = { showTakeoutHelp = false }) { Text("Понятно") } },

@@ -79,7 +79,7 @@ fun AuthScreen(
         Text("Kyro", style = MaterialTheme.typography.displayLarge)
         Spacer(Modifier.height(10.dp))
         Text(
-            text = "YouTube → Поделиться → Kyro",
+            text = "Сохраняйте из YouTube — возвращайтесь в нужный момент.",
             style = MaterialTheme.typography.bodyMedium,
             color = CqMuted,
             textAlign = TextAlign.Center,

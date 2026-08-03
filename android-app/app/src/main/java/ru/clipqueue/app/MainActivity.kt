@@ -31,6 +31,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import ru.clipqueue.app.data.ListCard
 import ru.clipqueue.app.ui.screens.AuthScreen
+import ru.clipqueue.app.ui.screens.FaqScreen
 import ru.clipqueue.app.ui.screens.FolderDetailScreen
 import ru.clipqueue.app.ui.screens.FoldersScreen
 import ru.clipqueue.app.ui.screens.HomeScreen
@@ -204,8 +205,12 @@ private fun ClipQueueNav(
                 onHome = { goTab("home") },
                 onFolders = { goTab("folders") },
                 onOpenHistory = { nav.navigate("saves") },
+                onOpenFaq = { nav.navigate("faq") },
                 onLoggedOut = { loggedIn = false },
             )
+        }
+        composable("faq") {
+            FaqScreen(onBack = { nav.popBackStack() })
         }
         composable("saves") {
             val app = LocalContext.current.applicationContext as ClipQueueApp

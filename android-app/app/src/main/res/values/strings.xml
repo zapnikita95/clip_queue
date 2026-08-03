@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Kyro</string>
-    <string name="share_saved">Видео сохранено!</string>
-    <string name="share_need_login">Сначала войди в Kyro</string>
-    <string name="share_no_url">Не нашёл ссылку на YouTube</string>
+    <string name="share_saved">Сохранили в Kyro</string>
+    <string name="share_need_login">Сначала войдите в Kyro</string>
+    <string name="share_no_url">Не нашли ссылку на YouTube</string>
     <string name="share_error">Не удалось сохранить</string>
     <string name="share_saved_folders">Сохранено → %1$s</string>
     <string name="share_saved_none">Сохранено</string>

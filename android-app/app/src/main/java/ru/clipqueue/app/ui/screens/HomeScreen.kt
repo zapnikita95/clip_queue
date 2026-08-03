@@ -293,7 +293,7 @@ fun HomeScreen(
                         item {
                             SectionLabel("Папки с тегом", Modifier.padding(horizontal = 12.dp))
                             if (taggedFolders.isEmpty()) {
-                                Text("Пусто", color = CqMuted, modifier = Modifier.padding(horizontal = 12.dp))
+                                Text("Пока пусто", color = CqMuted, modifier = Modifier.padding(horizontal = 12.dp))
                             } else {
                                 FolderGrid(taggedFolders.take(8), onOpenFolder)
                             }
@@ -301,7 +301,7 @@ fun HomeScreen(
                         item {
                             SectionLabel("Видео с тегом", Modifier.padding(horizontal = 12.dp))
                             if (taggedVideos.isEmpty()) {
-                                Text("Пусто", color = CqMuted, modifier = Modifier.padding(horizontal = 12.dp))
+                                Text("Пока пусто", color = CqMuted, modifier = Modifier.padding(horizontal = 12.dp))
                             } else {
                                 VideoSpine(taggedVideos) { c, a -> actions.handle(c, a) }
                             }
@@ -309,13 +309,13 @@ fun HomeScreen(
                     } else {
                         item {
                             SectionLabel("Сейчас в очереди", Modifier.padding(horizontal = 12.dp))
-                            if (recent.isEmpty()) Text("Пусто", color = CqMuted, modifier = Modifier.padding(horizontal = 12.dp))
+                            if (recent.isEmpty()) Text("Очередь пока пуста", color = CqMuted, modifier = Modifier.padding(horizontal = 12.dp))
                             else VideoSpine(recent.take(12)) { c, a -> actions.handle(c, a) }
                         }
                         item {
-                            SectionLabel("Могут понравиться", Modifier.padding(horizontal = 12.dp))
+                            SectionLabel("Могут подойти", Modifier.padding(horizontal = 12.dp))
                             val recs = if (vibe.isNotEmpty()) vibe else fromPlaylists
-                            if (recs.isEmpty()) Text("Пусто", color = CqMuted, modifier = Modifier.padding(horizontal = 12.dp))
+                            if (recs.isEmpty()) Text("Пока нечего предложить", color = CqMuted, modifier = Modifier.padding(horizontal = 12.dp))
                             else VideoRail(recs) { c, a -> actions.handle(c, a) }
                         }
                         item {
@@ -324,10 +324,10 @@ fun HomeScreen(
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
-                                Text("ТОП ПАПКИ", style = MaterialTheme.typography.labelSmall, color = CqMuted)
-                                Text("все →", color = CqAccent, style = MaterialTheme.typography.bodySmall, modifier = Modifier.clickable(onClick = onOpenFolders))
+                                Text("ВАШИ ПАПКИ", style = MaterialTheme.typography.labelSmall, color = CqMuted)
+                                Text("все →", color = CqText, style = MaterialTheme.typography.bodySmall, modifier = Modifier.clickable(onClick = onOpenFolders))
                             }
-                            if (topFolders.isEmpty()) Text("Пусто", color = CqMuted, modifier = Modifier.padding(horizontal = 12.dp))
+                            if (topFolders.isEmpty()) Text("Папок пока нет", color = CqMuted, modifier = Modifier.padding(horizontal = 12.dp))
                             else EditableFolderGrid(
                                 folders = topFolders,
                                 editing = folderEdit,

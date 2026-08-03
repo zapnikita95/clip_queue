@@ -37,6 +37,67 @@
     toastTimer = setTimeout(() => toastEl.classList.add("hidden"), 2800);
   }
 
+  /** Tone: calm, Вы, warm. Values: Kairos · Chronos · Kyber · Curate */
+  const FAQ_ITEMS = [
+    {
+      q: "Почему Kyro?",
+      a: `Каждый день мы сохраняем десятки видео: полезные лекции, идеи для проектов, туториалы, интервью, мысли, к которым хочется вернуться позже.
+
+Но со временем YouTube превращается не в библиотеку, а в хаос. Ценные знания теряются среди сотен вкладок, плейлистов и забытых сохранений.
+
+Kyro создан, чтобы вернуть порядок.
+
+Название вдохновлено несколькими идеями.
+
+Kairos — древнегреческое слово, означающее правильный момент или подходящее время. Это идея не просто хранить информацию, а находить её именно тогда, когда она нужна.
+
+Chronos — время, напоминание о том, что наши сохранённые видео становятся частью личной истории: архивом мыслей, открытий и знаний.
+
+Kyber — от греческого корня, связанного с управлением и навигацией. Как капитан управляет кораблём, Kyro помогает ориентироваться в потоке контента и направлять его в нужную сторону.
+
+Curate — идея отбора и создания коллекции. Kyro не просто собирает видео — он помогает превратить случайный поток информации в осмысленную библиотеку.
+
+Из этих идей родилось имя Kyro: место, где время, знания и порядок встречаются.`,
+    },
+    {
+      q: "Что такое Kyro?",
+      a: "Kyro — спокойное место для вашей очереди YouTube. Вы сохраняете ролики, раскладываете их по папкам и тегам и возвращаетесь к ним в нужный момент — без шума чужой ленты.",
+    },
+    {
+      q: "Как добавить видео?",
+      a: "В Android откройте ролик в YouTube и нажмите «Поделиться» → Kyro. В вебе вставьте ссылку через «Добавить» или сохраните из браузера. Мы бережно положим видео в вашу библиотеку.",
+    },
+    {
+      q: "Что такое очередь?",
+      a: "Очередь — то, что вы хотите посмотреть позже. Это не бесконечная лента рекомендаций, а ваш личный список: смотрите в подходящее время, отмечайте просмотренное и двигайтесь дальше.",
+    },
+    {
+      q: "Как работает синхронизация с YouTube?",
+      a: "После входа через Google Kyro может аккуратно подтянуть ваши лайки и плейлисты. Обновление забирает недавние изменения; полное обновление проходит библиотеку шире. Вы управляете этим из настроек.",
+    },
+    {
+      q: "Зачем папки и теги?",
+      a: "Папки и теги помогают курировать поток: собрать лекции отдельно от развлечений, отметить темы и быстрее находить нужное. Так случайные сохранения становятся осмысленной библиотекой.",
+    },
+    {
+      q: "Что такое Google Takeout?",
+      a: "Takeout — выгрузка ваших данных Google. Если загрузите watch-history.json, мы отметим уже просмотренные ролики в библиотеке. Это помогает привести историю в порядок без ручной работы.",
+    },
+    {
+      q: "Можно ли смотреть видео внутри Kyro?",
+      a: "Сейчас воспроизведение открывается на YouTube — там, где лежит сам ролик. Kyro помогает выбрать, что смотреть, и сохранить контекст; просмотр остаётся на привычной платформе.",
+    },
+  ];
+
+  function faqSparkleBtnHtml() {
+    return `<button type="button" class="faq-sparkle-btn" id="open-faq" title="Вопросы и ответы" aria-label="Вопросы и ответы">
+      <span class="moth" aria-hidden="true"></span>
+      <span class="moth" aria-hidden="true"></span>
+      <span class="moth" aria-hidden="true"></span>
+      ?
+    </button>`;
+  }
+
   // --- Undo bar (Gmail-style) ---
   let undoTick = null;
   let undoPending = null;
@@ -160,7 +221,7 @@
             method: "PATCH",
             body: JSON.stringify({ note: text }),
           });
-          toast("Запомнил твои слова");
+          toast("Сохранили вашу формулировку");
         } catch (e) {
           toast(e.message);
         }
@@ -334,7 +395,7 @@
           <button type="button" data-act="watched">Просмотрено</button>
           ${listId ? `<button type="button" data-act="remove-cat">Убрать из категории</button>` : ""}
           ${draftFolder ? `<button type="button" data-act="remove-draft">Убрать из категории</button>` : ""}
-          <button type="button" data-act="dismiss" class="danger">Удалить из Kyro</button>
+          <button type="button" data-act="dismiss" class="danger">Убрать из Kyro</button>
         </div>
       </div>`;
   }
@@ -443,7 +504,7 @@
       } else if (act === "dismiss") {
         const restore = hideCardOptimistic(videoId, listId);
         showUndo({
-          message: "Удалено из Kyro",
+          message: "Убрано из Kyro",
           seconds: 8,
           onUndo: restore,
           onCommit: async () => {
@@ -556,7 +617,7 @@
           <div class="brand-name">Kyro</div>
         </a>
         <form class="smart-search" id="smart-search" action="/search" method="get">
-          <input type="search" name="q" id="smart-q" placeholder="Что хочешь посмотреть?" autocomplete="off" enterkeyhint="search" />
+          <input type="search" name="q" id="smart-q" placeholder="Что хотите посмотреть?" autocomplete="off" enterkeyhint="search" />
           <button type="button" class="smart-mic" id="smart-mic" title="Голосом" aria-label="Голосом">🎤</button>
           <button type="submit" class="smart-go" title="Найти">⌕</button>
         </form>
@@ -578,7 +639,7 @@
     form.addEventListener("submit", (e) => {
       e.preventDefault();
       const q = ($("#smart-q")?.value || "").trim();
-      if (!q) return toast("Напиши, что ищешь");
+      if (!q) return toast("Напишите, что ищете");
       navigate(`/search?q=${encodeURIComponent(q)}`);
     });
     const mic = $("#smart-mic");
@@ -805,13 +866,13 @@
       <div class="login-wrap">
         <div class="panel" style="width:min(460px,100%)">
           <h2>Kyro</h2>
-          <p class="hint">Войди через Google — сразу после входа сами заберём лайки, плейлисты и подписки в библиотеку.</p>
-          ${err ? `<p class="hint" style="color:#ff8a80">Ошибка входа: ${escapeHtml(err)}</p>` : ""}
+          <p class="hint">Войдите через Google — мы бережно соберём ваши лайки и плейлисты в одну библиотеку.</p>
+          ${err ? `<p class="hint" style="color:#ff8a80">Не удалось войти: ${escapeHtml(err)}</p>` : ""}
           <div class="btn-row" style="flex-direction:column;align-items:stretch">
             ${status.configured
-              ? `<a class="btn" href="/api/auth/google/start" style="text-align:center">Войти через Google / YouTube</a>`
-              : `<div class="empty">Google OAuth ещё не настроен (GOOGLE_CLIENT_ID / SECRET на сервере). Пока можно dev-вход.</div>`}
-            <button class="btn ghost" id="dev-login">Быстрый вход (dev)</button>
+              ? `<a class="btn" href="/api/auth/google/start" style="text-align:center">Войти через Google</a>`
+              : `<div class="empty">Google OAuth ещё не настроен на сервере. Пока можно воспользоваться быстрым входом для разработки.</div>`}
+            <button class="btn ghost" id="dev-login">Быстрый вход (для разработки)</button>
           </div>
           <details style="margin-top:18px">
             <summary class="muted" style="cursor:pointer">Вход по email (запасной)</summary>
@@ -988,28 +1049,34 @@
       !(meData.library_count > 0);
     app.innerHTML = `
       ${topbar("settings")}
-      <section class="hero hero-compact">
-        <h1>Настройки</h1>
+      <section class="hero hero-compact hero-with-faq">
+        <div>
+          <h1>Настройки</h1>
+          <p class="muted" style="margin:6px 0 0">Управляйте библиотекой спокойно и в своём темпе</p>
+        </div>
+        ${faqSparkleBtnHtml()}
       </section>
       <div class="panel" style="margin-bottom:16px">
         <h2>YouTube</h2>
-        <p class="muted">${meData.youtube_connected ? "подключён" : "нужен Google"} · ${meData.library_count || 0} видео</p>
+        <p class="muted">${meData.youtube_connected ? "подключён" : "нужно подключить Google"} · ${meData.library_count || 0} видео</p>
         <div class="btn-row">
-          <button class="btn" id="sync-yt" ${meData.youtube_connected ? "" : "disabled"}>Обновить</button>
-          <button class="btn secondary" id="sync-yt-full" ${meData.youtube_connected ? "" : "disabled"}>Полный синк</button>
+          <button class="btn" id="sync-yt" ${meData.youtube_connected ? "" : "disabled"}>Обновить библиотеку</button>
+          <button class="btn secondary" id="sync-yt-full" ${meData.youtube_connected ? "" : "disabled"}>Полное обновление</button>
           ${!meData.youtube_connected && meData.google_oauth_configured
-            ? `<a class="btn secondary" href="/api/auth/google/start">Google</a>` : ""}
+            ? `<a class="btn secondary" href="/api/auth/google/start">Подключить Google</a>` : ""}
         </div>
         <div id="sync-out"></div>
       </div>
       <div class="panel" style="margin-bottom:16px">
         <h2>Категории</h2>
+        <p class="muted" style="margin:0 0 10px">Разложите поток по темам — так сохранения становятся коллекцией.</p>
         <div class="btn-row">
           <a class="btn" href="/organize" data-nav>Разложить</a>
         </div>
       </div>
       <div class="panel" style="margin-bottom:16px">
         <h2>Takeout</h2>
+        <p class="muted" style="margin:0 0 10px">Загрузите историю просмотров, чтобы отметить уже просмотренное.</p>
         <div class="btn-row">
           <label class="file-btn">
             JSON истории
@@ -1026,6 +1093,8 @@
         </div>
       </div>`;
     wireNav();
+    const faqBtn = $("#open-faq");
+    if (faqBtn) faqBtn.onclick = () => navigate("/faq");
     const settingsLogout = $("#settings-logout");
     if (settingsLogout) {
       settingsLogout.onclick = async () => {
@@ -1039,7 +1108,7 @@
     const fullBtn = $("#sync-yt-full");
     if (fullBtn) {
       fullBtn.onclick = () => {
-        if (!confirm("Полный синк заново обойдёт лайки и плейлисты. Продолжить?")) return;
+        if (!confirm("Полное обновление заново обойдёт лайки и плейлисты. Продолжить?")) return;
         runYoutubeSync({ autoGoHome: false, full: true });
       };
     }
@@ -1051,18 +1120,18 @@
       if (!file) return;
       const out = $("#takeout-out");
       const box = mountProgress(out, {
-        title: "Читаю Takeout",
+        title: "Читаем Takeout",
         detail: file.name,
       });
       try {
         const text = await file.text();
-        updateProgress(box, { pct: 18, title: "Парсю JSON", detail: `${Math.round(file.size / 1024)} КБ` });
+        updateProgress(box, { pct: 18, title: "Разбираем JSON", detail: `${Math.round(file.size / 1024)} КБ` });
         const json = JSON.parse(text);
         const data = await runBusySteps(box, [
-          { title: "Гружу историю на сервер", detail: "watch-history.json" },
-          { title: "Разбираю просмотры", detail: "складываю в библиотеку" },
-          { title: "Отмечаю уже просмотренные", detail: "статус watched" },
-          { title: "Почти готово", detail: "пишу итог" },
+          { title: "Загружаем историю на сервер", detail: "watch-history.json" },
+          { title: "Разбираем просмотры", detail: "складываем в библиотеку" },
+          { title: "Отмечаем уже просмотренные", detail: "статус watched" },
+          { title: "Почти готово", detail: "сохраняем итог" },
         ], api("/api/youtube/takeout", {
           method: "POST",
           body: JSON.stringify(json),
@@ -1076,10 +1145,31 @@
         });
         toast("Takeout загружен");
       } catch (e) {
-        finishProgress(box, { ok: false, title: "Импорт не вышел", detail: e.message });
+        finishProgress(box, { ok: false, title: "Импорт не удался", detail: e.message });
         toast(e.message);
       }
     };
+  }
+
+  async function renderFaq() {
+    app.innerHTML = `
+      ${topbar("settings")}
+      <section class="hero hero-compact">
+        <h1>Вопросы и ответы</h1>
+        <p>Спокойные ответы о Kyro и вашей библиотеке</p>
+      </section>
+      <div class="faq-list">
+        ${FAQ_ITEMS.map((it, i) => `
+          <details class="faq-item"${i === 0 ? " open" : ""}>
+            <summary>${escapeHtml(it.q)}</summary>
+            <div class="faq-body">${escapeHtml(it.a)}</div>
+          </details>
+        `).join("")}
+      </div>
+      <div class="btn-row" style="margin-top:20px">
+        <a class="btn ghost" href="/settings" data-nav>← К настройкам</a>
+      </div>`;
+    wireNav();
   }
 
   function folderTileHtml(it, folderIdx, folderOptionsHtml) {
@@ -1415,7 +1505,7 @@
     app.innerHTML = `
       ${topbar("home")}
       <section class="hero hero-compact">
-        <h1>${has ? "Что посмотреть" : "Разложи видео"}</h1>
+        <h1>${has ? "Что посмотреть" : "Разложите видео"}</h1>
         <div class="stats stats-compact">
           <div class="stat"><b>${folders.length}</b> папок</div>
           <div class="stat"><b>${shell.counts?.queue ?? "—"}</b> в очереди</div>
@@ -1776,7 +1866,7 @@
       </div>
       <div class="muted" style="margin:0 0 12px;font-size:13px">Показано: ${items.length}${channel ? ` · ${escapeHtml(channel)}` : ""}</div>
       <div id="queue-grid">
-        ${items.length ? spineListHtml(items) : `<div class="empty">Пусто. ${status === "queue" ? `<a href="/queue?status=in_progress" data-nav>Начатые</a> · <a href="/channels" data-nav>каналы</a>` : `<a href="/queue?status=queue" data-nav>В очередь</a>`}</div>`}
+        ${items.length ? spineListHtml(items) : `<div class="empty">Очередь пока пуста. ${status === "queue" ? `<a href="/queue?status=in_progress" data-nav>Начатые</a> · <a href="/channels" data-nav>каналы</a>` : `<a href="/queue?status=queue" data-nav>К очереди</a>`}</div>`}
       </div>`;
     wireNav();
     wireCardMenus(app);
@@ -2071,7 +2161,7 @@
       </section>
       <div class="panel">
         <form id="search-form" class="smart-search smart-search-lg">
-          <input type="search" id="search-q" value="${escapeHtml(q0)}" placeholder="Что хочешь посмотреть?" />
+          <input type="search" id="search-q" value="${escapeHtml(q0)}" placeholder="Что хотите посмотреть?" />
           <button type="button" class="smart-mic" id="search-mic" title="Голосом" aria-label="Голосом">🎤</button>
           <button type="submit" class="smart-go" title="Найти" aria-label="Найти">⌕</button>
         </form>
@@ -2562,6 +2652,7 @@
     if (path === "/lists") return renderLists();
     if (path === "/tags") return renderTagsPage();
     if (path === "/onboard" || path === "/settings") return renderOnboard();
+    if (path === "/faq") return renderFaq();
     if (path === "/login") return renderLogin();
     const m = path.match(/^\/v\/([^/]+)/);
     if (m) return renderVideo(decodeURIComponent(m[1]));
