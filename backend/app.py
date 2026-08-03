@@ -386,13 +386,12 @@ def create_app() -> Flask:
         """Backfill thematic tags on library videos that have none."""
         uid = current_user()["user_id"]
         body = request.get_json(silent=True) or {}
-        limit = min(200, max(5, int(body.get("limit") or 80)))
-        use_llm = body.get("use_llm")
-        if use_llm is None:
-            use_llm = True
-        llm_budget = min(100, max(0, int(body.get("llm_budget") or 50)))
+        limit = min(2000, max(5, int(body.get("limit") or 400)))
+        # Heuristic + folders by default — LLM optional (can hang)
+        use_llm = bool(body.get("use_llm") or False)
+        llm_budget = min(40, max(0, int(body.get("llm_budget") or 10)))
         result = organize.retag_library_batch(
-            uid, limit=limit, use_llm=bool(use_llm), llm_budget=llm_budget
+            uid, limit=limit, use_llm=use_llm, llm_budget=llm_budget
         )
         return jsonify(result)
 

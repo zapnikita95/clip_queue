@@ -545,20 +545,59 @@ def _ensure_tag_on_item(user_id: int, video_id: str, name: str) -> dict[str, Any
 
 
 def _folder_title_as_tag(title: str) -> str | None:
-    """Derive a short tag from a folder title (strip emoji / YT: prefix)."""
+    """Derive a short thematic tag from a folder title (themes only, not YT dumps)."""
     t = (title or "").strip()
     t = re.sub(r"^YT:\s*", "", t, flags=re.I)
     t = re.sub(r"^[\s\U0001F300-\U0001FAFF\u2600-\u27BF🔥]+", "", t).strip()
     t = re.sub(r"\s+", " ", t)
     if not t or _is_catchall_list_title(t) or _is_sync_dump_list(t):
         return None
-    if "скрыто" in t.lower():
+    low = t.lower()
+    if "скрыто" in low:
         return None
-    # Keep first 2 words max
+    if re.search(
+        r"лайки|likes|discover weekly|микс дня|release radar|daily mix|"
+        r"в очереди|смотреть позже|watch later|listen later|сомтреть|"
+        r"короткие|длинные|музыка\s*/|канал:|тема:|"
+        r"all videos|все видео|неразобран",
+        low,
+    ):
+        return None
+    aliases = {
+        "кино и сериалы": "кино",
+        "еда и готовка": "готовка",
+        "бизнес и деньги": "бизнес",
+        "про языки": "языки",
+        "история": "история",
+        "наука": "наука",
+        "новости": "новости",
+        "игры": "игры",
+        "юмор": "юмор",
+        "технологии": "технологии",
+        "психология": "психология",
+        "путешествия": "путешествия",
+        "музыка": "музыка",
+        "готовка": "готовка",
+        "кино": "кино",
+        "спорт": "спорт",
+        "обучение": "обучение",
+        "обзоры": "обзоры",
+        "подкаст": "подкаст",
+    }
+    if low in aliases:
+        return aliases[low]
+    # Only accept canonical theme tags (never random playlist names)
+    from backend.llm import CLASSIFY_THEME_TAGS
+
     parts = t.split()
-    if len(parts) > 3:
-        t = " ".join(parts[:2])
-    return t[:40] if t else None
+    candidate = " ".join(parts[:2]) if len(parts) > 2 else t
+    if candidate.lower() in CLASSIFY_THEME_TAGS:
+        return candidate.lower()
+    # Single token match against themes contained in title
+    for theme in CLASSIFY_THEME_TAGS:
+        if theme in low and len(theme) >= 4:
+            return theme
+    return None
 
 
 def apply_tags_for_video(
@@ -1488,21 +1527,64 @@ def pending_untagged(user_id: int, *, limit: int = 120) -> list[dict[str, Any]]:
     return [dict(r) for r in rows]
 
 
+def retag_from_folders(user_id: int, *, limit: int = 2000) -> dict[str, Any]:
+    """Fast path: stamp folder titles as tags onto list videos missing tags."""
+    folders = db.fetchall("SELECT id, title FROM lists WHERE user_id = ?", (user_id,))
+    tagged = 0
+    stamped = 0
+    tag_names: set[str] = set()
+    for folder in folders:
+        hint = _folder_title_as_tag(folder.get("title") or "")
+        if not hint:
+            continue
+        rows = db.fetchall(
+            """
+            SELECT li.video_id
+            FROM list_items li
+            WHERE li.list_id = ?
+              AND NOT EXISTS (
+                SELECT 1 FROM item_tags it
+                WHERE it.user_id = ? AND it.video_id = li.video_id
+              )
+            LIMIT ?
+            """,
+            (int(folder["id"]), user_id, limit),
+        )
+        for r in rows:
+            try:
+                tag = _ensure_tag_on_item(user_id, r["video_id"], hint)
+                if tag:
+                    stamped += 1
+                    tagged += 1
+                    tag_names.add(tag.get("name") or hint)
+            except Exception:
+                pass
+    return {
+        "ok": True,
+        "stamped": stamped,
+        "unique_tags": sorted(tag_names),
+    }
+
+
 def retag_library_batch(
     user_id: int,
     *,
     limit: int = 80,
-    use_llm: bool = True,
-    llm_budget: int = 50,
+    use_llm: bool = False,
+    llm_budget: int = 20,
 ) -> dict[str, Any]:
-    """Attach thematic tags to library items that currently have none."""
+    """Attach thematic tags to library items that currently have none.
+
+    Default is heuristic-only (fast). LLM is optional and budgeted — OpenRouter
+    can hang; never block a whole backfill on it.
+    """
+    folder_pass = retag_from_folders(user_id, limit=max(limit, 500))
     items = pending_untagged(user_id, limit=limit)
     tagged = 0
     llm_used = 0
-    tag_names: set[str] = set()
-    for item in items:
+    tag_names: set[str] = set(folder_pass.get("unique_tags") or [])
+    for i, item in enumerate(items):
         vid = item["video_id"]
-        # Prefer cheap heuristic first; LLM only if empty and budget left
         applied = apply_tags_for_video(
             user_id,
             vid,
@@ -1512,23 +1594,29 @@ def retag_library_batch(
             use_llm=False,
         )
         if not applied and use_llm and llm_used < llm_budget:
-            applied = apply_tags_for_video(
-                user_id,
-                vid,
-                title=item.get("title"),
-                channel_title=item.get("channel_title"),
-                description=item.get("description"),
-                use_llm=True,
-            )
-            if applied:
-                llm_used += 1
+            try:
+                applied = apply_tags_for_video(
+                    user_id,
+                    vid,
+                    title=item.get("title"),
+                    channel_title=item.get("channel_title"),
+                    description=item.get("description"),
+                    use_llm=True,
+                )
+                if applied:
+                    llm_used += 1
+            except Exception:
+                applied = []
         if applied:
             tagged += 1
             for t in applied:
                 if t.get("name"):
                     tag_names.add(t["name"])
+        if (i + 1) % 50 == 0:
+            print(f"[retag] {i + 1}/{len(items)} tagged={tagged}", flush=True)
     return {
         "ok": True,
+        "folder_stamped": folder_pass.get("stamped") or 0,
         "scanned": len(items),
         "tagged": tagged,
         "llm_used": llm_used,
