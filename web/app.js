@@ -334,21 +334,23 @@
           <button type="button" data-act="watched">Просмотрено</button>
           ${listId ? `<button type="button" data-act="remove-cat">Убрать из категории</button>` : ""}
           ${draftFolder ? `<button type="button" data-act="remove-draft">Убрать из категории</button>` : ""}
-          <button type="button" data-act="dismiss" class="danger">Удалить из Clip Queue</button>
+          <button type="button" data-act="dismiss" class="danger">Удалить из Kyeye</button>
         </div>
       </div>`;
   }
 
   function cardHtml(item, opts = {}) {
     const listId = opts.listId || "";
+    const spine = !!opts.spine;
     const dur = item.duration_label ? `<span class="badge">${escapeHtml(item.duration_label)}</span>` : "";
     const boost = Number(item.interest || 0);
     const boostMark = boost >= 2 ? "🔥🔥" : boost === 1 ? "🔥" : boost < 0 ? "↓" : "";
     const pills = (item.user_tags || []).slice(0, 3).map((t) =>
       `<span class="tag-pill tag-pill-sm">${escapeHtml((t.emoji || "") + " " + t.name)}</span>`
     ).join("");
+    const cls = spine ? "card q-item" : "card";
     return `
-      <div class="card" data-video-id="${escapeHtml(item.video_id)}" data-list-id="${escapeHtml(String(listId || ""))}">
+      <div class="${cls}" data-video-id="${escapeHtml(item.video_id)}" data-list-id="${escapeHtml(String(listId || ""))}">
         ${cardMenuHtml(item, { listId })}
         <a class="card-main" href="/v/${encodeURIComponent(item.video_id)}" data-nav draggable="false">
           <div class="card-thumb">
@@ -367,6 +369,11 @@
           <a class="btn play-btn" href="${escapeHtml(watchUrl(item))}" target="_blank" rel="noopener" title="Смотреть на YouTube" draggable="false">▶</a>
         </div>
       </div>`;
+  }
+
+  function spineListHtml(items, opts = {}) {
+    if (!items.length) return `<div class="empty">Пусто</div>`;
+    return `<div class="spine-list">${items.map((it) => cardHtml(it, { ...opts, spine: true })).join("")}</div>`;
   }
 
   function hideCardOptimistic(videoId, listId) {
@@ -436,7 +443,7 @@
       } else if (act === "dismiss") {
         const restore = hideCardOptimistic(videoId, listId);
         showUndo({
-          message: "Удалено из Clip Queue",
+          message: "Удалено из Kyeye",
           seconds: 8,
           onUndo: restore,
           onCommit: async () => {
@@ -544,9 +551,9 @@
       <header class="topbar">
         <a class="brand" href="/home" data-nav>
           <div class="brand-mark" aria-hidden="true">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#fff" d="M8.2 5.4v13.2l11-6.6-11-6.6z"/></svg>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.2" fill="#fff" opacity="0.92"/></svg>
           </div>
-          <div class="brand-name">Clip Queue</div>
+          <div class="brand-name">Kyeye</div>
         </a>
         <form class="smart-search" id="smart-search" action="/search" method="get">
           <input type="search" name="q" id="smart-q" placeholder="Что хочешь посмотреть?" autocomplete="off" enterkeyhint="search" />
@@ -797,7 +804,7 @@
     app.innerHTML = `
       <div class="login-wrap">
         <div class="panel" style="width:min(460px,100%)">
-          <h2>Clip Queue</h2>
+          <h2>Kyeye</h2>
           <p class="hint">Войди через Google — сразу после входа сами заберём лайки, плейлисты и подписки в библиотеку.</p>
           ${err ? `<p class="hint" style="color:#ff8a80">Ошибка входа: ${escapeHtml(err)}</p>` : ""}
           <div class="btn-row" style="flex-direction:column;align-items:stretch">
@@ -908,7 +915,7 @@
         if (last.status === "done" || last.type === "done") {
           finishProgress(box, {
             ok: true,
-            title: last.title || "YouTube у тебя в Clip Queue",
+            title: last.title || "YouTube у тебя в Kyeye",
             detail: last.detail || "",
             elapsed_sec: last.elapsed_sec,
           });
@@ -957,7 +964,7 @@
       location.replace(intent);
       setTimeout(() => { location.href = deep; }, 300);
       app.innerHTML = `<section class="hero"><h1>Открываю приложение…</h1>
-        <p><a class="btn" href="${deep}">Открыть Clip Queue</a></p></section>`;
+        <p><a class="btn" href="${deep}">Открыть Kyeye</a></p></section>`;
       return;
     }
     setToken(t);
@@ -1634,13 +1641,12 @@
       block.className = "rail";
       block.innerHTML = `
         <div class="rail-head">
-          <h2>Недавно добавлены</h2>
+          <h2>Сейчас в очереди</h2>
           <span class="muted" style="font-size:13px">${recentSource ? escapeHtml(recentSource) + " · " : ""}${recent.length}</span>
         </div>
-        <div class="rail-track drag-scroll">
-          ${recent.map((it) => cardHtml(it)).join("")}
-        </div>`;
+        ${spineListHtml(recent.slice(0, 12))}`;
       host.appendChild(block);
+      wireCardMenus(block);
     }
     for (const folder of folders) {
       const block = document.createElement("section");
@@ -1769,14 +1775,14 @@
         <input id="q-filter" placeholder="Поиск по названию или каналу" />
       </div>
       <div class="muted" style="margin:0 0 12px;font-size:13px">Показано: ${items.length}${channel ? ` · ${escapeHtml(channel)}` : ""}</div>
-      <div class="grid" id="queue-grid">
-        ${items.length ? items.map(cardHtml).join("") : `<div class="empty">Пусто. ${status === "queue" ? `<a href="/queue?status=in_progress" data-nav>Начатые</a> · <a href="/channels" data-nav>каналы</a>` : `<a href="/queue?status=queue" data-nav>В очередь</a>`}</div>`}
+      <div id="queue-grid">
+        ${items.length ? spineListHtml(items) : `<div class="empty">Пусто. ${status === "queue" ? `<a href="/queue?status=in_progress" data-nav>Начатые</a> · <a href="/channels" data-nav>каналы</a>` : `<a href="/queue?status=queue" data-nav>В очередь</a>`}</div>`}
       </div>`;
     wireNav();
     wireCardMenus(app);
     const paint = (list) => {
       $("#queue-grid").innerHTML = list.length
-        ? list.map(cardHtml).join("")
+        ? spineListHtml(list)
         : `<div class="empty">Ничего не нашлось</div>`;
       wireNav();
       wireCardMenus($("#queue-grid"));

@@ -47,6 +47,7 @@ import ru.clipqueue.app.ui.rememberVideoActions
 import ru.clipqueue.app.ui.theme.CqAccent
 import ru.clipqueue.app.ui.theme.CqBg
 import ru.clipqueue.app.ui.theme.CqMuted
+import ru.clipqueue.app.ui.theme.CqOnAccent
 import ru.clipqueue.app.ui.theme.CqText
 
 @Composable
@@ -159,7 +160,7 @@ fun VideoDetailScreen(
                         },
                         modifier = Modifier.fillMaxWidth().height(48.dp),
                         shape = RoundedCornerShape(12.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = CqAccent, contentColor = CqText),
+                        colors = ButtonDefaults.buttonColors(containerColor = CqAccent, contentColor = CqOnAccent),
                     ) { Text("Смотреть на YouTube") }
                     Spacer(Modifier.height(8.dp))
                     OutlinedButton(

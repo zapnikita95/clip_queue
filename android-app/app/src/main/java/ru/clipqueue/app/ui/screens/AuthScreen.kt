@@ -35,10 +35,12 @@ import kotlinx.coroutines.launch
 import ru.clipqueue.app.ApiClient
 import ru.clipqueue.app.SessionStore
 import ru.clipqueue.app.ui.theme.CqAccent
-import ru.clipqueue.app.ui.theme.CqAccent2
 import ru.clipqueue.app.ui.theme.CqBg
+import ru.clipqueue.app.ui.theme.CqElev
 import ru.clipqueue.app.ui.theme.CqMuted
+import ru.clipqueue.app.ui.theme.CqOnAccent
 import ru.clipqueue.app.ui.theme.CqText
+import ru.clipqueue.app.ui.theme.CqWhisper
 
 @Composable
 fun AuthScreen(
@@ -56,7 +58,7 @@ fun AuthScreen(
             .fillMaxSize()
             .background(
                 Brush.radialGradient(
-                    colors = listOf(CqAccent.copy(alpha = 0.18f), CqBg),
+                    colors = listOf(CqText.copy(alpha = 0.08f), CqBg),
                     radius = 700f,
                 ),
             )
@@ -66,15 +68,18 @@ fun AuthScreen(
         Spacer(Modifier.height(72.dp))
         Box(
             modifier = Modifier
-                .size(56.dp)
-                .clip(RoundedCornerShape(16.dp))
-                .background(Brush.linearGradient(listOf(CqAccent, CqAccent2))),
-        )
+                .size(72.dp)
+                .clip(RoundedCornerShape(18.dp))
+                .background(CqElev),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text("Kyeye", color = CqText, style = MaterialTheme.typography.labelSmall)
+        }
         Spacer(Modifier.height(20.dp))
-        Text("Clip Queue", style = MaterialTheme.typography.displayLarge)
+        Text("Kyeye", style = MaterialTheme.typography.displayLarge)
         Spacer(Modifier.height(10.dp))
         Text(
-            text = "YouTube → Поделиться → Clip Queue",
+            text = "YouTube → Поделиться → Kyeye",
             style = MaterialTheme.typography.bodyMedium,
             color = CqMuted,
             textAlign = TextAlign.Center,
@@ -88,7 +93,7 @@ fun AuthScreen(
             enabled = !busy,
             modifier = Modifier.fillMaxWidth().height(48.dp),
             shape = RoundedCornerShape(12.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = CqAccent, contentColor = CqText),
+            colors = ButtonDefaults.buttonColors(containerColor = CqAccent, contentColor = CqOnAccent),
         ) {
             Text("Войти через Google", fontWeight = FontWeight.Bold)
         }
@@ -122,7 +127,7 @@ fun AuthScreen(
         }
         error?.let {
             Spacer(Modifier.height(16.dp))
-            Text(it, color = CqAccent, style = MaterialTheme.typography.bodySmall)
+            Text(it, color = CqWhisper, style = MaterialTheme.typography.bodySmall)
         }
     }
 }

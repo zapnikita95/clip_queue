@@ -10,19 +10,22 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 
-val CqBg = Color(0xFF0B0B0D)
-val CqElev = Color(0xFF141418)
-val CqElev2 = Color(0xFF1C1C22)
-val CqText = Color(0xFFF2F2F4)
-val CqMuted = Color(0xFF8A8A96)
-val CqAccent = Color(0xFFFF3B30)
-val CqAccent2 = Color(0xFFFF7A45)
+val CqBg = Color(0xFF0A0A0C)
+val CqElev = Color(0xFF121216)
+val CqElev2 = Color(0xFF1A1A20)
+val CqText = Color(0xFFF3F3F5)
+val CqMuted = Color(0xFF8E8E98)
+/** Luminous primary (Kyeye) — not YouTube red as system accent */
+val CqAccent = Color(0xFFF3F3F5)
+val CqAccent2 = Color(0xFFC8C8D0)
+val CqOnAccent = Color(0xFF0A0A0C)
 val CqOk = Color(0xFF3DD68C)
-val CqBorder = Color(0x1AFFFFFF)
+val CqBorder = Color(0x14FFFFFF)
+val CqWhisper = Color(0x88FF4848)
 
 private val DarkColors = darkColorScheme(
     primary = CqAccent,
-    onPrimary = Color.White,
+    onPrimary = CqOnAccent,
     secondary = CqAccent2,
     background = CqBg,
     onBackground = CqText,
@@ -35,28 +38,29 @@ private val DarkColors = darkColorScheme(
 
 private val CqTypography = Typography(
     displayLarge = TextStyle(
-        fontFamily = FontFamily.Serif,
-        fontWeight = FontWeight.Bold,
+        fontFamily = FontFamily.SansSerif,
+        fontWeight = FontWeight.Medium,
         fontSize = 34.sp,
-        letterSpacing = (-0.5).sp,
+        letterSpacing = (-0.8).sp,
         color = CqText,
     ),
     headlineMedium = TextStyle(
-        fontFamily = FontFamily.Serif,
-        fontWeight = FontWeight.SemiBold,
+        fontFamily = FontFamily.SansSerif,
+        fontWeight = FontWeight.Medium,
         fontSize = 24.sp,
-        letterSpacing = (-0.3).sp,
+        letterSpacing = (-0.5).sp,
         color = CqText,
     ),
     titleLarge = TextStyle(
-        fontFamily = FontFamily.Serif,
-        fontWeight = FontWeight.Bold,
+        fontFamily = FontFamily.SansSerif,
+        fontWeight = FontWeight.Medium,
         fontSize = 22.sp,
+        letterSpacing = (-0.4).sp,
         color = CqText,
     ),
     titleMedium = TextStyle(
         fontFamily = FontFamily.SansSerif,
-        fontWeight = FontWeight.Bold,
+        fontWeight = FontWeight.SemiBold,
         fontSize = 15.sp,
         color = CqText,
     ),

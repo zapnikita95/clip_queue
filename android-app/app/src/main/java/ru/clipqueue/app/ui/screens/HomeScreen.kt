@@ -239,7 +239,7 @@ fun HomeScreen(
     ) {
         Column(modifier = Modifier.padding(horizontal = 12.dp)) {
             Spacer(Modifier.height(14.dp))
-            Text("Clip Queue", style = MaterialTheme.typography.titleLarge)
+            Text("Kyeye", style = MaterialTheme.typography.titleLarge)
         }
         FolderTrashZone(
             editing = folderEdit,

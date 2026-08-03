@@ -1,11 +1,11 @@
 {
-  "name": "Clip Queue",
-  "short_name": "Clip Queue",
+  "name": "Kyeye",
+  "short_name": "Kyeye",
   "description": "Очередь YouTube-видео из твоих интересов",
   "start_url": "/home",
   "display": "standalone",
-  "background_color": "#0b0b0d",
-  "theme_color": "#ff3b30",
+  "background_color": "#0a0a0c",
+  "theme_color": "#0a0a0c",
   "share_target": {
     "action": "/add",
     "method": "GET",

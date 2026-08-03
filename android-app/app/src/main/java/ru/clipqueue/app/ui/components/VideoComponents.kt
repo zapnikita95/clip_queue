@@ -395,9 +395,9 @@ fun BottomBar(
         horizontalArrangement = Arrangement.SpaceEvenly,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        BottomTab(0, selected, "Лента", Icons.Default.Home, onHome, Modifier.weight(1f))
+        BottomTab(0, selected, "Очередь", Icons.Default.Home, onHome, Modifier.weight(1f))
         BottomTab(1, selected, "Папки", Icons.Default.Folder, onFolders, Modifier.weight(1f))
-        BottomTab(2, selected, "Ещё", Icons.Default.Person, onProfile, Modifier.weight(1f))
+        BottomTab(2, selected, "Профиль", Icons.Default.Person, onProfile, Modifier.weight(1f))
     }
 }
 
@@ -416,13 +416,13 @@ private fun BottomTab(
         verticalArrangement = Arrangement.Center,
         modifier = modifier
             .clip(RoundedCornerShape(12.dp))
-            .background(if (on) CqAccent.copy(alpha = 0.18f) else androidx.compose.ui.graphics.Color.Transparent)
+            .background(if (on) CqAccent.copy(alpha = 0.12f) else androidx.compose.ui.graphics.Color.Transparent)
             .clickable(onClick = onClick)
             .padding(vertical = 8.dp),
     ) {
-        Icon(icon, label, tint = if (on) CqAccent else CqMuted, modifier = Modifier.size(26.dp))
+        Icon(icon, label, tint = if (on) CqText else CqMuted, modifier = Modifier.size(26.dp))
         Spacer(Modifier.height(2.dp))
-        Text(label, color = if (on) CqAccent else CqMuted, fontSize = 12.sp)
+        Text(label, color = if (on) CqText else CqMuted, fontSize = 12.sp)
     }
 }
 

@@ -28,6 +28,7 @@ import ru.clipqueue.app.SessionStore
 import ru.clipqueue.app.ui.theme.CqAccent
 import ru.clipqueue.app.ui.theme.CqBg
 import ru.clipqueue.app.ui.theme.CqMuted
+import ru.clipqueue.app.ui.theme.CqOnAccent
 import ru.clipqueue.app.ui.theme.CqText
 
 @Composable
@@ -39,10 +40,10 @@ fun OnboardingScreen(
     var step by remember { mutableIntStateOf(0) }
     val scope = rememberCoroutineScope()
     val pages = listOf(
-        Triple("Clip Queue", "Очередь YouTube на телефоне.", "Дальше"),
+        Triple("Kyeye", "Очередь YouTube на телефоне.", "Дальше"),
         Triple("Синк", "Лайки и плейлисты.", "Синхронизировать"),
         Triple("Папки и теги", "Раскладка и фильтры.", "Дальше"),
-        Triple("Share", "Из YouTube → Clip Queue.", "Готово"),
+        Triple("Share", "Из YouTube → Kyeye.", "Готово"),
     )
     val (title, body, cta) = pages[step]
 
@@ -72,7 +73,7 @@ fun OnboardingScreen(
             },
             modifier = Modifier.fillMaxWidth().height(52.dp),
             shape = RoundedCornerShape(14.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = CqAccent, contentColor = CqText),
+            colors = ButtonDefaults.buttonColors(containerColor = CqAccent, contentColor = CqOnAccent),
         ) { Text(cta) }
         if (step < pages.lastIndex) {
             Spacer(Modifier.height(10.dp))
