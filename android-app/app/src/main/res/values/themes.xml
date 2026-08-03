@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="cq_bg">#FF0B0B0D</color>
+    <color name="cq_accent">#FFFF3B30</color>
+    <style name="Theme.ClipQueue" parent="android:Theme.Material.NoActionBar">
+        <item name="android:statusBarColor">@color/cq_bg</item>
+        <item name="android:navigationBarColor">@color/cq_bg</item>
+        <item name="android:windowBackground">@color/cq_bg</item>
+        <item name="android:colorPrimary">@color/cq_accent</item>
+    </style>
+    <style name="Theme.ClipQueue.Translucent" parent="android:Theme.Translucent.NoTitleBar">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:backgroundDimEnabled">false</item>
+        <item name="android:windowAnimationStyle">@null</item>
+    </style>
+</resources>

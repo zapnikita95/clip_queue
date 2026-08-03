@@ -5,6 +5,7 @@
 - Отдельный репозиторий, отдельная БД, отдельный Railway
 - Никакой общей базы с Movie Planner
 - Веб-кабинет: сохранить по ссылке → главная с рельсами → теги и списки → похожие из своих
+- **Android (Kotlin + Compose):** share из YouTube → Toast «Видео сохранено!» без открытия UI; home + sync плейлистов — см. [`android-app/`](android-app/) и [`docs/14_ANDROID_APP.md`](docs/14_ANDROID_APP.md). Мокапы: [`designs/index.html`](designs/index.html)
 
 ## Локально
 

@@ -198,8 +198,9 @@ def create_app() -> Flask:
 
     @app.get("/api/auth/google/start")
     def google_start():
+        client = (request.args.get("client") or "").strip().lower()
         try:
-            url = google_oauth.start_url()
+            url = google_oauth.start_url(client=client or None)
         except Exception as e:
             return json_error(str(e), 503)
         return redirect(url)
@@ -211,9 +212,12 @@ def create_app() -> Flask:
             return redirect(f"/login?error={err}")
         code = request.args.get("code") or ""
         state = request.args.get("state") or ""
+        android = google_oauth.is_android_state(state)
         try:
             session = google_oauth.login_with_code(code, state)
         except Exception as e:
+            if android:
+                return redirect(f"clipqueue://auth?error={str(e)[:120]}")
             return redirect(f"/login?error={str(e)[:120]}")
         uid = int(session["user"]["id"])
         lib = db.fetchone(
@@ -222,7 +226,13 @@ def create_app() -> Flask:
         )
         # Autosync only on empty library (onboarding). Returning users → home.
         autosync = 0 if int((lib or {}).get("c") or 0) > 0 else 1
-        resp = redirect(f"/auth/callback?token={session['token']}&autosync={autosync}")
+        if android:
+            dest = (
+                f"clipqueue://auth?token={session['token']}&autosync={autosync}"
+            )
+            resp = redirect(dest)
+        else:
+            resp = redirect(f"/auth/callback?token={session['token']}&autosync={autosync}")
         resp.set_cookie(
             "cq_session",
             session["token"],

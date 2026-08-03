@@ -55,10 +55,12 @@ def redirect_uri() -> str:
     return f"{public_origin()}/api/auth/google/callback"
 
 
-def start_url(state: Optional[str] = None) -> str:
+def start_url(state: Optional[str] = None, *, client: Optional[str] = None) -> str:
     if not configured():
         raise RuntimeError("GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET не заданы")
-    st = state or secrets.token_urlsafe(24)
+    raw = state or secrets.token_urlsafe(24)
+    # Encode mobile client in state so callback can deep-link back to the app.
+    st = f"android.{raw}" if (client or "").strip().lower() == "android" else raw
     expires = auth._iso(auth._utcnow() + timedelta(minutes=20))
     if db.is_postgres():
         db.execute(
@@ -82,6 +84,10 @@ def start_url(state: Optional[str] = None) -> str:
         "state": st,
     }
     return f"{AUTH_URL}?{urlencode(params)}"
+
+
+def is_android_state(state: str) -> bool:
+    return (state or "").startswith("android.")
 
 
 def _consume_state(state: str) -> bool:

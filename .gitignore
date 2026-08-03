@@ -18,3 +18,8 @@ node_modules/
 .railway/
 *.log
 .cursor/
+android-app/local.properties
+android-app/.gradle/
+android-app/**/build/
+*.apk
+*.aab
