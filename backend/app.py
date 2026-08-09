@@ -84,15 +84,20 @@ def create_app() -> Flask:
 
     @app.get("/health")
     def health():
+        fcm_env = bool(
+            (os.environ.get("FIREBASE_SERVICE_ACCOUNT_JSON") or "").strip()
+            or (os.environ.get("FIREBASE_SERVICE_ACCOUNT_PATH") or "").strip()
+        )
         return jsonify(
             {
                 "ok": True,
                 "service": "clip_queue",
-                "version": "0.2.6",
+                "version": "0.2.7",
                 "db": "postgres" if db.is_postgres() else "sqlite",
                 "google_oauth": google_oauth.configured(),
                 "llm": llm.available(),
                 "youtube_api_key": bool((os.environ.get("YOUTUBE_API_KEY") or "").strip()),
+                "fcm_configured": fcm_env,
             }
         )
 

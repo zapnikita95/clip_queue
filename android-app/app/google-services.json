@@ -1,13 +1,13 @@
 {
   "project_info": {
-    "project_number": "000000000000",
-    "project_id": "kyro-clip-queue",
-    "storage_bucket": "kyro-clip-queue.appspot.com"
+    "project_number": "275185236379",
+    "project_id": "movie-planner-7fcad",
+    "storage_bucket": "movie-planner-7fcad.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:000000000000:android:0000000000000000000000",
+        "mobilesdk_app_id": "1:275185236379:android:efcdd84fcc6a158d43493e",
         "android_client_info": {
           "package_name": "ru.clipqueue.app"
         }
@@ -15,7 +15,26 @@
       "oauth_client": [],
       "api_key": [
         {
-          "current_key": "AIzaSyReplaceWithRealKyroFirebaseApiKey000"
+          "current_key": "AIzaSyCaqN_uqG4f1Vaf1RpixfaNpVs2Iad7IfY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:275185236379:android:ad6fd15536e3cdd943493e",
+        "android_client_info": {
+          "package_name": "ru.movieplanner.mobile"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCaqN_uqG4f1Vaf1RpixfaNpVs2Iad7IfY"
         }
       ],
       "services": {

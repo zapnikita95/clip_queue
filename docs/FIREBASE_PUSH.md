@@ -1,31 +1,34 @@
 # Kyro FCM setup
 
-Пуши после классификации требуют Firebase.
+Пуши после классификации идут через Firebase project **movie-planner-7fcad** (тот же, что Movie Planner).
 
-## 1. Android client
+## Android
 
-1. Создай проект Firebase (или используй существующий).
-2. Add Android app: package `ru.clipqueue.app`.
-3. Скачай **настоящий** `google-services.json` → замени  
-   `android-app/app/google-services.json` (в репо лежит stub для сборки).
-4. Пересобери APK.
+- Package: `ru.clipqueue.app`
+- Файл: `android-app/app/google-services.json` (реальный, не stub)
+- App id: `1:275185236379:android:efcdd84fcc6a158d43493e`
 
-## 2. Backend (Railway)
+## Backend (Railway)
 
-1. Firebase Console → Project settings → Service accounts → Generate new private key.
-2. В Railway env:
+Env на `clip-queue-web`:
 
 ```
-FIREBASE_SERVICE_ACCOUNT_JSON={"type":"service_account",...весь JSON одной строкой...}
+FIREBASE_SERVICE_ACCOUNT_JSON=<JSON firebase-adminsdk service account>
 ```
 
-Либо файл + `FIREBASE_SERVICE_ACCOUNT_PATH=/path/to/sa.json` (локально).
+Код читает его в `backend/push.py`. Без переменной classify в фоне работает, пуш = no-op.
 
-3. Redeploy. Без этой переменной classify в фоне работает, пуш логируется как `fcm_unconfigured`.
+Локально для отладки можно положить JSON в `data/firebase-admin-kyro.json` и:
 
-## 3. Проверка
+```
+FIREBASE_SERVICE_ACCOUNT_PATH=data/firebase-admin-kyro.json
+```
 
-1. Войти в Kyro → разрешить уведомления.
-2. `POST /api/devices/register` должен пройти (лог `device registered` в logcat).
-3. Share из YouTube → toast «Сохранено в Kyro» за секунды.
-4. Через несколько секунд/десятков — пуш `«…» → Папка` → тап → карточка видео.
+(`/data/` в `.gitignore` — секреты не коммитить.)
+
+## Проверка
+
+1. Установить APK ≥ 0.1.15, войти, разрешить уведомления.
+2. Logcat: `KyroPush` → `device registered`.
+3. Share из YouTube → toast «Сохранено в Kyro».
+4. Пуш `«…» → Папка` → тап → карточка видео.
