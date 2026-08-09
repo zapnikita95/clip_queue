@@ -20,7 +20,10 @@ import ru.clipqueue.app.data.CreateListResponse
 import ru.clipqueue.app.data.CreateTagResponse
 import ru.clipqueue.app.data.ListDetailResponse
 import ru.clipqueue.app.data.ListsResponse
+import ru.clipqueue.app.data.InboxOnboardingResponse
+import ru.clipqueue.app.data.LightPlanResponse
 import ru.clipqueue.app.data.MeResponse
+import ru.clipqueue.app.data.MetricsSummaryResponse
 import ru.clipqueue.app.data.NowResponse
 import ru.clipqueue.app.data.OkResponse
 import ru.clipqueue.app.data.OpenResponse
@@ -102,6 +105,42 @@ class ApiClient(private val session: SessionStore) {
         return get("/api/home/now?$qs")
     }
 
+    suspend fun homePlan(): LightPlanResponse = get("/api/home/plan")
+
+    suspend fun addToPlan(videoId: String, bucket: String = "tonight"): LightPlanResponse =
+        post(
+            "/api/home/plan",
+            mapOf("action" to "add", "bucket" to bucket, "video_id" to videoId),
+        )
+
+    suspend fun reclassify(videoId: String, listId: Int): OkResponse =
+        post(
+            "/api/videos/${java.net.URLEncoder.encode(videoId, "UTF-8")}/reclassify",
+            mapOf("list_id" to listId),
+        )
+
+    suspend fun inboxOnboarding(): InboxOnboardingResponse = get("/api/onboarding/inbox")
+
+    suspend fun inboxOnboardingDone(): InboxOnboardingResponse =
+        post("/api/onboarding/inbox/done", emptyMap<String, String>())
+
+    suspend fun metricsSummary(): MetricsSummaryResponse = get("/api/metrics/summary")
+
+    suspend fun setReminder(videoId: String, remindAtIso: String): OkResponse =
+        post("/api/reminders", mapOf("video_id" to videoId, "remind_at" to remindAtIso))
+
+    suspend fun setPrefs(body: Map<String, Any?>): OkResponse = post("/api/prefs", body)
+
+    suspend fun trackSurface(eventType: String, videoId: String = "", surface: String = ""): OkResponse =
+        post(
+            "/api/metrics/track",
+            mapOf(
+                "event_type" to eventType,
+                "video_id" to videoId,
+                "surface" to surface,
+            ),
+        )
+
     suspend fun lists(tagId: Int? = null, forHome: Boolean = false): ListsResponse {
         val qs = buildString {
             val parts = mutableListOf<String>()
@@ -137,8 +176,11 @@ class ApiClient(private val session: SessionStore) {
     suspend fun similar(videoId: String): SimilarResponse =
         get("/api/videos/${java.net.URLEncoder.encode(videoId, "UTF-8")}/similar")
 
-    suspend fun openVideo(videoId: String): OpenResponse =
-        post("/api/videos/${java.net.URLEncoder.encode(videoId, "UTF-8")}/open")
+    suspend fun openVideo(videoId: String, surface: String = ""): OpenResponse =
+        post(
+            "/api/videos/${java.net.URLEncoder.encode(videoId, "UTF-8")}/open",
+            if (surface.isBlank()) emptyMap() else mapOf("surface" to surface),
+        )
 
     suspend fun patchLibrary(videoId: String, body: Map<String, Any?>): OkResponse =
         patch("/api/library/${java.net.URLEncoder.encode(videoId, "UTF-8")}", body)

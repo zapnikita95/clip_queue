@@ -112,6 +112,29 @@ data class NowResponse(
     val error: String? = null,
 )
 
+data class LightPlanResponse(
+    val ok: Boolean? = null,
+    val tonight: List<VideoCard>? = null,
+    val week: List<VideoCard>? = null,
+    val error: String? = null,
+)
+
+data class InboxOnboardingResponse(
+    val ok: Boolean? = null,
+    val has_inbox: Boolean? = null,
+    val hint: String? = null,
+    val onboarding_done: Boolean? = null,
+    val error: String? = null,
+)
+
+data class MetricsSummaryResponse(
+    val ok: Boolean? = null,
+    val weekly_planned_watches: Int? = null,
+    val surface_active_days: Int? = null,
+    val depth_themed_pct: Double? = null,
+    val error: String? = null,
+)
+
 data class VideoCard(
     val video_id: String? = null,
     val title: String? = null,
@@ -124,6 +147,7 @@ data class VideoCard(
     val watch_url: String? = null,
     val description: String? = null,
     val note: String? = null,
+    val reason: String? = null,
     val user_tags: List<TagDto>? = null,
     val in_lists: List<ListRef>? = null,
 )

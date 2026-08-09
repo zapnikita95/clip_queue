@@ -70,6 +70,23 @@ class VideoActions(
             }
             CardAction.Tag -> onTag(card)
             CardAction.Move -> onMove(card)
+            CardAction.PlanTonight -> scope.launch {
+                val r = runCatching { api.addToPlan(id, "tonight") }.getOrNull()
+                toast(if (r?.ok == true) "В плане на вечер" else (r?.error ?: "Ошибка"))
+            }
+            CardAction.PlanWeek -> scope.launch {
+                val r = runCatching { api.addToPlan(id, "week") }.getOrNull()
+                toast(if (r?.ok == true) "В плане на неделю" else (r?.error ?: "Ошибка"))
+            }
+            CardAction.Remind -> scope.launch {
+                val at = java.time.Instant.now().plusSeconds(4 * 3600).toString()
+                val r = runCatching { api.setReminder(id, at) }.getOrNull()
+                toast(if (r?.ok == true) "Напомним через 4 часа" else (r?.error ?: "Ошибка"))
+            }
+            CardAction.NotNow -> scope.launch {
+                // Keep in library, just surface later — soft suppress via note flag not needed
+                toast("Ок, вернёмся позже")
+            }
         }
     }
 

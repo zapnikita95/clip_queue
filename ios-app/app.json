@@ -1,0 +1,41 @@
+{
+  "expo": {
+    "name": "Kyro",
+    "slug": "kyro",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "scheme": "kyro",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "ru.kyro.app",
+      "infoPlist": {
+        "CFBundleDisplayName": "Kyro",
+        "LSApplicationQueriesSchemes": [
+          "youtube",
+          "http",
+          "https"
+        ]
+      }
+    },
+    "android": {
+      "package": "ru.kyro.app",
+      "adaptiveIcon": {
+        "backgroundColor": "#0a0a0c",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      }
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "apiBaseUrl": "https://clip-queue-web-production.up.railway.app"
+    },
+    "plugins": [
+      "expo-web-browser"
+    ]
+  }
+}

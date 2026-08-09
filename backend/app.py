@@ -12,7 +12,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from flask import Flask, g, jsonify, redirect, request, send_from_directory
 
-from backend import auth, db, google_oauth, llm, now_plan, organize, push, search as cq_search, share_classify, sync_jobs, takeout, themes, yt_sync
+from backend import auth, db, digest_jobs, google_oauth, llm, metrics, now_plan, organize, push, reminders_svc, search as cq_search, share_classify, sync_jobs, takeout, themes, yt_sync
 from backend import classify_jobs
 from backend import similarity as sim
 from backend import youtube as yt
@@ -92,7 +92,7 @@ def create_app() -> Flask:
             {
                 "ok": True,
                 "service": "clip_queue",
-                "version": "0.3.0",
+                "version": "0.4.0",
                 "db": "postgres" if db.is_postgres() else "sqlite",
                 "google_oauth": google_oauth.configured(),
                 "llm": llm.available(),
@@ -1351,10 +1351,32 @@ def create_app() -> Flask:
     def open_video(video_id: str):
         """Open on YouTube = started (leaves main queue until marked watched / back)."""
         uid = current_user()["user_id"]
+        body = request.get_json(silent=True) or {}
+        surface = (body.get("surface") or request.args.get("surface") or "").strip()
         db.execute(
             "INSERT INTO watch_events (user_id, video_id, event_type) VALUES (?, ?, ?)",
             (uid, video_id, "open_yt"),
         )
+        if surface in (
+            "now",
+            "plan_tonight",
+            "plan_week",
+            "suggestion",
+            "digest",
+            "push",
+            "reminder",
+        ):
+            et_map = {
+                "now": "now_open",
+                "plan_tonight": "plan_open",
+                "plan_week": "plan_open",
+                "suggestion": "suggestion_open",
+                "digest": "digest_open",
+                "push": "push_open",
+                "reminder": "plan_open",
+            }
+            metrics.track(uid, et_map.get(surface, "now_open"), video_id=video_id, surface=surface)
+            metrics.track(uid, "planned_watch", video_id=video_id, surface=surface)
         row = db.fetchone(
             "SELECT status FROM library_items WHERE user_id = ? AND video_id = ?",
             (uid, video_id),
@@ -1865,6 +1887,97 @@ def create_app() -> Flask:
                 "learned": {"type": rule_type, "value": rule_value} if rule_type else None,
             }
         )
+
+    @app.get("/api/home/plan")
+    @require_auth
+    def home_plan_get():
+        uid = current_user()["user_id"]
+        return jsonify({"ok": True, **now_plan.get_light_plan(uid)})
+
+    @app.post("/api/home/plan")
+    @require_auth
+    def home_plan_set():
+        uid = current_user()["user_id"]
+        body = request.get_json(silent=True) or {}
+        if body.get("video_id") and body.get("action") == "add":
+            plan = now_plan.add_to_light_plan(
+                uid, body.get("video_id"), bucket=(body.get("bucket") or "tonight")
+            )
+            return jsonify({"ok": True, **plan})
+        if body.get("video_id") and body.get("action") == "remove":
+            plan = now_plan.remove_from_light_plan(
+                uid, body.get("video_id"), bucket=(body.get("bucket") or "tonight")
+            )
+            return jsonify({"ok": True, **plan})
+        plan = now_plan.set_light_plan(
+            uid,
+            tonight=body.get("tonight"),
+            week=body.get("week"),
+        )
+        return jsonify({"ok": True, **plan})
+
+    @app.get("/api/onboarding/inbox")
+    @require_auth
+    def onboarding_inbox():
+        uid = current_user()["user_id"]
+        return jsonify({"ok": True, **now_plan.inbox_onboarding_status(uid)})
+
+    @app.post("/api/onboarding/inbox/done")
+    @require_auth
+    def onboarding_inbox_done():
+        uid = current_user()["user_id"]
+        now_plan.set_prefs(uid, {"inbox_onboarding_done": True})
+        return jsonify({"ok": True, **now_plan.inbox_onboarding_status(uid)})
+
+    @app.post("/api/metrics/track")
+    @require_auth
+    def metrics_track():
+        uid = current_user()["user_id"]
+        body = request.get_json(silent=True) or {}
+        r = metrics.track(
+            uid,
+            body.get("event_type") or "",
+            video_id=body.get("video_id") or "",
+            surface=body.get("surface") or "",
+            meta=body.get("meta") if isinstance(body.get("meta"), dict) else None,
+        )
+        if not r.get("ok"):
+            return json_error(r.get("error") or "bad event")
+        return jsonify(r)
+
+    @app.get("/api/metrics/summary")
+    @require_auth
+    def metrics_summary():
+        uid = current_user()["user_id"]
+        return jsonify({"ok": True, **metrics.weekly_summary(uid)})
+
+    @app.get("/api/reminders")
+    @require_auth
+    def reminders_list():
+        uid = current_user()["user_id"]
+        return jsonify({"ok": True, "items": reminders_svc.list_reminders(uid)})
+
+    @app.post("/api/reminders")
+    @require_auth
+    def reminders_create():
+        uid = current_user()["user_id"]
+        body = request.get_json(silent=True) or {}
+        r = reminders_svc.set_reminder(uid, body.get("video_id") or "", body.get("remind_at") or "")
+        if not r.get("ok"):
+            return json_error(r.get("error") or "Не удалось")
+        return jsonify(r)
+
+    @app.post("/api/reminders/<int:reminder_id>/done")
+    @require_auth
+    def reminders_done(reminder_id: int):
+        uid = current_user()["user_id"]
+        return jsonify(reminders_svc.complete_reminder(uid, reminder_id))
+
+    @app.delete("/api/reminders/<int:reminder_id>")
+    @require_auth
+    def reminders_delete(reminder_id: int):
+        uid = current_user()["user_id"]
+        return jsonify(reminders_svc.delete_reminder(uid, reminder_id))
 
     def _clean_lib_rows(
         rows: list[dict],
@@ -2784,6 +2897,12 @@ def create_app() -> Flask:
         if target.is_file() and target.resolve().is_relative_to(WEB.resolve()):
             return send_from_directory(WEB, filename)
         return send_from_directory(WEB, "index.html")
+
+    try:
+        metrics.ensure_tables()
+        digest_jobs.start_background()
+    except Exception as e:
+        log.warning("startup background: %s", e)
 
     return app
 

@@ -96,6 +96,7 @@ fun HomeScreen(
     var nowSlots by remember { mutableStateOf<List<NowSlotDto>>(emptyList()) }
     var nowMoods by remember { mutableStateOf<List<NowMoodDto>>(emptyList()) }
     var nowMeta by remember { mutableStateOf("") }
+    var planTonight by remember { mutableStateOf<List<VideoCard>>(emptyList()) }
     var tagCard by remember { mutableStateOf<VideoCard?>(null) }
     var moveCard by remember { mutableStateOf<VideoCard?>(null) }
     var folderEdit by remember { mutableStateOf(false) }
@@ -142,6 +143,7 @@ fun HomeScreen(
                 val listsDef = async { api.lists(forHome = true) }
                 val tagsDef = async { runCatching { api.tags(onlyUsed = true) }.getOrNull() }
                 val nowDef = async { runCatching { api.homeNow(slot = nowSlot, mood = nowMood, limit = 6) }.getOrNull() }
+                val planDef = async { runCatching { api.homePlan() }.getOrNull() }
                 recent = recentDef.await().items.orEmpty()
                 vibe = vibeDef.await().items.orEmpty()
                 fromPlaylists = plDef.await().items.orEmpty()
@@ -158,7 +160,11 @@ fun HomeScreen(
                     if (now.slots.orEmpty().isNotEmpty()) nowSlots = now.slots.orEmpty()
                     if (now.moods.orEmpty().isNotEmpty()) nowMoods = now.moods.orEmpty()
                     nowMeta = now.slot_label.orEmpty()
+                    runCatching {
+                        api.trackSurface("now_impression", surface = "android_home")
+                    }
                 }
+                planTonight = planDef.await()?.tonight.orEmpty()
                 appCache.home = AppCache.Home(
                     recent = recent,
                     vibe = vibe,
@@ -416,6 +422,18 @@ fun HomeScreen(
                                     item {
                                         SectionLabel("Можно посмотреть", Modifier.padding(horizontal = 12.dp))
                                         VideoRail(nowSuggestions) { c, a -> actions.handle(c, a) }
+                                    }
+                                }
+                                item {
+                                    SectionLabel("План на вечер", Modifier.padding(horizontal = 12.dp))
+                                    if (planTonight.isEmpty()) {
+                                        Text(
+                                            "Добавьте через меню карточки",
+                                            color = CqMuted,
+                                            modifier = Modifier.padding(horizontal = 12.dp),
+                                        )
+                                    } else {
+                                        VideoRail(planTonight) { c, a -> actions.handle(c, a) }
                                     }
                                 }
                                 item {

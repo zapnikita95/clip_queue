@@ -24,4 +24,4 @@ android-app/**/build/
 /data/
 *.db
 *.sqlite
-*.sqlite3
+*.sqlite3node_modules/

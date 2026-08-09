@@ -396,6 +396,9 @@ Curate — идея отбора и создания коллекции. Kyro н
           <button type="button" data-act="boost0">Обычный интерес</button>
           <button type="button" data-act="boost_down">Менее интересно</button>
           <button type="button" data-act="watched">Просмотрено</button>
+          <button type="button" data-act="plan-tonight">В план на вечер</button>
+          <button type="button" data-act="plan-week">В план на неделю</button>
+          <button type="button" data-act="remind">Напомнить позже</button>
           <button type="button" data-act="reclassify">Не туда — другая папка</button>
           ${listId ? `<button type="button" data-act="remove-cat">Убрать из категории</button>` : ""}
           ${draftFolder ? `<button type="button" data-act="remove-draft">Убрать из категории</button>` : ""}
@@ -428,6 +431,7 @@ Curate — идея отбора и создания коллекции. Kyro н
             ${boostMark ? `<span class="card-boost">${boostMark}</span>` : ""}
           </div>
           <div class="card-body">
+            ${item.reason ? `<div class="muted" style="font-size:12px;margin-bottom:4px">${escapeHtml(item.reason)}</div>` : ""}
             <h3 class="card-title">${escapeHtml(item.title)}</h3>
             <div class="card-meta">${escapeHtml(item.channel_title || "YouTube")}</div>
             ${pills ? `<div class="card-tags">${pills}</div>` : ""}
@@ -593,6 +597,21 @@ Curate — идея отбора и создания коллекции. Kyro н
             },
           });
         }
+      } else if (act === "plan-tonight" || act === "plan-week") {
+        const bucket = act === "plan-week" ? "week" : "tonight";
+        await api("/api/home/plan", {
+          method: "POST",
+          body: JSON.stringify({ action: "add", bucket, video_id: videoId }),
+        });
+        toast(bucket === "week" ? "В плане на неделю" : "В плане на вечер");
+      } else if (act === "remind") {
+        const hours = parseInt(window.prompt("Через сколько часов напомнить?", "4") || "4", 10);
+        const at = new Date(Date.now() + Math.max(1, hours || 4) * 3600 * 1000).toISOString();
+        await api("/api/reminders", {
+          method: "POST",
+          body: JSON.stringify({ video_id: videoId, remind_at: at }),
+        });
+        toast("Напоминание сохранено");
       } else if (act === "reclassify") {
         const lists = await api("/api/lists").catch(() => ({ lists: [] }));
         const opts = (lists.lists || []).filter((l) => {
@@ -1151,12 +1170,29 @@ Curate — идея отбора и создания коллекции. Kyro н
       </div>
       <div class="panel" style="margin-bottom:16px">
         <h2>Дайджест</h2>
-        <p class="muted" style="margin:0 0 10px">Раз в неделю — идеи из вашей очереди (пуш, если приложение подключено).</p>
+        <p class="muted" style="margin:0 0 10px">Раз в неделю — идеи из вашей очереди (автопуш + вручную). Тихие часы — без пушей.</p>
+        <label class="muted" style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+          <input type="checkbox" id="digest-enabled" checked /> Включить еженедельный дайджест
+        </label>
+        <div class="btn-row" style="margin-bottom:8px">
+          <label class="muted" style="font-size:13px">Тихо с
+            <input type="number" id="quiet-start" min="0" max="23" value="23" style="width:56px;margin:0 6px" />
+            до
+            <input type="number" id="quiet-end" min="0" max="23" value="8" style="width:56px;margin:0 6px" />
+            (UTC)
+          </label>
+          <button type="button" class="btn secondary" id="prefs-save">Сохранить</button>
+        </div>
         <div class="btn-row">
           <button type="button" class="btn secondary" id="digest-preview">Посмотреть текст</button>
           <button type="button" class="btn" id="digest-send">Отправить себе</button>
         </div>
         <div id="digest-out" class="muted" style="margin-top:10px;white-space:pre-wrap;font-size:13px"></div>
+      </div>
+      <div class="panel" style="margin-bottom:16px">
+        <h2>Метрики недели</h2>
+        <p class="muted" style="margin:0 0 8px">North star: просмотры из плана Kyro.</p>
+        <div id="metrics-out" class="muted" style="font-size:13px">Загрузка…</div>
       </div>
       <div class="panel" style="margin-bottom:16px">
         <h2>Расширение Chrome</h2>
@@ -1172,6 +1208,42 @@ Curate — идея отбора и создания коллекции. Kyro н
         </div>
       </div>`;
     wireNav();
+    try {
+      const prefs = await api("/api/prefs");
+      const p = prefs.prefs || {};
+      const de = $("#digest-enabled");
+      if (de) de.checked = p.digest_enabled !== false;
+      const qs = $("#quiet-start");
+      const qe = $("#quiet-end");
+      if (qs && p.quiet_start != null) qs.value = p.quiet_start;
+      if (qe && p.quiet_end != null) qe.value = p.quiet_end;
+      const m = await api("/api/metrics/summary");
+      const mo = $("#metrics-out");
+      if (mo) {
+        mo.innerHTML = `Planned watches: <b>${m.weekly_planned_watches || 0}</b> · дней с surface: <b>${m.surface_active_days || 0}</b> · в тематических папках: <b>${m.depth_themed_pct || 0}%</b>`;
+      }
+    } catch (_) {
+      const mo = $("#metrics-out");
+      if (mo) mo.textContent = "Нет данных";
+    }
+    const prefsSave = $("#prefs-save");
+    if (prefsSave) {
+      prefsSave.onclick = async () => {
+        try {
+          await api("/api/prefs", {
+            method: "POST",
+            body: JSON.stringify({
+              digest_enabled: !!$("#digest-enabled")?.checked,
+              quiet_start: Number($("#quiet-start")?.value || 23),
+              quiet_end: Number($("#quiet-end")?.value || 8),
+            }),
+          });
+          toast("Сохранено");
+        } catch (e) {
+          toast(e.message);
+        }
+      };
+    }
     const digPrev = $("#digest-preview");
     const digSend = $("#digest-send");
     const digOut = $("#digest-out");
@@ -1632,6 +1704,17 @@ Curate — идея отбора и создания коллекции. Kyro н
         </div>
         <div class="rail-track drag-scroll" id="now-suggestions"></div>
       </section>
+      <section class="plan-block" id="plan-block">
+        <div class="rail-head">
+          <h2>План</h2>
+          <span class="muted" style="font-size:13px">вечер и неделя — ваш слой поверх очереди</span>
+        </div>
+        <div class="rail-head" style="margin-top:8px"><h3 style="font-size:0.95rem;margin:0">На вечер</h3></div>
+        <div class="rail-track drag-scroll" id="plan-tonight"><div class="empty muted">Добавьте ролики через ⋯ → «В план на вечер»</div></div>
+        <div class="rail-head" style="margin-top:10px"><h3 style="font-size:0.95rem;margin:0">На неделю</h3></div>
+        <div class="rail-track drag-scroll" id="plan-week"><div class="empty muted">Пока пусто</div></div>
+      </section>
+      <div id="inbox-onboard" class="panel inbox-onboard" hidden style="margin:0 0 16px"></div>
       <p class="mp-sister muted"><a href="https://movie-planner.ru/?open_login=1" target="_blank" rel="noopener">Кино — в Movie Planner</a></p>
       <div id="rails"></div>`;
     wireNav();
@@ -1647,6 +1730,14 @@ Curate — идея отбора и создания коллекции. Kyro н
         const qs = new URLSearchParams({ slot: nowSlot, limit: "6" });
         if (nowMood) qs.set("mood", nowMood);
         const data = await api(`/api/home/now?${qs}`);
+        api("/api/metrics/track", {
+          method: "POST",
+          body: JSON.stringify({
+            event_type: "now_impression",
+            surface: "home_now",
+            meta: { slot: nowSlot, mood: nowMood || null, n: (data.picks || []).length },
+          }),
+        }).catch(() => {});
         if (meta) meta.textContent = data.slot_label || "";
         const slotsEl = $("#now-slots");
         if (slotsEl && !(slotsEl.dataset.ready)) {
@@ -1690,6 +1781,17 @@ Curate — идея отбора и создания коллекции. Kyro н
             : `<div class="empty">Пока нечего предложить — сохраните видео или нажмите «Разобрать»</div>`;
           wireCardMenus(picksEl);
           enableDragScroll(picksEl.parentElement || document);
+          picksEl.querySelectorAll("a.play-btn").forEach((a) => {
+            a.addEventListener("click", () => {
+              const card = a.closest("[data-video-id]");
+              const vid = card && card.getAttribute("data-video-id");
+              if (!vid) return;
+              api(`/api/videos/${encodeURIComponent(vid)}/open`, {
+                method: "POST",
+                body: JSON.stringify({ surface: "now" }),
+              }).catch(() => {});
+            });
+          });
         }
         const sug = data.suggestions || [];
         const sugHead = $("#suggest-head");
@@ -1706,7 +1808,21 @@ Curate — идея отбора и создания коллекции. Kyro н
                     <div class="card-meta">${escapeHtml(it.channel_title || "")}${it.duration_label ? " · " + escapeHtml(it.duration_label) : ""}</div>
                   </div>
                 </a>
+                <div class="card-actions">
+                  <a class="btn play-btn" href="${escapeHtml(it.watch_url || `https://www.youtube.com/watch?v=${it.video_id}`)}" target="_blank" rel="noopener" data-surface="suggestion">▶</a>
+                </div>
               </div>`).join("");
+            sugEl.querySelectorAll("a.play-btn").forEach((a) => {
+              a.addEventListener("click", () => {
+                const card = a.closest("[data-video-id]");
+                const vid = card && card.getAttribute("data-video-id");
+                if (!vid) return;
+                api(`/api/videos/${encodeURIComponent(vid)}/open`, {
+                  method: "POST",
+                  body: JSON.stringify({ surface: "suggestion" }),
+                }).catch(() => {});
+              });
+            });
           } else {
             if (sugHead) sugHead.hidden = true;
             sugEl.innerHTML = "";
@@ -1717,6 +1833,59 @@ Curate — идея отбора и создания коллекции. Kyro н
       }
     };
     paintNow();
+
+    const paintPlan = async () => {
+      try {
+        const plan = await api("/api/home/plan");
+        const tn = $("#plan-tonight");
+        const wk = $("#plan-week");
+        if (tn) {
+          tn.innerHTML = (plan.tonight || []).length
+            ? plan.tonight.map((it) => cardHtml(it)).join("")
+            : `<div class="empty muted">Добавьте ролики через ⋯ → «В план на вечер»</div>`;
+          wireCardMenus(tn);
+          enableDragScroll(tn.parentElement || document);
+        }
+        if (wk) {
+          wk.innerHTML = (plan.week || []).length
+            ? plan.week.map((it) => cardHtml(it)).join("")
+            : `<div class="empty muted">Пока пусто</div>`;
+          wireCardMenus(wk);
+          enableDragScroll(wk.parentElement || document);
+        }
+      } catch (_) {}
+    };
+    paintPlan();
+
+    (async () => {
+      const box = $("#inbox-onboard");
+      if (!box) return;
+      try {
+        const st = await api("/api/onboarding/inbox");
+        if (st.onboarding_done && st.has_inbox) return;
+        box.hidden = false;
+        box.innerHTML = `
+          <h2 style="margin:0 0 8px">Ваша спецпапка</h2>
+          <p class="muted" style="margin:0 0 10px">${escapeHtml(st.hint || "")}</p>
+          <p class="muted" style="margin:0 0 12px;font-size:13px">
+            Создайте в YouTube плейлист «смотреть позже» или Listen later — после синка Kyro возьмёт его как inbox желаемого.
+            Затем нажмите «Разобрать», чтобы разложить по папкам.
+          </p>
+          <div class="btn-row">
+            <button type="button" class="btn" id="inbox-onboard-ok">Понятно</button>
+            ${!st.has_inbox ? `<button type="button" class="btn secondary" id="inbox-sync">Синхронизировать YouTube</button>` : ""}
+          </div>`;
+        const ok = $("#inbox-onboard-ok");
+        if (ok) {
+          ok.onclick = async () => {
+            await api("/api/onboarding/inbox/done", { method: "POST", body: "{}" });
+            box.hidden = true;
+          };
+        }
+        const syn = $("#inbox-sync");
+        if (syn) syn.onclick = () => runYoutubeSync({ autoGoHome: false, full: false });
+      } catch (_) {}
+    })();
 
     // Quiet delta sync on every home open — keeps «Недавно» / спецпапка fresh
     (async () => {

@@ -46,6 +46,14 @@ MOODS = {
             "юмор", "смешн", "comedy", "прикол", "стендап", "мем",
         ),
     },
+    "partner": {
+        "label": "С партнёром",
+        "hint": "удобно смотреть вдвоём",
+        "keywords": (
+            "фильм", "сериал", "movie", "кино", "вдвоём", "пароч", "роман",
+            "комедия", "thriller", "драм",
+        ),
+    },
 }
 
 
@@ -184,8 +192,28 @@ def _suggestions(
     exclude: set[str],
     limit: int = 4,
 ) -> list[dict]:
-    """Heuristic nudges: stale high-interest, empty notes folder themes, short wins."""
+    """Heuristic nudges with explicit why: continue, ~40m, stale folder, short win."""
     out: list[dict] = []
+
+    # Continue started
+    for r in pool:
+        if r["video_id"] in exclude:
+            continue
+        if r.get("status") == "in_progress":
+            out.append(_card(r, reason="Продолжить начатое"))
+            exclude.add(r["video_id"])
+            break
+
+    # ~40 minute slot
+    for r in pool:
+        if r["video_id"] in exclude:
+            continue
+        dur = r.get("duration_sec")
+        if isinstance(dur, int) and 30 * 60 <= dur <= 50 * 60:
+            out.append(_card(r, reason="У вас ~40 минут — как раз этот ролик"))
+            exclude.add(r["video_id"])
+            break
+
     # High interest not started
     for r in pool:
         if r["video_id"] in exclude:
@@ -194,8 +222,17 @@ def _suggestions(
             out.append(_card(r, reason="Вы хотели это посмотреть"))
             exclude.add(r["video_id"])
             break
+
+    # Stale thematic folder: pick from list with few recent opens
+    stale = _stale_folder_pick(user_id, exclude)
+    if stale:
+        out.append(stale)
+        exclude.add(stale["video_id"])
+
     # Short win
     for r in pool:
+        if len(out) >= limit:
+            break
         if r["video_id"] in exclude:
             continue
         dur = r.get("duration_sec")
@@ -203,15 +240,19 @@ def _suggestions(
             out.append(_card(r, reason="Короткий слот — можно сейчас"))
             exclude.add(r["video_id"])
             break
-    # With personal note
+
+    # With personal note / lexicon
     for r in pool:
+        if len(out) >= limit:
+            break
         if r["video_id"] in exclude:
             continue
         if (r.get("note") or "").strip():
             out.append(_card(r, reason="По вашей формулировке"))
             exclude.add(r["video_id"])
             break
-    # Fallback: next in interest order
+
+    # Fallback
     for r in pool:
         if len(out) >= limit:
             break
@@ -220,6 +261,152 @@ def _suggestions(
         out.append(_card(r, reason="Из вашей очереди"))
         exclude.add(r["video_id"])
     return out[:limit]
+
+
+def _stale_folder_pick(user_id: int, exclude: set[str]) -> Optional[dict]:
+    """Video from a thematic folder that hasn't been opened recently."""
+    folders = db.fetchall(
+        """
+        SELECT l.id, l.title, COUNT(li.video_id) AS c
+        FROM lists l
+        JOIN list_items li ON li.list_id = l.id
+        WHERE l.user_id = ?
+          AND l.title NOT LIKE 'YT:%'
+          AND lower(l.title) NOT LIKE '%скрыто%'
+        GROUP BY l.id, l.title
+        HAVING COUNT(li.video_id) >= 2
+        ORDER BY c DESC
+        LIMIT 12
+        """,
+        (user_id,),
+    )
+    for f in folders:
+        lid = int(f["id"])
+        title = (f.get("title") or "папка").strip()
+        row = db.fetchone(
+            """
+            SELECT v.video_id, v.title, v.channel_title, v.duration_sec, v.thumb_url,
+                   lib.status, lib.interest, lib.note
+            FROM list_items li
+            JOIN videos v ON v.video_id = li.video_id
+            JOIN library_items lib ON lib.video_id = v.video_id AND lib.user_id = ?
+            WHERE li.list_id = ?
+              AND lib.status IN ('queue', 'in_progress')
+            ORDER BY li.added_at ASC
+            LIMIT 8
+            """,
+            (user_id, lid),
+        )
+        if not row or row["video_id"] in exclude:
+            continue
+        if not _eligible(row):
+            continue
+        return _card(row, reason=f"Давно не заходили в «{title[:40]}»")
+    return None
+
+
+def get_light_plan(user_id: int) -> dict[str, Any]:
+    """Ordered tonight/week overlay over queue (stored in prefs)."""
+    prefs = get_prefs(user_id)
+    plan = prefs.get("light_plan") or {}
+    tonight_ids = [str(x) for x in (plan.get("tonight") or []) if x][:12]
+    week_ids = [str(x) for x in (plan.get("week") or []) if x][:20]
+    return {
+        "tonight": _hydrate_ids(user_id, tonight_ids),
+        "week": _hydrate_ids(user_id, week_ids),
+        "tonight_ids": tonight_ids,
+        "week_ids": week_ids,
+    }
+
+
+def set_light_plan(
+    user_id: int,
+    *,
+    tonight: Optional[list[str]] = None,
+    week: Optional[list[str]] = None,
+) -> dict[str, Any]:
+    prefs = get_prefs(user_id)
+    plan = dict(prefs.get("light_plan") or {})
+    if tonight is not None:
+        plan["tonight"] = [str(x) for x in tonight if x][:12]
+    if week is not None:
+        plan["week"] = [str(x) for x in week if x][:20]
+    set_prefs(user_id, {"light_plan": plan})
+    return get_light_plan(user_id)
+
+
+def add_to_light_plan(user_id: int, video_id: str, bucket: str = "tonight") -> dict[str, Any]:
+    video_id = (video_id or "").strip()
+    if not video_id:
+        return get_light_plan(user_id)
+    plan = get_light_plan(user_id)
+    key = "tonight" if bucket != "week" else "week"
+    ids = list(plan.get(f"{key}_ids") or [])
+    if video_id in ids:
+        ids = [video_id] + [x for x in ids if x != video_id]
+    else:
+        ids = [video_id] + ids
+    if key == "tonight":
+        return set_light_plan(user_id, tonight=ids[:12])
+    return set_light_plan(user_id, week=ids[:20])
+
+
+def remove_from_light_plan(user_id: int, video_id: str, bucket: str = "tonight") -> dict[str, Any]:
+    video_id = (video_id or "").strip()
+    plan = get_light_plan(user_id)
+    if bucket == "week":
+        ids = [x for x in (plan.get("week_ids") or []) if x != video_id]
+        return set_light_plan(user_id, week=ids)
+    ids = [x for x in (plan.get("tonight_ids") or []) if x != video_id]
+    return set_light_plan(user_id, tonight=ids)
+
+
+def _hydrate_ids(user_id: int, ids: list[str]) -> list[dict]:
+    if not ids:
+        return []
+    out = []
+    for vid in ids:
+        row = db.fetchone(
+            """
+            SELECT v.video_id, v.title, v.channel_title, v.duration_sec, v.thumb_url,
+                   li.status, li.interest, li.note
+            FROM videos v
+            JOIN library_items li ON li.video_id = v.video_id AND li.user_id = ?
+            WHERE v.video_id = ?
+            """,
+            (user_id, vid),
+        )
+        if row:
+            out.append(_card(row, reason="В вашем плане"))
+    return out
+
+
+def inbox_onboarding_status(user_id: int) -> dict[str, Any]:
+    """Product contract: detect спецпапка (Listen later / смотреть позже)."""
+    from backend.yt_sync import is_inbox_playlist_title
+
+    lists = db.fetchall(
+        "SELECT id, title FROM lists WHERE user_id = ? ORDER BY id ASC",
+        (user_id,),
+    )
+    inbox = []
+    for r in lists:
+        title = r.get("title") or ""
+        if is_inbox_playlist_title(title) or is_inbox_playlist_title(title.replace("YT: ", "", 1)):
+            inbox.append({"id": int(r["id"]), "title": title})
+    prefs = get_prefs(user_id)
+    return {
+        "has_inbox": bool(inbox),
+        "inbox_lists": inbox,
+        "primary": inbox[0] if inbox else None,
+        "onboarding_done": bool(prefs.get("inbox_onboarding_done")),
+        "hint": (
+            "Ваша спецпапка — плейлист вроде «смотреть позже» или Listen later. "
+            "С него Kyro берёт желаемое для блока «Сейчас»."
+            if not inbox
+            else f"Спецпапка: {(inbox[0].get('title') or '').replace('YT: ', '', 1)}"
+        ),
+    }
 
 
 def weekly_digest(user_id: int) -> dict[str, Any]:
@@ -283,7 +470,7 @@ def get_prefs(user_id: int) -> dict[str, Any]:
     ensure_prefs_table()
     row = db.fetchone("SELECT prefs_json FROM user_prefs WHERE user_id = ?", (user_id,))
     if not row:
-        return {"digest_enabled": True, "default_slot": "any"}
+        return {"digest_enabled": True, "default_slot": "any", "quiet_start": 23, "quiet_end": 8}
     try:
         return json.loads(row.get("prefs_json") or "{}") or {}
     except Exception:

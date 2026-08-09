@@ -1,5 +1,6 @@
 package ru.clipqueue.app.ui.screens
 
+import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -242,6 +243,16 @@ fun ProfileScreen(
             OutlinedButton(onClick = { openWeb("/organize") }, modifier = Modifier.fillMaxWidth().height(48.dp), shape = RoundedCornerShape(12.dp)) { Text("Редактор раскладки (веб)") }
             Spacer(Modifier.height(8.dp))
             OutlinedButton(onClick = { openWeb("/search") }, modifier = Modifier.fillMaxWidth().height(48.dp), shape = RoundedCornerShape(12.dp)) { Text("Умный поиск") }
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(
+                onClick = {
+                    context.startActivity(
+                        Intent(Intent.ACTION_VIEW, Uri.parse("https://movie-planner.ru/?open_login=1")),
+                    )
+                },
+                modifier = Modifier.fillMaxWidth().height(48.dp),
+                shape = RoundedCornerShape(12.dp),
+            ) { Text("Кино — Movie Planner") }
 
             Spacer(Modifier.height(10.dp))
             Button(

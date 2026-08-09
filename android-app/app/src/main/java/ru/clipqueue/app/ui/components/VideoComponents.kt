@@ -67,6 +67,10 @@ enum class CardAction {
     Dismiss,
     Tag,
     Move,
+    PlanTonight,
+    PlanWeek,
+    Remind,
+    NotNow,
 }
 
 @Composable
@@ -204,8 +208,12 @@ fun VideoThumbCard(
                     DropdownMenuItem(text = { Text("Интересно") }, onClick = { menu = false; onAction(card, CardAction.InterestOk) })
                     DropdownMenuItem(text = { Text("Менее интересно") }, onClick = { menu = false; onAction(card, CardAction.InterestLow) })
                     DropdownMenuItem(text = { Text("Просмотрено") }, onClick = { menu = false; onAction(card, CardAction.Watched) })
+                    DropdownMenuItem(text = { Text("В план на вечер") }, onClick = { menu = false; onAction(card, CardAction.PlanTonight) })
+                    DropdownMenuItem(text = { Text("В план на неделю") }, onClick = { menu = false; onAction(card, CardAction.PlanWeek) })
+                    DropdownMenuItem(text = { Text("Напомнить через 4 ч") }, onClick = { menu = false; onAction(card, CardAction.Remind) })
+                    DropdownMenuItem(text = { Text("Не сейчас") }, onClick = { menu = false; onAction(card, CardAction.NotNow) })
                     DropdownMenuItem(text = { Text("Тег") }, onClick = { menu = false; onAction(card, CardAction.Tag) })
-                    DropdownMenuItem(text = { Text("Перенести") }, onClick = { menu = false; onAction(card, CardAction.Move) })
+                    DropdownMenuItem(text = { Text("Не туда / перенести") }, onClick = { menu = false; onAction(card, CardAction.Move) })
                     DropdownMenuItem(text = { Text("Удалить") }, onClick = { menu = false; onAction(card, CardAction.Dismiss) })
                 }
             }
@@ -224,7 +232,16 @@ fun VideoThumbCard(
                 )
             }
         }
-        Spacer(Modifier.height(6.dp))
+        Spacer(modifier.height(6.dp))
+        if (!card.reason.isNullOrBlank()) {
+            Text(
+                text = card.reason.orEmpty(),
+                style = MaterialTheme.typography.labelSmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                color = CqMuted,
+            )
+        }
         Text(
             text = card.title.orEmpty().ifBlank { "Без названия" },
             style = MaterialTheme.typography.titleMedium,

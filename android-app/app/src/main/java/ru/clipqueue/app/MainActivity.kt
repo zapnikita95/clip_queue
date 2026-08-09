@@ -50,6 +50,7 @@ import ru.clipqueue.app.ui.theme.CqBg
 class MainActivity : ComponentActivity() {
     private val pendingAuthToken = mutableStateOf<String?>(null)
     private val pendingVideoId = mutableStateOf<String?>(null)
+    private val pendingCta = mutableStateOf<String?>(null)
 
     private val notifPermission = registerForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -66,6 +67,7 @@ class MainActivity : ComponentActivity() {
         val app = application.clipQueue()
         if (app.session.isLoggedIn) {
             PushRegistrar.syncIfLoggedIn(this)
+            handlePendingCta()
         }
         setContent {
             ClipQueueTheme {
@@ -85,6 +87,7 @@ class MainActivity : ComponentActivity() {
                         onLoggedIn = {
                             maybeRequestNotifPermission()
                             PushRegistrar.syncIfLoggedIn(this)
+                            handlePendingCta()
                         },
                     )
                 }
@@ -96,6 +99,7 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         ingestIntent(intent)
+        handlePendingCta()
     }
 
     private fun maybeRequestNotifPermission() {
@@ -104,9 +108,36 @@ class MainActivity : ComponentActivity() {
         notifPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
     }
 
+    private fun handlePendingCta() {
+        val app = application.clipQueue()
+        if (!app.session.isLoggedIn) return
+        val id = pendingVideoId.value?.trim().orEmpty()
+        val cta = pendingCta.value?.trim().orEmpty()
+        if (id.isBlank() || cta.isBlank()) return
+        pendingCta.value = null
+        Thread {
+            when (cta) {
+                "watched" -> runCatching {
+                    kotlinx.coroutines.runBlocking {
+                        app.api.patchLibrary(id, mapOf("status" to "watched"))
+                    }
+                }
+                "watch" -> runCatching {
+                    kotlinx.coroutines.runBlocking {
+                        val r = app.api.openVideo(id, surface = "push")
+                        val url = r.watch_url ?: "https://www.youtube.com/watch?v=$id"
+                        startActivity(
+                            Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                        )
+                    }
+                }
+                "later" -> { /* stay in library; just open card */ }
+            }
+        }.start()
+    }
+
     private fun ingestIntent(intent: Intent?) {
         if (intent == null) return
-        // Share push / FCM tap (data payload keys become extras)
         val fromExtra = sequenceOf(
             intent.getStringExtra(EXTRA_VIDEO_ID),
             intent.getStringExtra("video_id"),
@@ -114,6 +145,8 @@ class MainActivity : ComponentActivity() {
         if (fromExtra != null) {
             pendingVideoId.value = fromExtra
         }
+        val ctaExtra = intent.getStringExtra("cta")?.trim().orEmpty()
+        if (ctaExtra.isNotBlank()) pendingCta.value = ctaExtra
         val data = intent.data ?: return
         if (data.scheme != "clipqueue") return
         when (data.host) {
@@ -129,6 +162,8 @@ class MainActivity : ComponentActivity() {
                 if (id.isNotBlank()) {
                     pendingVideoId.value = id
                 }
+                val action = data.getQueryParameter("action")?.trim().orEmpty()
+                if (action.isNotBlank()) pendingCta.value = action
             }
         }
     }

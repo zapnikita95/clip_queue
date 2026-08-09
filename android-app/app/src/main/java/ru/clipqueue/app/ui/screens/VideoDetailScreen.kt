@@ -120,7 +120,7 @@ fun VideoDetailScreen(
                             .background(CqElev)
                             .clickable {
                                 scope.launch {
-                                    val url = runCatching { api.openVideo(videoId).watch_url }.getOrNull()
+                                    val url = runCatching { api.openVideo(videoId, surface = "push").watch_url }.getOrNull()
                                         ?: v.watch_url
                                         ?: "https://www.youtube.com/watch?v=$videoId"
                                     context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
@@ -198,7 +198,7 @@ fun VideoDetailScreen(
                         Button(
                             onClick = {
                                 scope.launch {
-                                    val url = runCatching { api.openVideo(videoId).watch_url }.getOrNull()
+                                    val url = runCatching { api.openVideo(videoId, surface = "push").watch_url }.getOrNull()
                                         ?: v.watch_url
                                         ?: "https://www.youtube.com/watch?v=$videoId"
                                     context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
@@ -208,7 +208,7 @@ fun VideoDetailScreen(
                             modifier = Modifier.fillMaxWidth().height(48.dp),
                             shape = RoundedCornerShape(12.dp),
                             colors = ButtonDefaults.buttonColors(containerColor = CqAccent, contentColor = CqOnAccent),
-                        ) { Text("Смотреть на YouTube") }
+                        ) { Text("Смотреть") }
                         Spacer(Modifier.height(8.dp))
                         OutlinedButton(
                             onClick = {
@@ -222,7 +222,7 @@ fun VideoDetailScreen(
                             shape = RoundedCornerShape(12.dp),
                             enabled = v.status != "watched",
                         ) {
-                            Text(if (v.status == "watched") "Уже просмотрено" else "Отметить просмотренным")
+                            Text(if (v.status == "watched") "Уже просмотрено" else "Уже видел")
                         }
                         Spacer(Modifier.height(8.dp))
                         OutlinedButton(

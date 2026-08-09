@@ -1650,6 +1650,16 @@ a.btn.ghost:hover {
 .mp-sister a:hover {
   color: var(--text);
 }
+.plan-block {
+  margin: 4px 0 18px;
+}
+.plan-block h3 {
+  font-weight: 500;
+  color: var(--muted);
+}
+.inbox-onboard {
+  border: 1px solid var(--border);
+}
 
 .sheet-overlay {
   position: fixed;
