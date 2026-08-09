@@ -396,6 +396,7 @@ Curate — идея отбора и создания коллекции. Kyro н
           <button type="button" data-act="boost0">Обычный интерес</button>
           <button type="button" data-act="boost_down">Менее интересно</button>
           <button type="button" data-act="watched">Просмотрено</button>
+          <button type="button" data-act="reclassify">Не туда — другая папка</button>
           ${listId ? `<button type="button" data-act="remove-cat">Убрать из категории</button>` : ""}
           ${draftFolder ? `<button type="button" data-act="remove-draft">Убрать из категории</button>` : ""}
           <button type="button" data-act="dismiss" class="danger">Убрать из Kyro</button>
@@ -591,6 +592,33 @@ Curate — идея отбора и создания коллекции. Kyro н
               card.dispatchEvent(new CustomEvent("cq-draft-remove", { bubbles: true, detail: { videoId } }));
             },
           });
+        }
+      } else if (act === "reclassify") {
+        const lists = await api("/api/lists").catch(() => ({ lists: [] }));
+        const opts = (lists.lists || []).filter((l) => {
+          const t = (l.title || "");
+          return !t.startsWith("YT:") && !/скрыто/i.test(t);
+        });
+        if (!opts.length) {
+          toast("Сначала создайте папки в «Разложить»");
+          return;
+        }
+        const pick = window.prompt(
+          "Номер папки:\n" + opts.map((l, i) => `${i + 1}. ${l.title}`).join("\n"),
+          "1"
+        );
+        const idx = Math.max(0, (parseInt(pick || "1", 10) || 1) - 1);
+        const target = opts[idx];
+        if (!target) return;
+        const r = await api(`/api/videos/${encodeURIComponent(videoId)}/reclassify`, {
+          method: "POST",
+          body: JSON.stringify({ list_id: target.id }),
+        });
+        toast(r.list_title ? `Переложили в «${r.list_title}»` : "Готово");
+        if (listId) {
+          document.querySelectorAll(
+            `.card[data-video-id="${CSS.escape(videoId)}"][data-list-id="${CSS.escape(String(listId))}"]`
+          ).forEach((el) => el.remove());
         }
       }
     } catch (e) {
@@ -1121,14 +1149,53 @@ Curate — идея отбора и создания коллекции. Kyro н
         </div>
         <div id="takeout-out"></div>
       </div>
+      <div class="panel" style="margin-bottom:16px">
+        <h2>Дайджест</h2>
+        <p class="muted" style="margin:0 0 10px">Раз в неделю — идеи из вашей очереди (пуш, если приложение подключено).</p>
+        <div class="btn-row">
+          <button type="button" class="btn secondary" id="digest-preview">Посмотреть текст</button>
+          <button type="button" class="btn" id="digest-send">Отправить себе</button>
+        </div>
+        <div id="digest-out" class="muted" style="margin-top:10px;white-space:pre-wrap;font-size:13px"></div>
+      </div>
+      <div class="panel" style="margin-bottom:16px">
+        <h2>Расширение Chrome</h2>
+        <p class="muted" style="margin:0 0 10px">Кнопка «В Kyro» на странице YouTube. Установите как распакованное расширение из папки <code>extension/</code> в репозитории.</p>
+        <p class="muted" style="margin:0;font-size:13px">chrome://extensions → режим разработчика → «Загрузить распакованное» → выберите папку extension.</p>
+      </div>
       <div class="panel">
         <h2>Аккаунт</h2>
         <p class="muted">${escapeHtml(meData.user?.email || me?.email || "")}</p>
         <div class="btn-row">
+          <a class="btn ghost" href="https://movie-planner.ru/?open_login=1" target="_blank" rel="noopener">Кино — Movie Planner</a>
           <button class="btn secondary" id="settings-logout">Выйти</button>
         </div>
       </div>`;
     wireNav();
+    const digPrev = $("#digest-preview");
+    const digSend = $("#digest-send");
+    const digOut = $("#digest-out");
+    if (digPrev) {
+      digPrev.onclick = async () => {
+        try {
+          const d = await api("/api/home/digest");
+          if (digOut) digOut.textContent = d.text || d.body || "";
+        } catch (e) {
+          toast(e.message);
+        }
+      };
+    }
+    if (digSend) {
+      digSend.onclick = async () => {
+        try {
+          const d = await api("/api/home/digest/send", { method: "POST", body: "{}" });
+          if (digOut) digOut.textContent = (d.digest && d.digest.text) || `Отправлено: ${d.sent || 0}`;
+          toast(d.sent ? "Дайджест отправлен" : "Нет устройств для пуша — текст ниже");
+        } catch (e) {
+          toast(e.message);
+        }
+      };
+    }
     const faqBtn = $("#open-faq");
     if (faqBtn) faqBtn.onclick = () => navigate("/faq");
     const settingsLogout = $("#settings-logout");
@@ -1542,15 +1609,114 @@ Curate — идея отбора и создания коллекции. Kyro н
       ${topbar("home")}
       <section class="hero hero-compact">
         <h1>${has ? "Что посмотреть" : "Разложите видео"}</h1>
+        <p class="hero-sub muted">План из того, что вы уже хотели — не лента</p>
         <div class="stats stats-compact">
           <div class="stat"><b>${folders.length}</b> папок</div>
-          <div class="stat"><b>${shell.counts?.queue ?? "—"}</b> сохранено</div>
+          <div class="stat"><b>${shell.counts?.queue ?? "—"}</b> в очереди</div>
+          <div class="stat"><b>${shell.counts?.started || 0}</b> начатых</div>
           <div class="stat muted" id="home-sync-stat" style="display:none">Синк…</div>
         </div>
         ${classifyOnly}
       </section>
+      <section class="now-block" id="now-block">
+        <div class="rail-head">
+          <h2>Сейчас</h2>
+          <span class="muted" style="font-size:13px" id="now-meta">подбираем…</span>
+        </div>
+        <div class="filter-chips" id="now-slots"></div>
+        <div class="filter-chips" id="now-moods"></div>
+        <div class="rail-track drag-scroll" id="now-picks"><div class="empty">Загрузка…</div></div>
+        <div class="rail-head" style="margin-top:14px" id="suggest-head" hidden>
+          <h2 style="font-size:1.05rem">Можно посмотреть</h2>
+          <span class="muted" style="font-size:13px">из вашего желаемого</span>
+        </div>
+        <div class="rail-track drag-scroll" id="now-suggestions"></div>
+      </section>
+      <p class="mp-sister muted"><a href="https://movie-planner.ru/?open_login=1" target="_blank" rel="noopener">Кино — в Movie Planner</a></p>
       <div id="rails"></div>`;
     wireNav();
+
+    // «Сейчас» — план под слот / сценарий
+    let nowSlot = "any";
+    let nowMood = "";
+    const paintNow = async () => {
+      const picksEl = $("#now-picks");
+      const sugEl = $("#now-suggestions");
+      const meta = $("#now-meta");
+      try {
+        const qs = new URLSearchParams({ slot: nowSlot, limit: "6" });
+        if (nowMood) qs.set("mood", nowMood);
+        const data = await api(`/api/home/now?${qs}`);
+        if (meta) meta.textContent = data.slot_label || "";
+        const slotsEl = $("#now-slots");
+        if (slotsEl && !(slotsEl.dataset.ready)) {
+          slotsEl.innerHTML = (data.slots || []).map((s) =>
+            `<button type="button" class="chip ${s.id === nowSlot ? "active" : ""}" data-slot="${escapeHtml(s.id)}">${escapeHtml(s.label)}</button>`
+          ).join("");
+          slotsEl.dataset.ready = "1";
+          slotsEl.querySelectorAll("[data-slot]").forEach((btn) => {
+            btn.onclick = () => {
+              nowSlot = btn.getAttribute("data-slot") || "any";
+              slotsEl.querySelectorAll(".chip").forEach((c) => c.classList.toggle("active", c === btn));
+              paintNow();
+            };
+          });
+        }
+        const moodsEl = $("#now-moods");
+        if (moodsEl && !(moodsEl.dataset.ready)) {
+          moodsEl.innerHTML =
+            `<button type="button" class="chip ${!nowMood ? "active" : ""}" data-mood="">Все сценарии</button>` +
+            (data.moods || []).map((m) =>
+              `<button type="button" class="chip" data-mood="${escapeHtml(m.id)}" title="${escapeHtml(m.hint || "")}">${escapeHtml(m.label)}</button>`
+            ).join("");
+          moodsEl.dataset.ready = "1";
+          moodsEl.querySelectorAll("[data-mood]").forEach((btn) => {
+            btn.onclick = () => {
+              nowMood = btn.getAttribute("data-mood") || "";
+              moodsEl.querySelectorAll(".chip").forEach((c) => c.classList.toggle("active", c === btn));
+              paintNow();
+            };
+          });
+        }
+        const picks = data.picks || [];
+        const started = data.started || [];
+        const merged = [...started.filter((s) => !picks.some((p) => p.video_id === s.video_id)), ...picks];
+        if (picksEl) {
+          picksEl.innerHTML = merged.length
+            ? merged.map((it) => cardHtml({
+                ...it,
+                watch_url: it.watch_url || `https://www.youtube.com/watch?v=${it.video_id}`,
+              })).join("")
+            : `<div class="empty">Пока нечего предложить — сохраните видео или нажмите «Разобрать»</div>`;
+          wireCardMenus(picksEl);
+          enableDragScroll(picksEl.parentElement || document);
+        }
+        const sug = data.suggestions || [];
+        const sugHead = $("#suggest-head");
+        if (sugEl) {
+          if (sug.length) {
+            if (sugHead) sugHead.hidden = false;
+            sugEl.innerHTML = sug.map((it) => `
+              <div class="card suggest-card" data-video-id="${escapeHtml(it.video_id)}">
+                <a class="card-main" href="/v/${encodeURIComponent(it.video_id)}" data-nav>
+                  <div class="card-thumb"><img src="${escapeHtml(it.thumb_url)}" alt="" loading="lazy" /></div>
+                  <div class="card-body">
+                    <div class="muted" style="font-size:12px;margin-bottom:4px">${escapeHtml(it.reason || "")}</div>
+                    <h3 class="card-title">${escapeHtml(it.title)}</h3>
+                    <div class="card-meta">${escapeHtml(it.channel_title || "")}${it.duration_label ? " · " + escapeHtml(it.duration_label) : ""}</div>
+                  </div>
+                </a>
+              </div>`).join("");
+          } else {
+            if (sugHead) sugHead.hidden = true;
+            sugEl.innerHTML = "";
+          }
+        }
+      } catch (e) {
+        if (picksEl) picksEl.innerHTML = `<div class="empty">${escapeHtml(e.message || "Не удалось подобрать")}</div>`;
+      }
+    };
+    paintNow();
 
     // Quiet delta sync on every home open — keeps «Недавно» / спецпапка fresh
     (async () => {

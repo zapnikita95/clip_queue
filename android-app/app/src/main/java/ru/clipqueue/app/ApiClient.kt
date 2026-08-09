@@ -21,6 +21,7 @@ import ru.clipqueue.app.data.CreateTagResponse
 import ru.clipqueue.app.data.ListDetailResponse
 import ru.clipqueue.app.data.ListsResponse
 import ru.clipqueue.app.data.MeResponse
+import ru.clipqueue.app.data.NowResponse
 import ru.clipqueue.app.data.OkResponse
 import ru.clipqueue.app.data.OpenResponse
 import ru.clipqueue.app.data.RailResponse
@@ -92,6 +93,14 @@ class ApiClient(private val session: SessionStore) {
         }.body()
 
     suspend fun homeRail(railId: String): RailResponse = get("/api/home/rails/$railId")
+
+    suspend fun homeNow(slot: String = "any", mood: String = "", limit: Int = 6): NowResponse {
+        val qs = buildString {
+            append("slot=${java.net.URLEncoder.encode(slot, "UTF-8")}&limit=$limit")
+            if (mood.isNotBlank()) append("&mood=${java.net.URLEncoder.encode(mood, "UTF-8")}")
+        }
+        return get("/api/home/now?$qs")
+    }
 
     suspend fun lists(tagId: Int? = null, forHome: Boolean = false): ListsResponse {
         val qs = buildString {

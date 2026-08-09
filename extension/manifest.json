@@ -1,0 +1,30 @@
+{
+  "manifest_version": 3,
+  "name": "Kyro — в очередь YouTube",
+  "description": "Сохраняйте ролики YouTube в Kyro одним кликом.",
+  "version": "1.0.0",
+  "permissions": ["activeTab", "storage", "contextMenus"],
+  "host_permissions": [
+    "https://clip-queue-web-production.up.railway.app/*",
+    "https://www.youtube.com/*",
+    "https://youtu.be/*"
+  ],
+  "action": {
+    "default_title": "В Kyro",
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://www.youtube.com/*", "https://youtu.be/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "icons": {
+    "48": "icon48.png",
+    "128": "icon128.png"
+  }
+}

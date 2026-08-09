@@ -12,7 +12,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from flask import Flask, g, jsonify, redirect, request, send_from_directory
 
-from backend import auth, db, google_oauth, llm, organize, push, search as cq_search, share_classify, sync_jobs, takeout, themes, yt_sync
+from backend import auth, db, google_oauth, llm, now_plan, organize, push, search as cq_search, share_classify, sync_jobs, takeout, themes, yt_sync
 from backend import classify_jobs
 from backend import similarity as sim
 from backend import youtube as yt
@@ -92,7 +92,7 @@ def create_app() -> Flask:
             {
                 "ok": True,
                 "service": "clip_queue",
-                "version": "0.2.7",
+                "version": "0.3.0",
                 "db": "postgres" if db.is_postgres() else "sqlite",
                 "google_oauth": google_oauth.configured(),
                 "llm": llm.available(),
@@ -1740,6 +1740,129 @@ def create_app() -> Flask:
                     {"id": "marathon", "title": "10+ часов"},
                     {"id": "for_this_hour", "title": "Обычно в это время"},
                 ],
+            }
+        )
+
+    @app.get("/api/home/now")
+    @require_auth
+    def home_now():
+        """Что смотреть сейчас — слот времени + сценарий из своей библиотеки."""
+        uid = current_user()["user_id"]
+        slot = (request.args.get("slot") or "any").strip().lower()
+        mood = (request.args.get("mood") or "").strip().lower()
+        limit = min(12, max(3, int(request.args.get("limit") or 6)))
+        data = now_plan.pick_now(uid, slot=slot, mood=mood, limit=limit)
+        return jsonify({"ok": True, **data})
+
+    @app.get("/api/home/digest")
+    @require_auth
+    def home_digest():
+        uid = current_user()["user_id"]
+        return jsonify({"ok": True, **now_plan.weekly_digest(uid)})
+
+    @app.post("/api/home/digest/send")
+    @require_auth
+    def home_digest_send():
+        """Push weekly digest to user's devices (if FCM configured)."""
+        uid = current_user()["user_id"]
+        prefs = now_plan.get_prefs(uid)
+        if prefs.get("digest_enabled") is False:
+            return jsonify({"ok": True, "sent": 0, "note": "Дайджест выключен в настройках"})
+        dig = now_plan.weekly_digest(uid)
+        try:
+            result = push.send_to_user(
+                uid,
+                title=dig["title"],
+                body=dig["body"],
+                data={"type": "digest", "route": "/"},
+            )
+        except Exception as e:
+            log.warning("digest push failed: %s", e)
+            return json_error(f"Не удалось отправить: {e}", 502)
+        return jsonify({"ok": True, "sent": int((result or {}).get("sent") or 0), "digest": dig, "push": result})
+
+    @app.get("/api/prefs")
+    @require_auth
+    def get_user_prefs():
+        uid = current_user()["user_id"]
+        return jsonify({"ok": True, "prefs": now_plan.get_prefs(uid)})
+
+    @app.post("/api/prefs")
+    @require_auth
+    def set_user_prefs():
+        uid = current_user()["user_id"]
+        body = request.get_json(silent=True) or {}
+        prefs = now_plan.set_prefs(uid, body)
+        return jsonify({"ok": True, "prefs": prefs})
+
+    @app.post("/api/videos/<video_id>/reclassify")
+    @require_auth
+    def reclassify_video(video_id: str):
+        """«Не туда»: переложить в другую папку и запомнить keyword/channel rule."""
+        uid = current_user()["user_id"]
+        body = request.get_json(silent=True) or {}
+        list_id = body.get("list_id")
+        if not list_id:
+            return json_error("Укажите list_id")
+        list_id = int(list_id)
+        lst = db.fetchone(
+            "SELECT id, title FROM lists WHERE id = ? AND user_id = ?",
+            (list_id, uid),
+        )
+        if not lst:
+            return json_error("Папка не найдена", 404)
+        row = db.fetchone("SELECT * FROM videos WHERE video_id = ?", (video_id,))
+        if not row:
+            return json_error("Нет видео", 404)
+        # Remove from other theme-ish lists (keep YT: dumps and music hidden)
+        theme_lists = db.fetchall(
+            "SELECT id, title FROM lists WHERE user_id = ?", (uid,)
+        )
+        for t in theme_lists:
+            title = (t.get("title") or "")
+            if title.startswith("YT:") or "скрыто" in title.lower():
+                continue
+            if int(t["id"]) == list_id:
+                continue
+            db.execute(
+                "DELETE FROM list_items WHERE list_id = ? AND video_id = ?",
+                (int(t["id"]), video_id),
+            )
+        _add_to_list(uid, list_id, video_id)
+        # Learn a light rule: channel or keyword from title
+        organize.ensure_classify_tables()
+        rule_type = (body.get("rule_type") or "").strip()
+        rule_value = (body.get("rule_value") or "").strip()
+        if not rule_type:
+            ch = (row.get("channel_title") or "").strip()
+            if ch:
+                rule_type, rule_value = "channel", ch
+            else:
+                toks = [
+                    t
+                    for t in (row.get("title") or "").lower().replace(":", " ").split()
+                    if len(t) >= 5
+                ][:1]
+                if toks:
+                    rule_type, rule_value = "keyword", toks[0]
+        if rule_type and rule_value:
+            existing = db.fetchone(
+                "SELECT id FROM classify_rules WHERE user_id = ? AND list_id = ? "
+                "AND rule_type = ? AND rule_value = ?",
+                (uid, list_id, rule_type, rule_value[:200]),
+            )
+            if not existing:
+                db.execute(
+                    "INSERT INTO classify_rules (user_id, list_id, rule_type, rule_value, priority) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (uid, list_id, rule_type[:40], rule_value[:200], 5),
+                )
+        return jsonify(
+            {
+                "ok": True,
+                "list_id": list_id,
+                "list_title": lst.get("title"),
+                "learned": {"type": rule_type, "value": rule_value} if rule_type else None,
             }
         )
 

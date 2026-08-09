@@ -43,6 +43,8 @@ import ru.clipqueue.app.ApiClient
 import ru.clipqueue.app.AppCache
 import ru.clipqueue.app.ClipQueueApp
 import ru.clipqueue.app.data.ListCard
+import ru.clipqueue.app.data.NowMoodDto
+import ru.clipqueue.app.data.NowSlotDto
 import ru.clipqueue.app.data.TagDto
 import ru.clipqueue.app.data.VideoCard
 import ru.clipqueue.app.ui.MovePickerDialog
@@ -87,6 +89,13 @@ fun HomeScreen(
     var selectedTagId by remember { mutableStateOf<Int?>(null) }
     var taggedVideos by remember { mutableStateOf<List<VideoCard>>(emptyList()) }
     var taggedFolders by remember { mutableStateOf<List<ListCard>>(emptyList()) }
+    var nowSlot by remember { mutableStateOf("any") }
+    var nowMood by remember { mutableStateOf("") }
+    var nowPicks by remember { mutableStateOf<List<VideoCard>>(emptyList()) }
+    var nowSuggestions by remember { mutableStateOf<List<VideoCard>>(emptyList()) }
+    var nowSlots by remember { mutableStateOf<List<NowSlotDto>>(emptyList()) }
+    var nowMoods by remember { mutableStateOf<List<NowMoodDto>>(emptyList()) }
+    var nowMeta by remember { mutableStateOf("") }
     var tagCard by remember { mutableStateOf<VideoCard?>(null) }
     var moveCard by remember { mutableStateOf<VideoCard?>(null) }
     var folderEdit by remember { mutableStateOf(false) }
@@ -102,6 +111,18 @@ fun HomeScreen(
     }
 
     fun usedTags(list: List<TagDto>) = list.filter { (it.video_count ?: 0) > 0 }
+
+    suspend fun loadNow(slot: String = nowSlot, mood: String = nowMood) {
+        val now = runCatching { api.homeNow(slot = slot, mood = mood, limit = 6) }.getOrNull() ?: return
+        val started = now.started.orEmpty()
+        val picks = now.picks.orEmpty()
+        val seen = picks.mapNotNull { it.video_id }.toSet()
+        nowPicks = started.filter { it.video_id !in seen } + picks
+        nowSuggestions = now.suggestions.orEmpty()
+        if (now.slots.orEmpty().isNotEmpty()) nowSlots = now.slots.orEmpty()
+        if (now.moods.orEmpty().isNotEmpty()) nowMoods = now.moods.orEmpty()
+        nowMeta = now.slot_label.orEmpty()
+    }
 
     suspend fun loadHome(initial: Boolean, force: Boolean = false) {
         if (!force && !initial && appCache.home != null && recent.isNotEmpty()) {
@@ -120,6 +141,7 @@ fun HomeScreen(
                 val plDef = async { api.homeRail("from_playlists") }
                 val listsDef = async { api.lists(forHome = true) }
                 val tagsDef = async { runCatching { api.tags(onlyUsed = true) }.getOrNull() }
+                val nowDef = async { runCatching { api.homeNow(slot = nowSlot, mood = nowMood, limit = 6) }.getOrNull() }
                 recent = recentDef.await().items.orEmpty()
                 vibe = vibeDef.await().items.orEmpty()
                 fromPlaylists = plDef.await().items.orEmpty()
@@ -127,6 +149,16 @@ fun HomeScreen(
                     .sortedByDescending { it.count ?: 0 }
                     .take(8)
                 tags = usedTags(tagsDef.await()?.tags.orEmpty())
+                nowDef.await()?.let { now ->
+                    val started = now.started.orEmpty()
+                    val picks = now.picks.orEmpty()
+                    val seen = picks.mapNotNull { it.video_id }.toSet()
+                    nowPicks = started.filter { it.video_id !in seen } + picks
+                    nowSuggestions = now.suggestions.orEmpty()
+                    if (now.slots.orEmpty().isNotEmpty()) nowSlots = now.slots.orEmpty()
+                    if (now.moods.orEmpty().isNotEmpty()) nowMoods = now.moods.orEmpty()
+                    nowMeta = now.slot_label.orEmpty()
+                }
                 appCache.home = AppCache.Home(
                     recent = recent,
                     vibe = vibe,
@@ -160,6 +192,8 @@ fun HomeScreen(
             vibe = vibe.filterNot { it.video_id == id }
             fromPlaylists = fromPlaylists.filterNot { it.video_id == id }
             taggedVideos = taggedVideos.filterNot { it.video_id == id }
+            nowPicks = nowPicks.filterNot { it.video_id == id }
+            nowSuggestions = nowSuggestions.filterNot { it.video_id == id }
         },
         onTag = { tagCard = it },
         onMove = { moveCard = it },
@@ -324,6 +358,66 @@ fun HomeScreen(
                                     }
                                 }
                             } else {
+                                item {
+                                    SectionLabel("Сейчас", Modifier.padding(horizontal = 12.dp))
+                                    if (nowMeta.isNotBlank()) {
+                                        Text(
+                                            nowMeta,
+                                            color = CqMuted,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            modifier = Modifier.padding(horizontal = 12.dp).padding(bottom = 6.dp),
+                                        )
+                                    }
+                                    if (nowSlots.isNotEmpty()) {
+                                        LazyRow(
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                            contentPadding = PaddingValues(horizontal = 12.dp),
+                                        ) {
+                                            items(nowSlots, key = { it.id.orEmpty() }) { s ->
+                                                TagChip(s.label.orEmpty(), selected = nowSlot == s.id) {
+                                                    nowSlot = s.id.orEmpty().ifBlank { "any" }
+                                                    scope.launch { loadNow(slot = nowSlot, mood = nowMood) }
+                                                }
+                                            }
+                                        }
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                    }
+                                    if (nowMoods.isNotEmpty()) {
+                                        LazyRow(
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                            contentPadding = PaddingValues(horizontal = 12.dp),
+                                        ) {
+                                            item {
+                                                TagChip("Все", selected = nowMood.isBlank()) {
+                                                    nowMood = ""
+                                                    scope.launch { loadNow(slot = nowSlot, mood = "") }
+                                                }
+                                            }
+                                            items(nowMoods, key = { it.id.orEmpty() }) { m ->
+                                                TagChip(m.label.orEmpty(), selected = nowMood == m.id) {
+                                                    nowMood = m.id.orEmpty()
+                                                    scope.launch { loadNow(slot = nowSlot, mood = nowMood) }
+                                                }
+                                            }
+                                        }
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                    }
+                                    if (nowPicks.isEmpty()) {
+                                        Text(
+                                            "Пока нечего предложить",
+                                            color = CqMuted,
+                                            modifier = Modifier.padding(horizontal = 12.dp),
+                                        )
+                                    } else {
+                                        VideoRail(nowPicks) { c, a -> actions.handle(c, a) }
+                                    }
+                                }
+                                if (nowSuggestions.isNotEmpty()) {
+                                    item {
+                                        SectionLabel("Можно посмотреть", Modifier.padding(horizontal = 12.dp))
+                                        VideoRail(nowSuggestions) { c, a -> actions.handle(c, a) }
+                                    }
+                                }
                                 item {
                                     SectionLabel("Недавно сохранили", Modifier.padding(horizontal = 12.dp))
                                     if (recent.isEmpty()) Text("Пока пусто", color = CqMuted, modifier = Modifier.padding(horizontal = 12.dp))

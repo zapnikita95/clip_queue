@@ -1851,6 +1851,13 @@ def home_feed(user_id: int) -> dict[str, Any]:
     else:
         recent_source = inbox_title or "библиотека"
 
+    try:
+        from backend import now_plan as _np
+
+        now_block = _np.pick_now(user_id, slot="any", limit=6)
+    except Exception:
+        now_block = {"picks": [], "started": [], "suggestions": [], "slots": [], "moods": []}
+
     return {
         **structure,
         "recent": recent,
@@ -1858,4 +1865,5 @@ def home_feed(user_id: int) -> dict[str, Any]:
         "growing": growing[:8],
         "pending_classify": len(pending),
         "classify_job": classify_job,
+        "now": now_block,
     }

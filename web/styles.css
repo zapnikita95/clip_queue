@@ -1624,6 +1624,33 @@ a.btn.ghost:hover {
   font-size: 13px;
 }
 
+.now-block {
+  margin: 8px 0 18px;
+  padding: 14px 0 4px;
+}
+.now-block .rail-head {
+  margin-bottom: 8px;
+}
+.now-block .filter-chips {
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+.now-block .suggest-card .card-title {
+  font-size: 0.95rem;
+}
+.mp-sister {
+  margin: 0 0 16px;
+  font-size: 13px;
+}
+.mp-sister a {
+  color: var(--muted);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.mp-sister a:hover {
+  color: var(--text);
+}
+
 .sheet-overlay {
   position: fixed;
   inset: 0;

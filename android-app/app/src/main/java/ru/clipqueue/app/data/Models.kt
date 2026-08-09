@@ -87,6 +87,31 @@ data class RailResponse(
     val error: String? = null,
 )
 
+data class NowSlotDto(
+    val id: String? = null,
+    val label: String? = null,
+)
+
+data class NowMoodDto(
+    val id: String? = null,
+    val label: String? = null,
+    val hint: String? = null,
+)
+
+data class NowResponse(
+    val ok: Boolean? = null,
+    val slot: String? = null,
+    val slot_label: String? = null,
+    val mood: String? = null,
+    val mood_label: String? = null,
+    val picks: List<VideoCard>? = null,
+    val started: List<VideoCard>? = null,
+    val suggestions: List<VideoCard>? = null,
+    val slots: List<NowSlotDto>? = null,
+    val moods: List<NowMoodDto>? = null,
+    val error: String? = null,
+)
+
 data class VideoCard(
     val video_id: String? = null,
     val title: String? = null,
