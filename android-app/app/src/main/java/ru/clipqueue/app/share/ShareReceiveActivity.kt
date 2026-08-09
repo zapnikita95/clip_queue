@@ -25,7 +25,8 @@ import java.util.concurrent.Executors
 import java.util.regex.Pattern
 
 /**
- * Headless share target: save YouTube URL on backend, toast with folders, finish.
+ * Headless share target: quick save (no wait for classify), toast, finish.
+ * Classification + push happen on the backend.
  */
 class ShareReceiveActivity : Activity() {
     private val executor = Executors.newSingleThreadExecutor()
@@ -77,18 +78,7 @@ class ShareReceiveActivity : Activity() {
                     result == null -> toast(getString(R.string.share_error))
                     else -> {
                         SaveHistoryStore(this).add(result)
-                        val folders = result.classified_into.orEmpty()
-                            .mapNotNull { it.list_title?.takeIf { t -> t.isNotBlank() } }
-                            .ifEmpty {
-                                result.in_lists.orEmpty().mapNotNull { it.title?.takeIf { t -> t.isNotBlank() } }
-                            }
-                        val msg = if (folders.isNotEmpty()) {
-                            getString(R.string.share_saved_folders, folders.joinToString(", "))
-                        } else {
-                            getString(R.string.share_saved_none)
-                        }
-                        val engine = result.classify_engine?.takeIf { it.isNotBlank() && it != "none" }
-                        toast(if (engine != null) "$msg · $engine" else msg)
+                        toast(getString(R.string.share_saved))
                     }
                 }
                 finish()
@@ -97,7 +87,7 @@ class ShareReceiveActivity : Activity() {
     }
 
     private fun toast(msg: String) {
-        Toast.makeText(applicationContext, msg, Toast.LENGTH_LONG).show()
+        Toast.makeText(applicationContext, msg, Toast.LENGTH_SHORT).show()
     }
 
     private fun saveOnBackend(token: String, videoUrl: String): SaveEvent? {
@@ -105,8 +95,8 @@ class ShareReceiveActivity : Activity() {
             val endpoint = URL("${BuildConfig.API_BASE.trimEnd('/')}/api/videos/save")
             val conn = (endpoint.openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
-                connectTimeout = 20_000
-                readTimeout = 45_000
+                connectTimeout = 10_000
+                readTimeout = 15_000
                 doOutput = true
                 setRequestProperty("Content-Type", "application/json; charset=utf-8")
                 setRequestProperty("Authorization", "Bearer $token")
@@ -115,6 +105,7 @@ class ShareReceiveActivity : Activity() {
                 .put("url", videoUrl)
                 .put("source", "android_share")
                 .put("apply_classification", true)
+                .put("classify_async", true)
                 .put("status", "queue")
                 .toString()
             OutputStreamWriter(conn.outputStream, Charsets.UTF_8).use { it.write(body) }
@@ -128,8 +119,9 @@ class ShareReceiveActivity : Activity() {
             val now = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
             SaveEvent(
                 video_id = item?.optString("video_id")?.ifBlank { null }
+                    ?: json.optString("video_id").ifBlank { null }
                     ?: extractIdFromUrl(videoUrl),
-                title = item?.optString("title"),
+                title = item?.optString("title") ?: json.optString("title"),
                 channel_title = item?.optString("channel_title"),
                 thumb_url = item?.optString("thumb_url"),
                 source = "android_share",

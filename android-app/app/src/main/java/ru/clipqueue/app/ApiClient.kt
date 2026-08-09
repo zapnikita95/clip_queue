@@ -74,9 +74,22 @@ class ApiClient(private val session: SessionStore) {
                 "url" to url,
                 "source" to source,
                 "apply_classification" to true,
+                "classify_async" to (source == "android_share"),
                 "status" to "queue",
             ),
         )
+
+    suspend fun registerDevice(token: String, platform: String = "android"): OkResponse =
+        post(
+            "/api/devices/register",
+            mapOf("token" to token, "platform" to platform),
+        )
+
+    suspend fun unregisterDevice(token: String): OkResponse =
+        client.delete("/api/devices/register") {
+            authHeaders().forEach { (k, v) -> header(k, v) }
+            setBody(mapOf("token" to token))
+        }.body()
 
     suspend fun homeRail(railId: String): RailResponse = get("/api/home/rails/$railId")
 

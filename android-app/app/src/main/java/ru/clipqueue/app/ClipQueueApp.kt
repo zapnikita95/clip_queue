@@ -7,6 +7,7 @@ import coil.disk.DiskCache
 import coil.memory.MemoryCache
 import coil.request.CachePolicy
 import okhttp3.OkHttpClient
+import ru.clipqueue.app.push.PushRegistrar
 import java.util.concurrent.TimeUnit
 
 class ClipQueueApp : Application(), ImageLoaderFactory {
@@ -25,6 +26,10 @@ class ClipQueueApp : Application(), ImageLoaderFactory {
         api = ApiClient(session)
         saveHistory = SaveHistoryStore(this)
         cache = AppCache(this)
+        PushRegistrar.ensureChannel(this)
+        if (session.isLoggedIn) {
+            PushRegistrar.syncIfLoggedIn(this)
+        }
     }
 
     /**

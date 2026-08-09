@@ -12,7 +12,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from flask import Flask, g, jsonify, redirect, request, send_from_directory
 
-from backend import auth, db, google_oauth, llm, organize, search as cq_search, sync_jobs, takeout, themes, yt_sync
+from backend import auth, db, google_oauth, llm, organize, push, search as cq_search, share_classify, sync_jobs, takeout, themes, yt_sync
 from backend import classify_jobs
 from backend import similarity as sim
 from backend import youtube as yt
@@ -185,6 +185,28 @@ def create_app() -> Flask:
                 else None,
             }
         )
+
+    @app.post("/api/devices/register")
+    @require_auth
+    def devices_register():
+        uid = current_user()["user_id"]
+        body = request.get_json(silent=True) or {}
+        token = (body.get("token") or "").strip()
+        platform = (body.get("platform") or "android").strip()
+        try:
+            push.register_device(uid, token, platform=platform)
+        except ValueError as e:
+            return json_error(str(e), 400)
+        return jsonify({"ok": True})
+
+    @app.delete("/api/devices/register")
+    @require_auth
+    def devices_unregister():
+        uid = current_user()["user_id"]
+        body = request.get_json(silent=True) or {}
+        token = (body.get("token") or request.args.get("token") or "").strip()
+        push.unregister_device(uid, token)
+        return jsonify({"ok": True})
 
     @app.get("/api/auth/google/status")
     def google_status():
@@ -722,13 +744,32 @@ def create_app() -> Flask:
                 if name:
                     _ensure_tag_on_item(uid, vid, name)
 
-        # Apply saved classification; if no rule match — tiny LLM into existing folders
+        # Classification: sync (default for paste) or async (share / classify_async)
         apply_class = body.get("apply_classification")
         if apply_class is None:
             apply_class = True
+        classify_async = body.get("classify_async")
+        if classify_async is None:
+            classify_async = source in ("android_share", "share_target", "pwa_share")
+        classify_async = bool(classify_async)
+
         matched = []
         classify_meta = {"engine": "none", "reason": ""}
-        if apply_class:
+        queued_async = False
+        if apply_class and classify_async:
+            share_classify.enqueue_after_save(
+                uid,
+                vid,
+                source=source,
+                title=(meta.get("title") or ""),
+                channel_title=(meta.get("channel_title") or ""),
+                thumb_url=(meta.get("thumb_url") or yt.thumb_url(vid)),
+                duration_sec=meta.get("duration_sec"),
+                description=(meta.get("description") or ""),
+            )
+            queued_async = True
+            classify_meta = {"engine": "pending", "reason": "async"}
+        elif apply_class:
             classify_meta = organize.classify_new_video(
                 uid,
                 vid,
@@ -746,31 +787,35 @@ def create_app() -> Flask:
         ]
         in_lists = _lists_for_video(uid, vid)
         tags = (item or {}).get("user_tags") or []
-        try:
-            _record_save_event(
-                uid,
-                vid,
-                source=source,
-                title=(meta.get("title") or ""),
-                channel_title=(meta.get("channel_title") or ""),
-                thumb_url=(meta.get("thumb_url") or yt.thumb_url(vid)),
-                classified_into=classified_into,
-                tags=tags,
-                lists=in_lists,
-                classify_engine=str(classify_meta.get("engine") or ""),
-                classify_reason=str(classify_meta.get("reason") or ""),
-            )
-        except Exception as e:
-            log.warning("save_event record failed: %s", e)
+        if not queued_async:
+            try:
+                _record_save_event(
+                    uid,
+                    vid,
+                    source=source,
+                    title=(meta.get("title") or ""),
+                    channel_title=(meta.get("channel_title") or ""),
+                    thumb_url=(meta.get("thumb_url") or yt.thumb_url(vid)),
+                    classified_into=classified_into,
+                    tags=tags,
+                    lists=in_lists,
+                    classify_engine=str(classify_meta.get("engine") or ""),
+                    classify_reason=str(classify_meta.get("reason") or ""),
+                )
+            except Exception as e:
+                log.warning("save_event record failed: %s", e)
         return jsonify(
             {
                 "ok": True,
                 "item": item,
+                "video_id": vid,
+                "title": meta.get("title") or "",
                 "classified_into": classified_into,
                 "in_lists": in_lists,
                 "tags": tags,
                 "classify_engine": classify_meta.get("engine"),
                 "classify_reason": classify_meta.get("reason"),
+                "classify_async": queued_async,
             }
         )
 

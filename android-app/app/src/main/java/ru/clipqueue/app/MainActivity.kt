@@ -1,11 +1,14 @@
 package ru.clipqueue.app
 
+import android.Manifest
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -17,12 +20,13 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -30,6 +34,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import ru.clipqueue.app.data.ListCard
+import ru.clipqueue.app.push.PushRegistrar
 import ru.clipqueue.app.ui.screens.AuthScreen
 import ru.clipqueue.app.ui.screens.FaqScreen
 import ru.clipqueue.app.ui.screens.FolderDetailScreen
@@ -44,12 +49,24 @@ import ru.clipqueue.app.ui.theme.CqBg
 
 class MainActivity : ComponentActivity() {
     private val pendingAuthToken = mutableStateOf<String?>(null)
+    private val pendingVideoId = mutableStateOf<String?>(null)
+
+    private val notifPermission = registerForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) {
+        PushRegistrar.syncIfLoggedIn(this)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        ingestAuthIntent(intent)
+        PushRegistrar.ensureChannel(this)
+        ingestIntent(intent)
+        maybeRequestNotifPermission()
         val app = application.clipQueue()
+        if (app.session.isLoggedIn) {
+            PushRegistrar.syncIfLoggedIn(this)
+        }
         setContent {
             ClipQueueTheme {
                 Surface(
@@ -63,6 +80,12 @@ class MainActivity : ComponentActivity() {
                         session = app.session,
                         pendingToken = pendingAuthToken.value,
                         onTokenConsumed = { pendingAuthToken.value = null },
+                        pendingVideoId = pendingVideoId.value,
+                        onVideoConsumed = { pendingVideoId.value = null },
+                        onLoggedIn = {
+                            maybeRequestNotifPermission()
+                            PushRegistrar.syncIfLoggedIn(this)
+                        },
                     )
                 }
             }
@@ -72,18 +95,46 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        ingestAuthIntent(intent)
+        ingestIntent(intent)
     }
 
-    private fun ingestAuthIntent(intent: Intent?) {
-        val data = intent?.data ?: return
-        if (data.scheme == "clipqueue" && data.host == "auth") {
-            val token = data.getQueryParameter("token")
-            if (!token.isNullOrBlank()) {
-                application.clipQueue().session.token = token
-                pendingAuthToken.value = token
+    private fun maybeRequestNotifPermission() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        if (!PushRegistrar.notificationsPermissionNeeded(this)) return
+        notifPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+    }
+
+    private fun ingestIntent(intent: Intent?) {
+        if (intent == null) return
+        // Share push / FCM tap (data payload keys become extras)
+        val fromExtra = sequenceOf(
+            intent.getStringExtra(EXTRA_VIDEO_ID),
+            intent.getStringExtra("video_id"),
+        ).mapNotNull { it?.trim()?.takeIf { s -> s.isNotBlank() } }.firstOrNull()
+        if (fromExtra != null) {
+            pendingVideoId.value = fromExtra
+        }
+        val data = intent.data ?: return
+        if (data.scheme != "clipqueue") return
+        when (data.host) {
+            "auth" -> {
+                val token = data.getQueryParameter("token")
+                if (!token.isNullOrBlank()) {
+                    application.clipQueue().session.token = token
+                    pendingAuthToken.value = token
+                }
+            }
+            "video" -> {
+                val id = data.pathSegments.firstOrNull()?.trim().orEmpty()
+                if (id.isNotBlank()) {
+                    pendingVideoId.value = id
+                }
             }
         }
+    }
+
+    companion object {
+        const val EXTRA_VIDEO_ID = "kyro_video_id"
     }
 }
 
@@ -93,15 +144,22 @@ private fun ClipQueueNav(
     session: SessionStore,
     pendingToken: String?,
     onTokenConsumed: () -> Unit,
+    pendingVideoId: String?,
+    onVideoConsumed: () -> Unit,
+    onLoggedIn: () -> Unit,
 ) {
     var loggedIn by remember { mutableStateOf(session.isLoggedIn) }
     if (pendingToken != null) {
         loggedIn = true
         onTokenConsumed()
+        onLoggedIn()
     }
 
     if (!loggedIn) {
-        AuthScreen(api, session) { loggedIn = true }
+        AuthScreen(api, session) {
+            loggedIn = true
+            onLoggedIn()
+        }
         return
     }
 
@@ -130,6 +188,13 @@ private fun ClipQueueNav(
             launchSingleTop = true
             restoreState = true
         }
+    }
+
+    LaunchedEffect(pendingVideoId) {
+        val id = pendingVideoId?.trim().orEmpty()
+        if (id.isBlank()) return@LaunchedEffect
+        openVideo(id)
+        onVideoConsumed()
     }
 
     NavHost(navController = nav, startDestination = "home") {
