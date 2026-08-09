@@ -168,11 +168,11 @@ def weekly_summary(user_id: int) -> dict[str, Any]:
         FROM library_items li
         JOIN list_items lsi ON lsi.video_id = li.video_id
         JOIN lists l ON l.id = lsi.list_id AND l.user_id = li.user_id
-        WHERE li.user_id = ? AND li.status IN ('queue','in_progress')
-          AND l.title NOT LIKE 'YT:%'
-          AND lower(l.title) NOT LIKE '%скрыто%'
+        WHERE li.user_id = ? AND li.status IN ('queue', 'in_progress')
+          AND l.title NOT LIKE ?
+          AND lower(l.title) NOT LIKE ?
         """,
-        (user_id,),
+        (user_id, "YT:%", "%скрыто%"),
     )
     q = int((queue_n or {}).get("c") or 0)
     t = int((in_theme or {}).get("c") or 0)

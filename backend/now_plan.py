@@ -271,14 +271,14 @@ def _stale_folder_pick(user_id: int, exclude: set[str]) -> Optional[dict]:
         FROM lists l
         JOIN list_items li ON li.list_id = l.id
         WHERE l.user_id = ?
-          AND l.title NOT LIKE 'YT:%'
-          AND lower(l.title) NOT LIKE '%скрыто%'
+          AND l.title NOT LIKE ?
+          AND lower(l.title) NOT LIKE ?
         GROUP BY l.id, l.title
         HAVING COUNT(li.video_id) >= 2
         ORDER BY c DESC
         LIMIT 12
         """,
-        (user_id,),
+        (user_id, "YT:%", "%скрыто%"),
     )
     for f in folders:
         lid = int(f["id"])
