@@ -2,6 +2,7 @@ package ru.clipqueue.app.ui.screens
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -16,6 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
@@ -30,11 +32,14 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import android.widget.Toast
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -61,6 +66,7 @@ import ru.clipqueue.app.ui.components.VideoSpine
 import ru.clipqueue.app.ui.rememberVideoActions
 import ru.clipqueue.app.ui.theme.CqAccent
 import ru.clipqueue.app.ui.theme.CqBg
+import ru.clipqueue.app.ui.theme.CqElev
 import ru.clipqueue.app.ui.theme.CqMuted
 import ru.clipqueue.app.ui.theme.CqText
 import ru.clipqueue.app.ui.theme.KyroBrandStyle
@@ -318,7 +324,8 @@ fun HomeScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp)
-                    .padding(top = 14.dp, bottom = 4.dp),
+                    .padding(top = 14.dp, bottom = 4.dp)
+                    .zIndex(50f),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -327,15 +334,35 @@ fun HomeScreen(
                     style = KyroBrandStyle,
                     modifier = Modifier.padding(end = 4.dp),
                 )
-                Text(
-                    "сегодня",
-                    style = MaterialTheme.typography.bodySmall.copy(
-                        fontFamily = KyroFont,
-                        fontWeight = FontWeight.Normal,
-                        fontSize = 11.sp,
-                        color = CqMuted,
-                    ),
-                )
+                if (folderEdit) {
+                    Text(
+                        "Готово",
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            fontFamily = KyroFont,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 16.sp,
+                            color = Color(0xFF0A0A0C),
+                        ),
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Color(0xFFF3F3F5))
+                            .clickable {
+                                folderEdit = false
+                                trashHot = false
+                            }
+                            .padding(horizontal = 16.dp, vertical = 9.dp),
+                    )
+                } else {
+                    Text(
+                        "сегодня",
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            fontFamily = KyroFont,
+                            fontWeight = FontWeight.Normal,
+                            fontSize = 11.sp,
+                            color = CqMuted,
+                        ),
+                    )
+                }
             }
 
             Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
@@ -532,8 +559,9 @@ fun HomeScreen(
             hot = trashHot,
             onBounds = { trashBounds = it },
             modifier = Modifier
-                .align(Alignment.TopCenter)
-                .padding(top = 8.dp),
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 96.dp)
+                .zIndex(40f),
         )
     }
 }

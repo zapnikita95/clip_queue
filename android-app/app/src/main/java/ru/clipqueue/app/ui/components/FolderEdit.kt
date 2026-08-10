@@ -62,12 +62,11 @@ import ru.clipqueue.app.ui.theme.CqElev2
 import ru.clipqueue.app.ui.theme.CqMuted
 import ru.clipqueue.app.ui.theme.CqText
 
-private val TrashHotRed = Color(0xFFE53935)
+private val TrashRed = Color(0xFFE53935)
+private val TrashRedDark = Color(0xFFB71C1C)
 
 /**
- * Floating trash for folder edit mode.
- * Round invisible hit zone (larger than the icon); icon turns red when a tile is over it.
- * No label text.
+ * Floating trash for folder edit mode — always clearly red; grows when a tile is over it.
  */
 @Composable
 fun FolderTrashZone(
@@ -77,24 +76,36 @@ fun FolderTrashZone(
     modifier: Modifier = Modifier,
 ) {
     if (!editing) return
-    Box(
+    Column(
         modifier = modifier
-            .size(88.dp)
-            .clip(CircleShape)
-            .background(Color.Transparent)
-            .onGloballyPositioned { onBounds(it.boundsInRoot()) },
-        contentAlignment = Alignment.Center,
+            .onGloballyPositioned { onBounds(it.boundsInRoot()) }
+            .zIndex(40f),
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Icon(
-            Icons.Default.Delete,
-            contentDescription = null,
-            tint = if (hot) TrashHotRed else CqMuted.copy(alpha = 0.9f),
+        Box(
             modifier = Modifier
-                .size(if (hot) 30.dp else 26.dp)
+                .size(if (hot) 72.dp else 64.dp)
+                .clip(CircleShape)
+                .background(if (hot) TrashRedDark else TrashRed)
+                .border(2.dp, Color.White.copy(alpha = 0.85f), CircleShape)
                 .graphicsLayer {
-                    scaleX = if (hot) 1.12f else 1f
-                    scaleY = if (hot) 1.12f else 1f
+                    scaleX = if (hot) 1.08f else 1f
+                    scaleY = if (hot) 1.08f else 1f
                 },
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                Icons.Default.Delete,
+                contentDescription = "Удалить папку",
+                tint = Color.White,
+                modifier = Modifier.size(if (hot) 34.dp else 30.dp),
+            )
+        }
+        Spacer(Modifier.height(4.dp))
+        Text(
+            if (hot) "Отпустите" else "На корзину",
+            color = TrashRed,
+            style = MaterialTheme.typography.labelMedium,
         )
     }
 }
