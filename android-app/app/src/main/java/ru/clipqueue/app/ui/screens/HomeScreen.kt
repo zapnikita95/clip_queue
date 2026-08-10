@@ -208,9 +208,10 @@ fun HomeScreen(
     )
 
     LaunchedEffect(Unit) {
-        // Disk cache first — no network until pull-to-refresh
+        // Disk cache paints instantly; always refresh so «Сейчас»/plan slots load.
         if (appCache.home != null) {
             loading = false
+            loadHome(initial = false, force = true)
         } else {
             loadHome(initial = true, force = true)
         }

@@ -53,23 +53,28 @@ def register_device(user_id: int, token: str, platform: str = "android") -> None
     if not token or len(token) < 20:
         raise ValueError("Некорректный device token")
     platform = (platform or "android").strip()[:20] or "android"
-    existing = db.fetchone("SELECT user_id FROM device_tokens WHERE token = ?", (token,))
-    if existing:
-        if db.is_postgres():
-            db.execute(
-                "UPDATE device_tokens SET user_id = ?, platform = ?, updated_at = NOW() "
-                "WHERE token = ?",
-                (user_id, platform, token),
-            )
-        else:
-            db.execute(
-                "UPDATE device_tokens SET user_id = ?, platform = ?, "
-                "updated_at = datetime('now') WHERE token = ?",
-                (user_id, platform, token),
-            )
+    if db.is_postgres():
+        db.execute(
+            """
+            INSERT INTO device_tokens (token, user_id, platform, updated_at)
+            VALUES (?, ?, ?, NOW())
+            ON CONFLICT (token) DO UPDATE SET
+              user_id = EXCLUDED.user_id,
+              platform = EXCLUDED.platform,
+              updated_at = NOW()
+            """,
+            (token, user_id, platform),
+        )
     else:
         db.execute(
-            "INSERT INTO device_tokens (token, user_id, platform) VALUES (?, ?, ?)",
+            """
+            INSERT INTO device_tokens (token, user_id, platform, updated_at)
+            VALUES (?, ?, ?, datetime('now'))
+            ON CONFLICT(token) DO UPDATE SET
+              user_id = excluded.user_id,
+              platform = excluded.platform,
+              updated_at = datetime('now')
+            """,
             (token, user_id, platform),
         )
 

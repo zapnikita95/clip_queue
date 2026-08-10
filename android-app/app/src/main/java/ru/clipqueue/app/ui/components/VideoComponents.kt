@@ -232,7 +232,7 @@ fun VideoThumbCard(
                 )
             }
         }
-        Spacer(modifier.height(6.dp))
+        Spacer(Modifier.height(6.dp))
         if (!card.reason.isNullOrBlank()) {
             Text(
                 text = card.reason.orEmpty(),
