@@ -317,24 +317,34 @@ def pick_now(
     pool = fetch_plan_pool(user_id)
     started = [_card(r, reason="Начали смотреть") for r in pool if r.get("status") == "in_progress"][:4]
 
-    candidates = []
-    for r in pool:
-        if not _slot_ok(r.get("duration_sec"), slot):
-            continue
-        sc = float(r.get("interest") or 0) * 3.0
-        if r.get("status") == "in_progress":
-            sc += 5.0
-        ms = _mood_score(r, mood)
-        if mood and ms <= 0 and mood in MOODS:
-            continue
-        sc += ms * 2.0
-        if (r.get("note") or "").strip():
-            sc += 0.5
-        dp, dp_label = _daypart_score(r, theme_ids)
-        sc += dp * 2.5
-        sc += _habitual_hour_boost(user_id, r["video_id"], local_hour)
-        candidates.append((sc, r, ms, dp_label))
-    candidates.sort(key=lambda x: -x[0])
+    def _rank(require_mood: bool) -> list[tuple[float, dict, float, str]]:
+        candidates: list[tuple[float, dict, float, str]] = []
+        for r in pool:
+            if not _slot_ok(r.get("duration_sec"), slot):
+                continue
+            sc = float(r.get("interest") or 0) * 3.0
+            if r.get("status") == "in_progress":
+                sc += 5.0
+            ms = _mood_score(r, mood)
+            if require_mood and mood and ms <= 0 and mood in MOODS:
+                continue
+            sc += ms * 2.0
+            if (r.get("note") or "").strip():
+                sc += 0.5
+            dp, dp_label = _daypart_score(r, theme_ids)
+            sc += dp * 2.5
+            sc += _habitual_hour_boost(user_id, r["video_id"], local_hour)
+            # Prefer known durations slightly, but never drop null-duration from «any»
+            if r.get("duration_sec") is None:
+                sc -= 0.2
+            candidates.append((sc, r, ms, dp_label))
+        candidates.sort(key=lambda x: -x[0])
+        return candidates
+
+    candidates = _rank(require_mood=True)
+    # Mood filter emptied the rail — fall back to unfiltered ranking
+    if not candidates and mood:
+        candidates = _rank(require_mood=False)
 
     picks = []
     seen = set()
@@ -360,7 +370,25 @@ def pick_now(
         if len(picks) >= limit:
             break
 
-    suggestions = _suggestions(user_id, pool, exclude=seen, limit=4)
+    # Last resort: queue has videos but filters wiped picks
+    if not picks and pool:
+        for r in pool:
+            if r["video_id"] in seen:
+                continue
+            if not _slot_ok(r.get("duration_sec"), slot if slot == "any" else "any"):
+                # for non-any slot already failed; for any always ok with None
+                continue
+            picks.append(_card(r, reason="Из вашей очереди"))
+            seen.add(r["video_id"])
+            if len(picks) >= limit:
+                break
+
+    suggestions = _suggestions(user_id, pool, exclude=set(seen), limit=4)
+    # If picks still empty, promote suggestions into picks so «Сейчас» is never blank with a full queue
+    if not picks and suggestions:
+        picks = list(suggestions[:limit])
+        suggestions = suggestions[len(picks) :]
+
     daypart_label = {"morning": "Утро", "day": "День", "evening": "Вечер"}.get(daypart, "")
     return {
         "slot": slot,
@@ -375,6 +403,7 @@ def pick_now(
         "suggestions": suggestions,
         "moods": [{"id": k, "label": v["label"], "hint": v["hint"]} for k, v in MOODS.items()],
         "slots": [{"id": k, "label": v[2]} for k, v in SLOTS.items()],
+        "queue_eligible": len(pool),
     }
 
 
@@ -504,11 +533,30 @@ def get_light_plan(user_id: int) -> dict[str, Any]:
     plan = prefs.get("light_plan") or {}
     tonight_ids = [str(x) for x in (plan.get("tonight") or []) if x][:12]
     week_ids = [str(x) for x in (plan.get("week") or []) if x][:20]
+    tonight = _hydrate_ids(user_id, tonight_ids)
+    week = _hydrate_ids(user_id, week_ids)
+    suggest_tonight: list[dict] = []
+    if not tonight:
+        # Propose evening plan candidates so the rail is never a dead empty state
+        now = pick_now(user_id, slot="any", mood="", limit=6)
+        seen: set[str] = set()
+        for src in (now.get("picks") or []) + (now.get("suggestions") or []):
+            vid = str(src.get("video_id") or "")
+            if not vid or vid in seen:
+                continue
+            seen.add(vid)
+            card = dict(src)
+            why = (card.get("reason") or "").strip()
+            card["reason"] = f"В план · {why}" if why else "Добавить в план на вечер"
+            suggest_tonight.append(card)
+            if len(suggest_tonight) >= 4:
+                break
     return {
-        "tonight": _hydrate_ids(user_id, tonight_ids),
-        "week": _hydrate_ids(user_id, week_ids),
+        "tonight": tonight,
+        "week": week,
         "tonight_ids": tonight_ids,
         "week_ids": week_ids,
+        "suggest_tonight": suggest_tonight,
     }
 
 

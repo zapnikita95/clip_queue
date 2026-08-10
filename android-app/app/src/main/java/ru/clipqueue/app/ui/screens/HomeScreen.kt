@@ -97,6 +97,8 @@ fun HomeScreen(
     var nowMoods by remember { mutableStateOf<List<NowMoodDto>>(emptyList()) }
     var nowMeta by remember { mutableStateOf("") }
     var planTonight by remember { mutableStateOf<List<VideoCard>>(emptyList()) }
+    var planSuggestTonight by remember { mutableStateOf<List<VideoCard>>(emptyList()) }
+    var nowLoaded by remember { mutableStateOf(false) }
     var tagCard by remember { mutableStateOf<VideoCard?>(null) }
     var moveCard by remember { mutableStateOf<VideoCard?>(null) }
     var folderEdit by remember { mutableStateOf(false) }
@@ -114,15 +116,29 @@ fun HomeScreen(
     fun usedTags(list: List<TagDto>) = list.filter { (it.video_count ?: 0) > 0 }
 
     suspend fun loadNow(slot: String = nowSlot, mood: String = nowMood) {
-        val now = runCatching { api.homeNow(slot = slot, mood = mood, limit = 6) }.getOrNull() ?: return
+        val now = runCatching { api.homeNow(slot = slot, mood = mood, limit = 6) }.getOrNull()
+        if (now == null) {
+            nowLoaded = true
+            return
+        }
         val started = now.started.orEmpty()
         val picks = now.picks.orEmpty()
         val seen = picks.mapNotNull { it.video_id }.toSet()
-        nowPicks = started.filter { it.video_id !in seen } + picks
-        nowSuggestions = now.suggestions.orEmpty()
+        var merged = started.filter { it.video_id !in seen } + picks
+        val suggestions = now.suggestions.orEmpty()
+        // Never leave «Сейчас» blank when backend still has nudges
+        if (merged.isEmpty() && suggestions.isNotEmpty()) {
+            merged = suggestions
+            nowSuggestions = emptyList()
+        } else {
+            nowSuggestions = suggestions.filter { it.video_id !in merged.mapNotNull { c -> c.video_id }.toSet() }
+        }
+        nowPicks = merged
         if (now.slots.orEmpty().isNotEmpty()) nowSlots = now.slots.orEmpty()
         if (now.moods.orEmpty().isNotEmpty()) nowMoods = now.moods.orEmpty()
-        nowMeta = now.slot_label.orEmpty()
+        val day = now.daypart_label?.takeIf { it.isNotBlank() }
+        nowMeta = listOfNotNull(day, now.slot_label?.takeIf { it.isNotBlank() }).joinToString(" · ")
+        nowLoaded = true
     }
 
     suspend fun loadHome(initial: Boolean, force: Boolean = false) {
@@ -155,16 +171,28 @@ fun HomeScreen(
                     val started = now.started.orEmpty()
                     val picks = now.picks.orEmpty()
                     val seen = picks.mapNotNull { it.video_id }.toSet()
-                    nowPicks = started.filter { it.video_id !in seen } + picks
-                    nowSuggestions = now.suggestions.orEmpty()
+                    var merged = started.filter { it.video_id !in seen } + picks
+                    val suggestions = now.suggestions.orEmpty()
+                    if (merged.isEmpty() && suggestions.isNotEmpty()) {
+                        merged = suggestions
+                        nowSuggestions = emptyList()
+                    } else {
+                        val mergedIds = merged.mapNotNull { it.video_id }.toSet()
+                        nowSuggestions = suggestions.filter { it.video_id !in mergedIds }
+                    }
+                    nowPicks = merged
                     if (now.slots.orEmpty().isNotEmpty()) nowSlots = now.slots.orEmpty()
                     if (now.moods.orEmpty().isNotEmpty()) nowMoods = now.moods.orEmpty()
-                    nowMeta = now.slot_label.orEmpty()
+                    val day = now.daypart_label?.takeIf { it.isNotBlank() }
+                    nowMeta = listOfNotNull(day, now.slot_label?.takeIf { it.isNotBlank() }).joinToString(" · ")
+                    nowLoaded = true
                     runCatching {
                         api.trackSurface("now_impression", surface = "android_home")
                     }
-                }
-                planTonight = planDef.await()?.tonight.orEmpty()
+                } ?: run { nowLoaded = true }
+                val plan = planDef.await()
+                planTonight = plan?.tonight.orEmpty()
+                planSuggestTonight = plan?.suggest_tonight.orEmpty()
                 appCache.home = AppCache.Home(
                     recent = recent,
                     vibe = vibe,
@@ -204,6 +232,7 @@ fun HomeScreen(
         onTag = { tagCard = it },
         onMove = { moveCard = it },
         onInterestDone = { scope.launch { loadHome(initial = false, force = true) } },
+        onPlanChanged = { scope.launch { loadHome(initial = false, force = true) } },
         cache = appCache,
     )
 
@@ -411,7 +440,10 @@ fun HomeScreen(
                                     }
                                     if (nowPicks.isEmpty()) {
                                         Text(
-                                            "Пока нечего предложить",
+                                            when {
+                                                !nowLoaded || refreshing || loading -> "Подбираем…"
+                                                else -> "В очереди пока нечего предложить — сохраните видео из YouTube"
+                                            },
                                             color = CqMuted,
                                             modifier = Modifier.padding(horizontal = 12.dp),
                                         )
@@ -427,14 +459,23 @@ fun HomeScreen(
                                 }
                                 item {
                                     SectionLabel("План на вечер", Modifier.padding(horizontal = 12.dp))
-                                    if (planTonight.isEmpty()) {
+                                    if (planTonight.isNotEmpty()) {
+                                        VideoRail(planTonight) { c, a -> actions.handle(c, a) }
+                                    } else if (planSuggestTonight.isNotEmpty()) {
                                         Text(
-                                            "Добавьте через меню карточки",
+                                            "Предложения — нажмите ⋮ → «В план на вечер»",
+                                            color = CqMuted,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            modifier = Modifier.padding(horizontal = 12.dp).padding(bottom = 6.dp),
+                                        )
+                                        VideoRail(planSuggestTonight) { c, a -> actions.handle(c, a) }
+                                    } else {
+                                        Text(
+                                            if (!nowLoaded || refreshing || loading) "Подбираем…"
+                                            else "Сохраните видео — предложим, что добавить в план",
                                             color = CqMuted,
                                             modifier = Modifier.padding(horizontal = 12.dp),
                                         )
-                                    } else {
-                                        VideoRail(planTonight) { c, a -> actions.handle(c, a) }
                                     }
                                 }
                                 item {

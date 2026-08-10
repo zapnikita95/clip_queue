@@ -104,6 +104,8 @@ data class NowResponse(
     val slot_label: String? = null,
     val mood: String? = null,
     val mood_label: String? = null,
+    val daypart: String? = null,
+    val daypart_label: String? = null,
     val picks: List<VideoCard>? = null,
     val started: List<VideoCard>? = null,
     val suggestions: List<VideoCard>? = null,
@@ -116,6 +118,7 @@ data class LightPlanResponse(
     val ok: Boolean? = null,
     val tonight: List<VideoCard>? = null,
     val week: List<VideoCard>? = null,
+    val suggest_tonight: List<VideoCard>? = null,
     val error: String? = null,
 )
 

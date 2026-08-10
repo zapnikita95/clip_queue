@@ -1891,9 +1891,15 @@ Curate — идея отбора и создания коллекции. Kyro н
         const tn = $("#plan-tonight");
         const wk = $("#plan-week");
         if (tn) {
-          tn.innerHTML = (plan.tonight || []).length
-            ? plan.tonight.map((it) => cardHtml(it)).join("")
-            : `<div class="empty muted">Добавьте ролики через ⋯ → «В план на вечер»</div>`;
+          if ((plan.tonight || []).length) {
+            tn.innerHTML = plan.tonight.map((it) => cardHtml(it)).join("");
+          } else if ((plan.suggest_tonight || []).length) {
+            tn.innerHTML =
+              `<div class="empty muted" style="margin-bottom:8px">Предложения в план — ⋯ → «В план на вечер»</div>` +
+              plan.suggest_tonight.map((it) => cardHtml(it)).join("");
+          } else {
+            tn.innerHTML = `<div class="empty muted">Сохраните видео — предложим, что добавить в план</div>`;
+          }
           wireCardMenus(tn);
           enableDragScroll(tn.parentElement || document);
         }

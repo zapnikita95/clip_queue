@@ -22,6 +22,7 @@ class VideoActions(
     private val onTag: (VideoCard) -> Unit = {},
     private val onMove: (VideoCard) -> Unit = {},
     private val onInterestDone: () -> Unit = {},
+    private val onPlanChanged: () -> Unit = {},
     private val cache: AppCache? = null,
 ) {
     fun handle(card: VideoCard, action: CardAction) {
@@ -73,10 +74,18 @@ class VideoActions(
             CardAction.PlanTonight -> scope.launch {
                 val r = runCatching { api.addToPlan(id, "tonight") }.getOrNull()
                 toast(if (r?.ok == true) "В плане на вечер" else (r?.error ?: "Ошибка"))
+                if (r?.ok == true) {
+                    cache?.invalidateHome()
+                    onPlanChanged()
+                }
             }
             CardAction.PlanWeek -> scope.launch {
                 val r = runCatching { api.addToPlan(id, "week") }.getOrNull()
                 toast(if (r?.ok == true) "В плане на неделю" else (r?.error ?: "Ошибка"))
+                if (r?.ok == true) {
+                    cache?.invalidateHome()
+                    onPlanChanged()
+                }
             }
             CardAction.Remind -> scope.launch {
                 val at = java.time.Instant.now().plusSeconds(4 * 3600).toString()
@@ -84,7 +93,6 @@ class VideoActions(
                 toast(if (r?.ok == true) "Напомним через 4 часа" else (r?.error ?: "Ошибка"))
             }
             CardAction.NotNow -> scope.launch {
-                // Keep in library, just surface later — soft suppress via note flag not needed
                 toast("Ок, вернёмся позже")
             }
         }
@@ -103,9 +111,13 @@ fun rememberVideoActions(
     onTag: (VideoCard) -> Unit = {},
     onMove: (VideoCard) -> Unit = {},
     onInterestDone: () -> Unit = {},
+    onPlanChanged: () -> Unit = {},
     cache: AppCache? = null,
 ): VideoActions {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
-    return VideoActions(api, scope, context, onOpenVideo, onRemoved, onTag, onMove, onInterestDone, cache)
+    return VideoActions(
+        api, scope, context, onOpenVideo, onRemoved, onTag, onMove,
+        onInterestDone, onPlanChanged, cache,
+    )
 }
