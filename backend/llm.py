@@ -120,7 +120,11 @@ CLASSIFY_THEME_TAGS = {
     "история", "наука", "кино", "технологии", "спорт", "бизнес", "психология",
     "путешествия", "дизайн", "политика", "здоровье", "авто", "языки", "юмор",
     "искусство", "экономика", "программирование", "реклама", "мода",
+    "документалка", "война",
 }
+
+MAX_CLASSIFY_TAGS = 3
+MAX_CLASSIFY_LISTS = 3
 
 
 def _tag_has_text_evidence(tag: str, title: str, channel: str, description: str) -> bool:
@@ -157,6 +161,14 @@ def _heuristic_tags(title: str, channel: str, description: str) -> list[str]:
         ("как ", "обучение"),
         ("истори", "история"),
         ("войн", "история"),
+        ("ww2", "история"),
+        ("wwii", "история"),
+        ("вермахт", "история"),
+        ("нацист", "история"),
+        ("третий рейх", "история"),
+        ("герман", "история"),
+        ("документал", "документалка"),
+        ("documentary", "документалка"),
         ("наук", "наука"),
         ("космос", "наука"),
         ("физик", "наука"),
@@ -189,7 +201,7 @@ def _heuristic_tags(title: str, channel: str, description: str) -> list[str]:
     ):
         if word in blob and tag not in tags:
             tags.append(tag)
-    return tags[:4]
+    return tags[:MAX_CLASSIFY_TAGS]
 
 
 def suggest_video_themes(
@@ -211,12 +223,13 @@ def suggest_video_themes(
     if for_classify:
         system = (
             "Ты классификатор YouTube-видео для личной библиотеки. "
-            "Верни JSON: {\"tags\": [\"1–4 коротких тематических тега на русском\"], "
-            "\"list_title\": \"название папки из existing_lists или null\", \"reason\": \"кратко почему\"}. "
-            "Теги обязательны, если тема понятна: история, наука, кино, бизнес, игры, обучение и т.п. "
-            "Предпочитай existing_tags, если подходят. Можно создать новый короткий тег (1–2 слова). "
-            "Не ставь личный сленг пользователя без явных доказательств в названии/описании. "
-            "Не оставляй tags пустым, если тема ролика ясна."
+            "Верни JSON: {\"tags\": [\"до 3 коротких тематических тегов на русском\"], "
+            "\"list_titles\": [\"до 3 названий папок из existing_lists\"], "
+            "\"list_title\": \"главная папка или null\", \"reason\": \"кратко почему\"}. "
+            "Не больше 3 тегов и 3 папок. Теги обязательны, если тема понятна. "
+            "Пример: ролик про Вторую мировую глазами немцев → tags: история, документалка, война. "
+            "Предпочитай existing_tags / existing_lists. Можно короткий новый тег (1–2 слова). "
+            "Не ставь личный сленг без доказательств в названии/описании."
         )
     else:
         system = (
@@ -246,6 +259,7 @@ def suggest_video_themes(
         return {
             "tags": tags,
             "list_title": tags[0] if tags else None,
+            "list_titles": tags[:MAX_CLASSIFY_LISTS] if tags else [],
             "reason": "Эвристика по словам (без LLM)",
             "engine": "heuristic",
         }
@@ -272,17 +286,36 @@ def suggest_video_themes(
         remapped.append(canon)
     if for_classify and not remapped:
         remapped = _heuristic_tags(title, channel, description)
-    tags = remapped[:4]
+    tags = remapped[:MAX_CLASSIFY_TAGS]
     list_title = data.get("list_title")
+    list_titles: list[str] = []
+    for lt in data.get("list_titles") or ([] if not list_title else [list_title]):
+        name = str(lt).strip()[:80]
+        if not name:
+            continue
+        for el in existing_lists:
+            if el.lower() == name.lower():
+                name = el
+                break
+        if name not in list_titles:
+            list_titles.append(name)
+        if len(list_titles) >= MAX_CLASSIFY_LISTS:
+            break
     if list_title:
         list_title = str(list_title).strip()[:80] or None
         for el in existing_lists:
             if el.lower() == list_title.lower():
                 list_title = el
                 break
+        if list_title and list_title not in list_titles:
+            list_titles = [list_title] + [x for x in list_titles if x != list_title]
+            list_titles = list_titles[:MAX_CLASSIFY_LISTS]
+    elif list_titles:
+        list_title = list_titles[0]
     return {
         "tags": tags,
         "list_title": list_title,
+        "list_titles": list_titles,
         "reason": str(data.get("reason") or "")[:240],
         "engine": "llm",
     }

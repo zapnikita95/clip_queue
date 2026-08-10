@@ -649,7 +649,7 @@ def apply_tags_for_video(
         if ht and ht.lower() not in {x.lower() for x in names}:
             names.append(ht)
     applied: list[dict[str, Any]] = []
-    for name in names[:5]:
+    for name in names[:3]:
         try:
             tag = _ensure_tag_on_item(user_id, video_id, name)
             if tag:
@@ -729,6 +729,7 @@ def classify_new_video(
         return payload
 
     if theme_like:
+        theme_like = theme_like[:3]
         _remove_from_catchall(user_id, video_id)
         eng = "rules"
         if all((m.get("rule_type") or "") == "theme" for m in theme_like):
@@ -797,11 +798,19 @@ def classify_new_video(
         existing_lists=existing_lists,
         for_classify=True,
     )
+    picks = [
+        str(x).strip()
+        for x in (suggestion.get("list_titles") or [])
+        if str(x).strip()
+    ][:3]
     pick = (suggestion.get("list_title") or "").strip()
+    if pick and pick not in picks:
+        picks = [pick] + picks
+        picks = picks[:3]
 
     # Apply tags from this suggestion first (avoid double LLM call)
     applied_tags: list[dict[str, Any]] = []
-    for name in suggestion.get("tags") or []:
+    for name in (suggestion.get("tags") or [])[:3]:
         try:
             tag = _ensure_tag_on_item(user_id, video_id, str(name))
             if tag:
@@ -809,7 +818,7 @@ def classify_new_video(
         except Exception:
             pass
 
-    if not pick:
+    if not picks:
         if not applied_tags:
             applied_tags = apply_tags_for_video(
                 user_id,
@@ -826,14 +835,12 @@ def classify_new_video(
             "tags": applied_tags,
         }
 
-    pick_l = pick.lower()
-    chosen = None
-    for r in rules:
-        title_l = (r.get("list_title") or "").lower()
-        if title_l == pick_l or pick_l in title_l or title_l in pick_l:
-            chosen = r
-            break
-    if not chosen:
+    def _resolve_list(pick_name: str) -> dict | None:
+        pick_l = pick_name.lower()
+        for r in rules:
+            title_l = (r.get("list_title") or "").lower()
+            if title_l == pick_l or pick_l in title_l or title_l in pick_l:
+                return r
         for lst in db.fetchall(
             "SELECT id, title FROM lists WHERE user_id = ?", (user_id,)
         ):
@@ -841,39 +848,55 @@ def classify_new_video(
             if title_l == pick_l or pick_l in title_l or title_l in pick_l:
                 if _is_catchall_list_title(title_l) or "скрыто" in title_l:
                     continue
-                chosen = {
+                return {
                     "list_id": lst["id"],
                     "list_title": lst.get("title"),
                     "rule_type": "llm",
                     "rule_value": "",
                 }
-                break
-    if not chosen:
+        return None
+
+    chosen_list: list[dict] = []
+    seen_ids: set[int] = set()
+    for pname in picks:
+        ch = _resolve_list(pname)
+        if not ch:
+            continue
+        lid = int(ch["list_id"])
+        if lid in seen_ids:
+            continue
+        seen_ids.add(lid)
+        _add_list_item(lid, video_id, 0)
+        chosen_list.append(ch)
+        if len(chosen_list) >= 3:
+            break
+
+    if not chosen_list:
         return {
             "matched": [],
             "engine": suggestion.get("engine") or "llm",
-            "reason": f"LLM предложил «{pick}», но такой папки нет",
-            "suggestion": pick,
+            "reason": f"LLM предложил «{picks[0]}», но такой папки нет",
+            "suggestion": picks[0],
             "tags": applied_tags,
         }
 
-    _add_list_item(int(chosen["list_id"]), video_id, 0)
     _remove_from_catchall(user_id, video_id)
-    # Folder title as extra tag if not already
-    ft = _folder_title_as_tag(chosen.get("list_title") or "")
-    if ft:
-        try:
-            tag = _ensure_tag_on_item(user_id, video_id, ft)
-            if tag and tag["id"] not in {t["id"] for t in applied_tags}:
-                applied_tags.append(tag)
-        except Exception:
-            pass
+    for ch in chosen_list:
+        ft = _folder_title_as_tag(ch.get("list_title") or "")
+        if ft and len(applied_tags) < 3:
+            try:
+                tag = _ensure_tag_on_item(user_id, video_id, ft)
+                if tag and tag["id"] not in {t["id"] for t in applied_tags}:
+                    applied_tags.append(tag)
+            except Exception:
+                pass
+    titles = [c.get("list_title") for c in chosen_list]
     return {
-        "matched": [chosen],
+        "matched": chosen_list,
         "engine": suggestion.get("engine") or "llm",
-        "reason": suggestion.get("reason") or f"В «{chosen.get('list_title')}»",
-        "suggestion": pick,
-        "tags": applied_tags,
+        "reason": suggestion.get("reason") or f"В «{', '.join(str(t) for t in titles if t)}»",
+        "suggestion": picks[0],
+        "tags": applied_tags[:3],
     }
 
 
@@ -1281,9 +1304,9 @@ def apply_rules_to_video(
         channel_title=channel_title,
         duration_sec=duration_sec,
     )
-    for m in matched:
+    for m in matched[:3]:
         _add_list_item(int(m["list_id"]), video_id, 0)
-    return matched
+    return matched[:3]
 
 
 _CATCHALL_LIST_MARKERS = (
@@ -1362,6 +1385,8 @@ def _match_theme_folders(
     matched: list[dict] = []
     seen: set[int] = set()
     for th in detected:
+        if len(matched) >= 3:
+            break
         key = (th.get("title") or "").strip().lower()
         lst = lists.get(key)
         if not lst:

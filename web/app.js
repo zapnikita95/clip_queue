@@ -1133,99 +1133,140 @@ Curate — идея отбора и создания коллекции. Kyro н
     app.innerHTML = `
       ${topbar("settings")}
       <section class="hero hero-compact hero-with-faq">
-        <div>
-          <h1>Настройки</h1>
-          <p class="muted" style="margin:6px 0 0">Управляйте библиотекой спокойно и в своём темпе</p>
-        </div>
+        <div><h1>Настройки</h1></div>
         ${faqSparkleBtnHtml()}
       </section>
-      <div class="panel" style="margin-bottom:16px">
-        <h2>YouTube</h2>
-        <p class="muted">${meData.youtube_connected ? "подключён" : "нужно подключить Google"} · ${meData.library_count || 0} видео</p>
+
+      <div class="panel settings-panel">
+        <h2>Утро и вечер</h2>
+        <div class="settings-row">
+          <label>Часовой пояс (UTC±)</label>
+          <input type="number" id="tz-offset" min="-12" max="14" value="3" />
+        </div>
+        <div class="settings-row">
+          <label>Утро до</label>
+          <input type="number" id="morning-until" min="5" max="14" value="12" />
+          <span class="muted">ч</span>
+        </div>
+        <div class="settings-row">
+          <label>Вечер с</label>
+          <input type="number" id="evening-from" min="15" max="23" value="18" />
+          <span class="muted">ч</span>
+        </div>
+        <div class="settings-label">Утром чаще</div>
+        <div class="filter-chips" id="morning-themes"></div>
+        <div class="settings-label">Вечером чаще</div>
+        <div class="filter-chips" id="evening-themes"></div>
+      </div>
+
+      <div class="panel settings-panel">
+        <h2>Пуши</h2>
+        <label class="settings-check">
+          <input type="checkbox" id="morning-push-enabled" checked /> Утренний пуш с роликом
+        </label>
+        <div class="settings-row">
+          <label>Время</label>
+          <input type="number" id="morning-push-hour" min="5" max="12" value="9" />
+          <span class="muted">ч</span>
+        </div>
+        <label class="settings-check">
+          <input type="checkbox" id="digest-enabled" checked /> Еженедельный дайджест
+        </label>
+        <div class="settings-row">
+          <label>День</label>
+          <select id="digest-weekday">
+            <option value="0">Пн</option><option value="1">Вт</option><option value="2">Ср</option>
+            <option value="3">Чт</option><option value="4">Пт</option><option value="5">Сб</option>
+            <option value="6" selected>Вс</option>
+          </select>
+          <input type="number" id="digest-hour" min="0" max="23" value="10" />
+          <span class="muted">ч</span>
+        </div>
+        <div class="settings-row">
+          <label>Тихо</label>
+          <input type="number" id="quiet-start" min="0" max="23" value="23" />
+          <span class="muted">–</span>
+          <input type="number" id="quiet-end" min="0" max="23" value="8" />
+        </div>
+        <div class="btn-row" style="margin-top:12px">
+          <button type="button" class="btn" id="prefs-save">Сохранить</button>
+          <button type="button" class="btn secondary" id="morning-send">Пуш сейчас</button>
+          <button type="button" class="btn secondary" id="digest-send">Дайджест</button>
+        </div>
+      </div>
+
+      <div class="panel settings-panel">
+        <h2>Библиотека</h2>
         <div class="btn-row">
-          <button class="btn" id="sync-yt" ${meData.youtube_connected ? "" : "disabled"}>Обновить библиотеку</button>
-          <button class="btn secondary" id="sync-yt-full" ${meData.youtube_connected ? "" : "disabled"}>Полное обновление</button>
+          <button class="btn" id="sync-yt" ${meData.youtube_connected ? "" : "disabled"}>Обновить</button>
+          <button class="btn secondary" id="sync-yt-full" ${meData.youtube_connected ? "" : "disabled"}>Полный синк</button>
           ${!meData.youtube_connected && meData.google_oauth_configured
-            ? `<a class="btn secondary" href="/api/auth/google/start">Подключить Google</a>` : ""}
+            ? `<a class="btn secondary" href="/api/auth/google/start">Google</a>` : ""}
+          <a class="btn secondary" href="/organize" data-nav>Разложить</a>
         </div>
         <div id="sync-out"></div>
-      </div>
-      <div class="panel" style="margin-bottom:16px">
-        <h2>Категории</h2>
-        <p class="muted" style="margin:0 0 10px">Разложите поток по темам — так сохранения становятся коллекцией.</p>
-        <div class="btn-row">
-          <a class="btn" href="/organize" data-nav>Разложить</a>
-        </div>
-      </div>
-      <div class="panel" style="margin-bottom:16px">
-        <h2>Takeout</h2>
-        <p class="muted" style="margin:0 0 10px">Загрузите историю просмотров, чтобы отметить уже просмотренное.</p>
-        <div class="btn-row">
-          <label class="file-btn">
-            JSON истории
+        <div class="settings-row" style="margin-top:12px">
+          <label class="file-btn">Takeout JSON
             <input type="file" id="takeout-file" accept=".json,application/json" />
           </label>
         </div>
         <div id="takeout-out"></div>
       </div>
-      <div class="panel" style="margin-bottom:16px">
-        <h2>Дайджест</h2>
-        <p class="muted" style="margin:0 0 10px">Раз в неделю — идеи из вашей очереди (автопуш + вручную). Тихие часы — без пушей.</p>
-        <label class="muted" style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
-          <input type="checkbox" id="digest-enabled" checked /> Включить еженедельный дайджест
-        </label>
-        <div class="btn-row" style="margin-bottom:8px">
-          <label class="muted" style="font-size:13px">Тихо с
-            <input type="number" id="quiet-start" min="0" max="23" value="23" style="width:56px;margin:0 6px" />
-            до
-            <input type="number" id="quiet-end" min="0" max="23" value="8" style="width:56px;margin:0 6px" />
-            (UTC)
-          </label>
-          <button type="button" class="btn secondary" id="prefs-save">Сохранить</button>
-        </div>
-        <div class="btn-row">
-          <button type="button" class="btn secondary" id="digest-preview">Посмотреть текст</button>
-          <button type="button" class="btn" id="digest-send">Отправить себе</button>
-        </div>
-        <div id="digest-out" class="muted" style="margin-top:10px;white-space:pre-wrap;font-size:13px"></div>
-      </div>
-      <div class="panel" style="margin-bottom:16px">
-        <h2>Метрики недели</h2>
-        <p class="muted" style="margin:0 0 8px">North star: просмотры из плана Kyro.</p>
-        <div id="metrics-out" class="muted" style="font-size:13px">Загрузка…</div>
-      </div>
-      <div class="panel" style="margin-bottom:16px">
-        <h2>Расширение Chrome</h2>
-        <p class="muted" style="margin:0 0 10px">Кнопка «В Kyro» на странице YouTube. Установите как распакованное расширение из папки <code>extension/</code> в репозитории.</p>
-        <p class="muted" style="margin:0;font-size:13px">chrome://extensions → режим разработчика → «Загрузить распакованное» → выберите папку extension.</p>
-      </div>
-      <div class="panel">
+
+      <div class="panel settings-panel">
         <h2>Аккаунт</h2>
-        <p class="muted">${escapeHtml(meData.user?.email || me?.email || "")}</p>
+        <p class="muted" style="margin:0 0 10px">${escapeHtml(meData.user?.email || me?.email || "")}</p>
+        <div id="metrics-out" class="muted" style="font-size:13px;margin-bottom:10px"></div>
         <div class="btn-row">
-          <a class="btn ghost" href="https://movie-planner.ru/?open_login=1" target="_blank" rel="noopener">Кино — Movie Planner</a>
+          <a class="btn ghost" href="https://movie-planner.ru/?open_login=1" target="_blank" rel="noopener">Movie Planner</a>
           <button class="btn secondary" id="settings-logout">Выйти</button>
         </div>
       </div>`;
     wireNav();
+
+    const paintThemeChips = (el, selected, catalog) => {
+      if (!el) return;
+      const set = new Set(selected || []);
+      el.innerHTML = (catalog || []).map((t) =>
+        `<button type="button" class="chip ${set.has(t.id) ? "active" : ""}" data-theme="${escapeHtml(t.id)}">${escapeHtml(t.label)}</button>`
+      ).join("");
+      el.querySelectorAll("[data-theme]").forEach((btn) => {
+        btn.onclick = () => btn.classList.toggle("active");
+      });
+    };
+    const selectedThemes = (el) =>
+      [...(el?.querySelectorAll(".chip.active") || [])].map((b) => b.getAttribute("data-theme")).filter(Boolean);
+
+    let themeCatalog = [];
     try {
-      const prefs = await api("/api/prefs");
-      const p = prefs.prefs || {};
+      const prefsRes = await api("/api/prefs");
+      const p = prefsRes.prefs || {};
+      themeCatalog = prefsRes.daypart_themes || [];
+      const setVal = (id, v) => { const n = $(id); if (n && v != null) n.value = v; };
+      setVal("#tz-offset", p.tz_offset_hours);
+      setVal("#morning-until", p.morning_until);
+      setVal("#evening-from", p.evening_from);
+      setVal("#morning-push-hour", p.morning_push_hour);
+      setVal("#digest-hour", p.digest_hour);
+      setVal("#digest-weekday", p.digest_weekday);
+      setVal("#quiet-start", p.quiet_start);
+      setVal("#quiet-end", p.quiet_end);
+      const mpe = $("#morning-push-enabled");
+      if (mpe) mpe.checked = p.morning_push_enabled !== false;
       const de = $("#digest-enabled");
       if (de) de.checked = p.digest_enabled !== false;
-      const qs = $("#quiet-start");
-      const qe = $("#quiet-end");
-      if (qs && p.quiet_start != null) qs.value = p.quiet_start;
-      if (qe && p.quiet_end != null) qe.value = p.quiet_end;
-      const m = await api("/api/metrics/summary");
+      paintThemeChips($("#morning-themes"), p.morning_themes, themeCatalog);
+      paintThemeChips($("#evening-themes"), p.evening_themes, themeCatalog);
+      const m = await api("/api/metrics/summary").catch(() => null);
       const mo = $("#metrics-out");
-      if (mo) {
-        mo.innerHTML = `Planned watches: <b>${m.weekly_planned_watches || 0}</b> · дней с surface: <b>${m.surface_active_days || 0}</b> · в тематических папках: <b>${m.depth_themed_pct || 0}%</b>`;
+      if (mo && m) {
+        mo.textContent = `За неделю из плана: ${m.weekly_planned_watches || 0} · в папках ${m.depth_themed_pct || 0}%`;
       }
     } catch (_) {
-      const mo = $("#metrics-out");
-      if (mo) mo.textContent = "Нет данных";
+      paintThemeChips($("#morning-themes"), ["новости", "обучение", "подкаст"], themeCatalog);
+      paintThemeChips($("#evening-themes"), ["история", "документалка", "кино"], themeCatalog);
     }
+
     const prefsSave = $("#prefs-save");
     if (prefsSave) {
       prefsSave.onclick = async () => {
@@ -1233,7 +1274,16 @@ Curate — идея отбора и создания коллекции. Kyro н
           await api("/api/prefs", {
             method: "POST",
             body: JSON.stringify({
+              tz_offset_hours: Number($("#tz-offset")?.value || 3),
+              morning_until: Number($("#morning-until")?.value || 12),
+              evening_from: Number($("#evening-from")?.value || 18),
+              morning_themes: selectedThemes($("#morning-themes")),
+              evening_themes: selectedThemes($("#evening-themes")),
+              morning_push_enabled: !!$("#morning-push-enabled")?.checked,
+              morning_push_hour: Number($("#morning-push-hour")?.value || 9),
               digest_enabled: !!$("#digest-enabled")?.checked,
+              digest_weekday: Number($("#digest-weekday")?.value || 6),
+              digest_hour: Number($("#digest-hour")?.value || 10),
               quiet_start: Number($("#quiet-start")?.value || 23),
               quiet_end: Number($("#quiet-end")?.value || 8),
             }),
@@ -1244,25 +1294,23 @@ Curate — идея отбора и создания коллекции. Kyro н
         }
       };
     }
-    const digPrev = $("#digest-preview");
-    const digSend = $("#digest-send");
-    const digOut = $("#digest-out");
-    if (digPrev) {
-      digPrev.onclick = async () => {
+    const morningSend = $("#morning-send");
+    if (morningSend) {
+      morningSend.onclick = async () => {
         try {
-          const d = await api("/api/home/digest");
-          if (digOut) digOut.textContent = d.text || d.body || "";
+          const d = await api("/api/home/morning-push/send", { method: "POST", body: "{}" });
+          toast(d.sent ? "Пуш отправлен" : "Нет устройств или очередь пуста");
         } catch (e) {
           toast(e.message);
         }
       };
     }
+    const digSend = $("#digest-send");
     if (digSend) {
       digSend.onclick = async () => {
         try {
           const d = await api("/api/home/digest/send", { method: "POST", body: "{}" });
-          if (digOut) digOut.textContent = (d.digest && d.digest.text) || `Отправлено: ${d.sent || 0}`;
-          toast(d.sent ? "Дайджест отправлен" : "Нет устройств для пуша — текст ниже");
+          toast(d.sent ? "Дайджест отправлен" : "Нет устройств для пуша");
         } catch (e) {
           toast(e.message);
         }

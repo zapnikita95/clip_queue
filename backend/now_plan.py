@@ -2,10 +2,56 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from backend import db
 from backend import youtube as yt
+
+# Themes user can pin to morning / evening (chips in settings)
+DAYPART_THEME_OPTIONS = (
+    "новости",
+    "обучение",
+    "подкаст",
+    "история",
+    "документалка",
+    "кино",
+    "наука",
+    "технологии",
+    "бизнес",
+    "юмор",
+    "спорт",
+    "игры",
+    "музыка",
+)
+
+DAYPART_THEME_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "новости": ("новост", "news", "сегодня", "выпуск", "политика", "сводка"),
+    "обучение": ("урок", "обучен", "tutorial", "курс", "как ", "лекци", "разбор"),
+    "подкаст": ("подкаст", "podcast", "беседы", "интервью", "стрим"),
+    "история": (
+        "истори",
+        "войн",
+        "век",
+        "нацист",
+        "герман",
+        "ссср",
+        "рим",
+        "древн",
+        "ww2",
+        "второй мирово",
+        "вермахт",
+    ),
+    "документалка": ("документал", "documentary", "док ", "расследован"),
+    "кино": ("фильм", "сериал", "кино", "movie", "трейлер"),
+    "наука": ("наук", "космос", "физик", "биолог", "хими"),
+    "технологии": ("технолог", "гаджет", "айфон", "android", "нейросет"),
+    "бизнес": ("бизнес", "инвест", "стартап", "деньг", "экономик"),
+    "юмор": ("юмор", "смешн", "стендап", "comedy", "прикол"),
+    "спорт": ("спорт", "футбол", "матч", "трениров"),
+    "игры": ("игр", "гейм", "gameplay", "стрим игр"),
+    "музыка": ("музык", "клип", "альбом", "концерт", "music"),
+}
 
 # Duration slots (seconds)
 SLOTS = {
@@ -55,6 +101,137 @@ MOODS = {
         ),
     },
 }
+
+# Themes user can assign to morning vs evening (prefs + home scoring)
+DAYPART_THEMES: dict[str, dict[str, Any]] = {
+    "новости": {
+        "label": "Новости",
+        "keywords": ("новост", "news", "сегодня", "сводка", "политика", "выпуск", "итоги", "произошл", "рбк", "медuza", "bbc"),
+    },
+    "обучение": {
+        "label": "Обучение",
+        "keywords": ("урок", "обучение", "tutorial", "курс", "лекци", "как "),
+    },
+    "подкаст": {
+        "label": "Подкаст",
+        "keywords": ("подкаст", "podcast", "бесед", "интервью", "стрим"),
+    },
+    "технологии": {
+        "label": "Технологии",
+        "keywords": ("технолог", "гаджет", "ai ", "ии ", "apple", "google", "код"),
+    },
+    "спорт": {
+        "label": "Спорт",
+        "keywords": ("спорт", "футбол", "матч", "трениров"),
+    },
+    "бизнес": {
+        "label": "Бизнес",
+        "keywords": ("бизнес", "деньг", "инвест", "стартап", "рынок"),
+    },
+    "история": {
+        "label": "История",
+        "keywords": ("истори", "войн", "век", "древн", "импери", "рейх", "нацист", "герман"),
+    },
+    "документалка": {
+        "label": "Документалка",
+        "keywords": ("документал", "documentary", "расследован", "фильм о"),
+    },
+    "кино": {
+        "label": "Кино",
+        "keywords": ("фильм", "кино", "сериал", "разбор фильм", "трейлер"),
+    },
+    "наука": {
+        "label": "Наука",
+        "keywords": ("наук", "космос", "физик", "биолог", "исследован"),
+    },
+    "юмор": {
+        "label": "Юмор",
+        "keywords": ("юмор", "стендап", "смешн", "comedy", "прикол"),
+    },
+    "глубокий": {
+        "label": "Глубокий разбор",
+        "keywords": ("разбор", "анализ", "теория", "почему", "лонгрид"),
+    },
+}
+
+DEFAULT_MORNING_THEMES = ["новости", "обучение", "подкаст"]
+DEFAULT_EVENING_THEMES = ["история", "документалка", "кино", "глубокий"]
+
+
+def _local_hour(prefs: dict[str, Any] | None = None) -> int:
+    from datetime import datetime, timezone, timedelta
+
+    prefs = prefs or {}
+    try:
+        offset = int(prefs.get("tz_offset_hours", 3))  # default MSK
+    except (TypeError, ValueError):
+        offset = 3
+    return (datetime.now(timezone.utc) + timedelta(hours=offset)).hour
+
+
+def current_daypart(prefs: dict[str, Any] | None = None) -> str:
+    """morning | day | evening based on local hour prefs."""
+    h = _local_hour(prefs)
+    morning_end = int((prefs or {}).get("morning_until", 12) or 12)
+    evening_start = int((prefs or {}).get("evening_from", 18) or 18)
+    if h < morning_end:
+        return "morning"
+    if h >= evening_start:
+        return "evening"
+    return "day"
+
+
+def _daypart_theme_ids(prefs: dict[str, Any], daypart: str) -> list[str]:
+    if daypart == "morning":
+        raw = prefs.get("morning_themes")
+        if raw is None:
+            return list(DEFAULT_MORNING_THEMES)
+        return [str(x) for x in (raw or []) if str(x) in DAYPART_THEMES][:6]
+    if daypart == "evening":
+        raw = prefs.get("evening_themes")
+        if raw is None:
+            return list(DEFAULT_EVENING_THEMES)
+        return [str(x) for x in (raw or []) if str(x) in DAYPART_THEMES][:6]
+    return []
+
+
+def _daypart_score(row: dict, theme_ids: list[str]) -> tuple[float, str]:
+    if not theme_ids:
+        return 0.0, ""
+    blob = f"{row.get('title') or ''} {row.get('note') or ''} {row.get('channel_title') or ''}".lower()
+    best = 0.0
+    best_label = ""
+    for tid in theme_ids:
+        meta = DAYPART_THEMES.get(tid) or {}
+        hits = sum(1 for k in (meta.get("keywords") or ()) if k in blob)
+        if hits > best:
+            best = float(hits)
+            best_label = meta.get("label") or tid
+    return best, best_label
+
+
+def _habitual_hour_boost(user_id: int, video_id: str, local_hour: int) -> float:
+    """Boost videos historically opened around this local hour (watch_events)."""
+    # Store hours in UTC in DB; approximate with ±1h window in UTC-ish —
+    # we compare extracted hour loosely via string/timestamp when possible.
+    rows = db.fetchall(
+        """
+        SELECT video_id, COUNT(*) AS c
+        FROM watch_events
+        WHERE user_id = ?
+          AND event_type IN ('open_yt', 'planned_watch', 'now_open', 'mark_started')
+          AND video_id = ?
+        GROUP BY video_id
+        """,
+        (user_id, video_id),
+    )
+    if not rows:
+        return 0.0
+    # Soft prior: if user often watches this video at all, slight bump at preferred hours
+    c = int((rows[0] or {}).get("c") or 0)
+    if c <= 0:
+        return 0.0
+    return min(2.0, 0.3 * c)
 
 
 def _card(row: dict, *, reason: str = "") -> dict[str, Any]:
@@ -132,6 +309,11 @@ def pick_now(
     limit: int = 6,
 ) -> dict[str, Any]:
     """Return picks for «Сейчас» + started + suggestions."""
+    prefs = get_prefs(user_id)
+    daypart = current_daypart(prefs)
+    theme_ids = _daypart_theme_ids(prefs, daypart)
+    local_hour = _local_hour(prefs)
+
     pool = fetch_plan_pool(user_id)
     started = [_card(r, reason="Начали смотреть") for r in pool if r.get("status") == "in_progress"][:4]
 
@@ -148,12 +330,15 @@ def pick_now(
         sc += ms * 2.0
         if (r.get("note") or "").strip():
             sc += 0.5
-        candidates.append((sc, r, ms))
+        dp, dp_label = _daypart_score(r, theme_ids)
+        sc += dp * 2.5
+        sc += _habitual_hour_boost(user_id, r["video_id"], local_hour)
+        candidates.append((sc, r, ms, dp_label))
     candidates.sort(key=lambda x: -x[0])
 
     picks = []
     seen = set()
-    for sc, r, ms in candidates:
+    for sc, r, ms, dp_label in candidates:
         vid = r["video_id"]
         if vid in seen:
             continue
@@ -161,6 +346,10 @@ def pick_now(
         reason = "Под ваш слот времени"
         if r.get("status") == "in_progress":
             reason = "Продолжить"
+        elif dp_label and daypart == "morning":
+            reason = f"Обычно утром · {dp_label}"
+        elif dp_label and daypart == "evening":
+            reason = f"Обычно вечером · {dp_label}"
         elif int(r.get("interest") or 0) >= 2:
             reason = "Отметили как очень интересное"
         elif mood and ms > 0:
@@ -172,11 +361,15 @@ def pick_now(
             break
 
     suggestions = _suggestions(user_id, pool, exclude=seen, limit=4)
+    daypart_label = {"morning": "Утро", "day": "День", "evening": "Вечер"}.get(daypart, "")
     return {
         "slot": slot,
         "slot_label": SLOTS.get(slot, SLOTS["any"])[2],
         "mood": mood or None,
         "mood_label": (MOODS.get(mood) or {}).get("label"),
+        "daypart": daypart,
+        "daypart_label": daypart_label,
+        "daypart_themes": theme_ids,
         "picks": picks,
         "started": started,
         "suggestions": suggestions,
@@ -468,13 +661,31 @@ def get_prefs(user_id: int) -> dict[str, Any]:
     import json
 
     ensure_prefs_table()
+    defaults = {
+        "digest_enabled": True,
+        "default_slot": "any",
+        "quiet_start": 23,
+        "quiet_end": 8,
+        "tz_offset_hours": 3,
+        "morning_until": 12,
+        "evening_from": 18,
+        "morning_themes": list(DEFAULT_MORNING_THEMES),
+        "evening_themes": list(DEFAULT_EVENING_THEMES),
+        "morning_push_enabled": True,
+        "morning_push_hour": 9,
+        "digest_weekday": 6,
+        "digest_hour": 10,
+    }
     row = db.fetchone("SELECT prefs_json FROM user_prefs WHERE user_id = ?", (user_id,))
     if not row:
-        return {"digest_enabled": True, "default_slot": "any", "quiet_start": 23, "quiet_end": 8}
+        return dict(defaults)
     try:
-        return json.loads(row.get("prefs_json") or "{}") or {}
+        cur = json.loads(row.get("prefs_json") or "{}") or {}
     except Exception:
-        return {}
+        cur = {}
+    out = dict(defaults)
+    out.update(cur)
+    return out
 
 
 def set_prefs(user_id: int, patch: dict[str, Any]) -> dict[str, Any]:
@@ -482,7 +693,28 @@ def set_prefs(user_id: int, patch: dict[str, Any]) -> dict[str, Any]:
 
     ensure_prefs_table()
     cur = get_prefs(user_id)
-    cur.update({k: v for k, v in (patch or {}).items() if v is not None})
+    for k, v in (patch or {}).items():
+        if v is None:
+            continue
+        if k in ("morning_themes", "evening_themes") and isinstance(v, list):
+            cur[k] = [str(x) for x in v if str(x) in DAYPART_THEMES][:6]
+            continue
+        if k in (
+            "quiet_start",
+            "quiet_end",
+            "tz_offset_hours",
+            "morning_until",
+            "evening_from",
+            "morning_push_hour",
+            "digest_hour",
+            "digest_weekday",
+        ):
+            try:
+                cur[k] = int(v)
+            except (TypeError, ValueError):
+                continue
+            continue
+        cur[k] = v
     raw = json.dumps(cur, ensure_ascii=False)
     if db.is_postgres():
         db.execute(
@@ -502,3 +734,17 @@ def set_prefs(user_id: int, patch: dict[str, Any]) -> dict[str, Any]:
             (user_id, raw),
         )
     return cur
+
+
+def daypart_theme_catalog() -> list[dict[str, str]]:
+    return [{"id": k, "label": v["label"]} for k, v in DAYPART_THEMES.items()]
+
+
+def pick_for_morning_push(user_id: int) -> Optional[dict[str, Any]]:
+    """One video for morning push — prefer morning themes."""
+    data = pick_now(user_id, slot="short", limit=3)
+    picks = data.get("picks") or data.get("suggestions") or []
+    if not picks:
+        data = pick_now(user_id, slot="any", limit=3)
+        picks = data.get("picks") or []
+    return picks[0] if picks else None

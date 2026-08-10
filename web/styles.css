@@ -1660,6 +1660,50 @@ a.btn.ghost:hover {
 .inbox-onboard {
   border: 1px solid var(--border);
 }
+.settings-panel {
+  margin-bottom: 14px;
+}
+.settings-panel h2 {
+  margin-bottom: 12px;
+}
+.settings-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+.settings-row label {
+  min-width: 120px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.settings-row input[type="number"],
+.settings-row select {
+  width: 64px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+}
+.settings-row select {
+  width: auto;
+  min-width: 72px;
+}
+.settings-label {
+  margin: 10px 0 6px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.settings-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0;
+  font-size: 14px;
+  color: var(--text);
+}
 
 .sheet-overlay {
   position: fixed;

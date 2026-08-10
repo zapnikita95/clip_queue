@@ -1,4 +1,4 @@
-"""Weekly digest auto-send worker (in-process, enabled on web)."""
+"""Weekly digest + daily morning push worker (in-process on web)."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import logging
 import os
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from backend import db, now_plan, push
@@ -24,8 +24,17 @@ def _env_bool(name: str, default: bool = True) -> bool:
     return raw in ("1", "true", "yes", "on")
 
 
+def _local_now(prefs: dict, *, now: Optional[datetime] = None) -> datetime:
+    now = now or datetime.now(timezone.utc)
+    try:
+        offset = int(prefs.get("tz_offset_hours", 3))
+    except (TypeError, ValueError):
+        offset = 3
+    return now.astimezone(timezone.utc) + timedelta(hours=offset)
+
+
 def in_quiet_hours(prefs: dict, *, now: Optional[datetime] = None) -> bool:
-    """Quiet hours local to UTC hour if no tz — prefs: quiet_start/quiet_end 0-23."""
+    """Quiet hours in user local time (tz_offset_hours)."""
     qs = prefs.get("quiet_start")
     qe = prefs.get("quiet_end")
     if qs is None or qe is None:
@@ -34,12 +43,11 @@ def in_quiet_hours(prefs: dict, *, now: Optional[datetime] = None) -> bool:
         qs_i, qe_i = int(qs), int(qe)
     except (TypeError, ValueError):
         return False
-    hour = (now or datetime.now(timezone.utc)).hour
+    hour = _local_now(prefs, now=now).hour
     if qs_i == qe_i:
         return False
     if qs_i < qe_i:
         return qs_i <= hour < qe_i
-    # wraps midnight
     return hour >= qs_i or hour < qe_i
 
 
@@ -48,17 +56,36 @@ def should_send_weekly(prefs: dict, *, now: Optional[datetime] = None) -> bool:
         return False
     if in_quiet_hours(prefs, now=now):
         return False
-    now = now or datetime.now(timezone.utc)
-    # Default: Sunday 10:00–11:00 UTC (tunable via digest_weekday / digest_hour)
+    local = _local_now(prefs, now=now)
     weekday = int(prefs.get("digest_weekday", 6))  # 0=Mon … 6=Sun
     hour = int(prefs.get("digest_hour", 10))
-    if now.weekday() != weekday or now.hour != hour:
+    if local.weekday() != weekday or local.hour != hour:
         return False
     last = (prefs.get("digest_last_sent") or "").strip()
     if last:
         try:
             last_dt = datetime.fromisoformat(last.replace("Z", "+00:00"))
-            if (now - last_dt).total_seconds() < 5 * 24 * 3600:
+            if (datetime.now(timezone.utc) - last_dt).total_seconds() < 5 * 24 * 3600:
+                return False
+        except Exception:
+            pass
+    return True
+
+
+def should_send_morning(prefs: dict, *, now: Optional[datetime] = None) -> bool:
+    if prefs.get("morning_push_enabled") is False:
+        return False
+    if in_quiet_hours(prefs, now=now):
+        return False
+    local = _local_now(prefs, now=now)
+    hour = int(prefs.get("morning_push_hour", 9))
+    if local.hour != hour:
+        return False
+    last = (prefs.get("morning_push_last_sent") or "").strip()
+    if last:
+        try:
+            last_dt = datetime.fromisoformat(last.replace("Z", "+00:00"))
+            if (datetime.now(timezone.utc) - last_dt).total_seconds() < 20 * 3600:
                 return False
         except Exception:
             pass
@@ -83,12 +110,44 @@ def send_digest_for_user(user_id: int) -> dict:
     return {"ok": True, "sent": int((result or {}).get("sent") or 0), "push": result}
 
 
+def send_morning_for_user(user_id: int) -> dict:
+    prefs = now_plan.get_prefs(user_id)
+    if prefs.get("morning_push_enabled") is False:
+        return {"ok": True, "sent": 0, "skipped": "disabled"}
+    pick = now_plan.pick_for_morning_push(user_id)
+    if not pick:
+        return {"ok": True, "sent": 0, "skipped": "empty"}
+    title = "Kyro · на утро"
+    body = (pick.get("title") or "Ролик из вашей очереди")[:120]
+    result = push.send_to_user(
+        user_id,
+        title=title,
+        body=body,
+        data={
+            "type": "morning",
+            "video_id": pick["video_id"],
+            "route": f"/v/{pick['video_id']}",
+        },
+    )
+    now_plan.set_prefs(
+        user_id,
+        {"morning_push_last_sent": datetime.now(timezone.utc).isoformat()},
+    )
+    return {
+        "ok": True,
+        "sent": int((result or {}).get("sent") or 0),
+        "video_id": pick["video_id"],
+        "push": result,
+    }
+
+
 def tick() -> dict:
-    """Scan users with prefs and send due digests + due reminders."""
+    """Scan users: weekly digest, morning push, due reminders."""
     from backend import reminders_svc
 
     users = db.fetchall("SELECT id FROM users LIMIT 5000")
     dig_sent = 0
+    morning_sent = 0
     rem_sent = 0
     now = datetime.now(timezone.utc)
     for u in users:
@@ -100,6 +159,12 @@ def tick() -> dict:
                 dig_sent += int(r.get("sent") or 0)
             except Exception as e:
                 log.warning("digest user=%s: %s", uid, e)
+        if should_send_morning(prefs, now=now):
+            try:
+                r = send_morning_for_user(uid)
+                morning_sent += int(r.get("sent") or 0)
+            except Exception as e:
+                log.warning("morning push user=%s: %s", uid, e)
         if in_quiet_hours(prefs, now=now):
             continue
         try:
@@ -119,7 +184,12 @@ def tick() -> dict:
                 rem_sent += 1
         except Exception as e:
             log.warning("reminder user=%s: %s", uid, e)
-    return {"ok": True, "digest_pushes": dig_sent, "reminder_pushes": rem_sent}
+    return {
+        "ok": True,
+        "digest_pushes": dig_sent,
+        "morning_pushes": morning_sent,
+        "reminder_pushes": rem_sent,
+    }
 
 
 def start_background(*, interval_sec: int = 900) -> None:
@@ -134,7 +204,6 @@ def start_background(*, interval_sec: int = 900) -> None:
         _started = True
 
     def loop():
-        # delay first tick so gunicorn binds
         time.sleep(45)
         while True:
             try:

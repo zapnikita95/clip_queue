@@ -92,7 +92,7 @@ def create_app() -> Flask:
             {
                 "ok": True,
                 "service": "clip_queue",
-                "version": "0.4.0",
+                "version": "0.4.1",
                 "db": "postgres" if db.is_postgres() else "sqlite",
                 "google_oauth": google_oauth.configured(),
                 "llm": llm.available(),
@@ -1807,7 +1807,14 @@ def create_app() -> Flask:
     @require_auth
     def get_user_prefs():
         uid = current_user()["user_id"]
-        return jsonify({"ok": True, "prefs": now_plan.get_prefs(uid)})
+        return jsonify(
+            {
+                "ok": True,
+                "prefs": now_plan.get_prefs(uid),
+                "daypart_themes": now_plan.daypart_theme_catalog(),
+                "daypart": now_plan.current_daypart(now_plan.get_prefs(uid)),
+            }
+        )
 
     @app.post("/api/prefs")
     @require_auth
@@ -1816,6 +1823,17 @@ def create_app() -> Flask:
         body = request.get_json(silent=True) or {}
         prefs = now_plan.set_prefs(uid, body)
         return jsonify({"ok": True, "prefs": prefs})
+
+    @app.post("/api/home/morning-push/send")
+    @require_auth
+    def morning_push_send():
+        uid = current_user()["user_id"]
+        try:
+            result = digest_jobs.send_morning_for_user(uid)
+        except Exception as e:
+            log.warning("morning push failed: %s", e)
+            return json_error(f"Не удалось отправить: {e}", 502)
+        return jsonify({"ok": True, **result})
 
     @app.post("/api/videos/<video_id>/reclassify")
     @require_auth
