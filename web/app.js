@@ -1786,7 +1786,10 @@ Curate — идея отбора и создания коллекции. Kyro н
             meta: { slot: nowSlot, mood: nowMood || null, n: (data.picks || []).length },
           }),
         }).catch(() => {});
-        if (meta) meta.textContent = data.slot_label || "";
+        if (meta) {
+          const parts = [data.daypart_label, data.slot_label].filter(Boolean);
+          meta.textContent = parts.join(" · ") || "";
+        }
         const slotsEl = $("#now-slots");
         if (slotsEl && !(slotsEl.dataset.ready)) {
           slotsEl.innerHTML = (data.slots || []).map((s) =>
