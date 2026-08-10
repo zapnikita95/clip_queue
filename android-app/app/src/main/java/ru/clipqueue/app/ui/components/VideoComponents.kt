@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -42,9 +43,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -52,11 +55,13 @@ import coil.compose.AsyncImage
 import ru.clipqueue.app.data.ListCard
 import ru.clipqueue.app.data.VideoCard
 import ru.clipqueue.app.ui.theme.CqAccent
+import ru.clipqueue.app.ui.theme.CqBg
 import ru.clipqueue.app.ui.theme.CqBorder
 import ru.clipqueue.app.ui.theme.CqElev
 import ru.clipqueue.app.ui.theme.CqElev2
 import ru.clipqueue.app.ui.theme.CqMuted
 import ru.clipqueue.app.ui.theme.CqText
+import ru.clipqueue.app.ui.theme.KyroFont
 
 enum class CardAction {
     Open,
@@ -466,18 +471,29 @@ fun BottomBar(
     onFolders: () -> Unit,
     onProfile: () -> Unit,
 ) {
-    Row(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(CqElev)
-            .border(width = 1.dp, color = CqBorder, shape = RoundedCornerShape(0))
-            .padding(horizontal = 4.dp, vertical = 6.dp),
-        horizontalArrangement = Arrangement.SpaceEvenly,
-        verticalAlignment = Alignment.CenterVertically,
+            .background(CqBg)
+            .navigationBarsPadding(),
     ) {
-        BottomTab(0, selected, "Библиотека", Icons.Default.Home, onHome, Modifier.weight(1f))
-        BottomTab(1, selected, "Папки", Icons.Default.Folder, onFolders, Modifier.weight(1f))
-        BottomTab(2, selected, "Профиль", Icons.Default.Person, onProfile, Modifier.weight(1f))
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(1.dp)
+                .background(CqBorder),
+        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            BottomTab(0, selected, "Библиотека", Icons.Default.Home, onHome, Modifier.weight(1f))
+            BottomTab(1, selected, "Папки", Icons.Default.Folder, onFolders, Modifier.weight(1f))
+            BottomTab(2, selected, "Профиль", Icons.Default.Person, onProfile, Modifier.weight(1f))
+        }
     }
 }
 
@@ -495,16 +511,35 @@ private fun BottomTab(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
         modifier = modifier
-            .clip(RoundedCornerShape(12.dp))
-            .background(if (on) CqAccent.copy(alpha = 0.12f) else androidx.compose.ui.graphics.Color.Transparent)
             .clickable(onClick = onClick)
-            .padding(vertical = 8.dp),
+            .padding(vertical = 6.dp),
     ) {
-        Icon(icon, label, tint = if (on) CqText else CqMuted, modifier = Modifier.size(26.dp))
-        Spacer(Modifier.height(2.dp))
-        Text(label, color = if (on) CqText else CqMuted, fontSize = 12.sp)
+        Icon(
+            icon,
+            contentDescription = label,
+            tint = if (on) CqText else CqMuted,
+            modifier = Modifier.size(24.dp),
+        )
+        Spacer(modifier = Modifier.height(3.dp))
+        Text(
+            label,
+            color = if (on) CqText else CqMuted,
+            fontSize = 11.sp,
+            fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal,
+            fontFamily = KyroFont,
+            maxLines = 1,
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Box(
+            modifier = Modifier
+                .width(14.dp)
+                .height(2.dp)
+                .clip(RoundedCornerShape(1.dp))
+                .background(if (on) CqText else Color.Transparent),
+        )
     }
 }
+
 
 fun formatDuration(sec: Int?): String? {
     if (sec == null || sec <= 0) return null
