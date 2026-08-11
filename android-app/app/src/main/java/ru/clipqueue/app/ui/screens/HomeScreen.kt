@@ -66,6 +66,7 @@ import ru.clipqueue.app.ui.components.VideoSpine
 import ru.clipqueue.app.ui.rememberVideoActions
 import ru.clipqueue.app.ui.theme.CqAccent
 import ru.clipqueue.app.ui.theme.CqBg
+import ru.clipqueue.app.ui.theme.CqBorder
 import ru.clipqueue.app.ui.theme.CqElev
 import ru.clipqueue.app.ui.theme.CqMuted
 import ru.clipqueue.app.ui.theme.CqText
@@ -80,6 +81,8 @@ fun HomeScreen(
     onOpenFolder: (ListCard) -> Unit,
     onOpenFolders: () -> Unit,
     onOpenProfile: () -> Unit,
+    onOpenToday: () -> Unit = {},
+    onOpenSearch: () -> Unit = {},
 ) {
     val appCache = (LocalContext.current.applicationContext as ClipQueueApp).cache
     val cached = remember { appCache.home }
@@ -361,8 +364,29 @@ fun HomeScreen(
                             fontSize = 11.sp,
                             color = CqMuted,
                         ),
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(999.dp))
+                            .background(CqElev)
+                            .clickable(onClick = onOpenToday)
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
                     )
                 }
+            }
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+                    .padding(bottom = 8.dp)
+                    .height(48.dp)
+                    .clip(RoundedCornerShape(24.dp))
+                    .background(CqElev)
+                    .border(1.dp, CqBorder, RoundedCornerShape(24.dp))
+                    .clickable(onClick = onOpenSearch)
+                    .padding(horizontal = 14.dp),
+                contentAlignment = Alignment.CenterStart,
+            ) {
+                Text("⌕  Название, канал, описание…", color = CqMuted, style = MaterialTheme.typography.bodyMedium)
             }
 
             Box(modifier = Modifier.weight(1f).fillMaxWidth()) {

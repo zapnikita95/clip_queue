@@ -30,9 +30,11 @@ import ru.clipqueue.app.data.OpenResponse
 import ru.clipqueue.app.data.RailResponse
 import ru.clipqueue.app.data.SaveHistoryResponse
 import ru.clipqueue.app.data.SaveResponse
+import ru.clipqueue.app.data.SearchResponse
 import ru.clipqueue.app.data.SimilarResponse
 import ru.clipqueue.app.data.SyncStartResponse
 import ru.clipqueue.app.data.TagsResponse
+import ru.clipqueue.app.data.TodayResponse
 import ru.clipqueue.app.data.VideoDetailResponse
 
 class ApiClient(private val session: SessionStore) {
@@ -106,6 +108,18 @@ class ApiClient(private val session: SessionStore) {
     }
 
     suspend fun homePlan(): LightPlanResponse = get("/api/home/plan")
+
+    suspend fun homeToday(limit: Int = 8): TodayResponse =
+        get("/api/home/today?limit=$limit")
+
+    suspend fun hideFromToday(videoId: String): OkResponse =
+        post("/api/home/today/hide", mapOf("video_id" to videoId))
+
+    suspend fun addTodayToEvening(videoId: String): LightPlanResponse =
+        post("/api/home/today/add", mapOf("video_id" to videoId))
+
+    suspend fun search(q: String, limit: Int = 40): SearchResponse =
+        get("/api/search?q=${java.net.URLEncoder.encode(q, "UTF-8")}&limit=$limit")
 
     suspend fun addToPlan(videoId: String, bucket: String = "tonight"): LightPlanResponse =
         post(

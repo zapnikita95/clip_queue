@@ -1728,8 +1728,17 @@ Curate — идея отбора и создания коллекции. Kyro н
     app.innerHTML = `
       ${topbar("home")}
       <section class="hero hero-compact">
-        <h1>${has ? "Что посмотреть" : "Разложите видео"}</h1>
-        <p class="hero-sub muted">План из того, что вы уже хотели — не лента</p>
+        <div class="home-brand-row">
+          <div>
+            <h1>${has ? "Что посмотреть" : "Разложите видео"}</h1>
+            <p class="hero-sub muted">План из того, что вы уже хотели — не лента</p>
+          </div>
+          <button type="button" class="today-chip" id="today-chip" title="План на сегодня">сегодня</button>
+        </div>
+        <form class="smart-search smart-search-home" id="home-search" action="/search" method="get">
+          <input type="search" name="q" id="home-q" placeholder="Название, канал, описание…" autocomplete="off" enterkeyhint="search" />
+          <button type="submit" class="smart-go" title="Найти">⌕</button>
+        </form>
         <div class="stats stats-compact">
           <div class="stat"><b>${folders.length}</b> папок</div>
           <div class="stat"><b>${shell.counts?.queue ?? "—"}</b> в очереди</div>
@@ -1766,6 +1775,18 @@ Curate — идея отбора и создания коллекции. Kyro н
       <p class="mp-sister muted"><a href="https://movie-planner.ru/?open_login=1" target="_blank" rel="noopener">Кино — в Movie Planner</a></p>
       <div id="rails"></div>`;
     wireNav();
+
+    const todayChip = $("#today-chip");
+    if (todayChip) todayChip.onclick = () => navigate("/today");
+    const homeSearch = $("#home-search");
+    if (homeSearch) {
+      homeSearch.addEventListener("submit", (e) => {
+        e.preventDefault();
+        const q = ($("#home-q")?.value || "").trim();
+        if (!q) return toast("Напишите, что ищете");
+        navigate(`/search?q=${encodeURIComponent(q)}`);
+      });
+    }
 
     // «Сейчас» — план под слот / сценарий
     let nowSlot = "any";
@@ -2579,6 +2600,139 @@ Curate — идея отбора и создания коллекции. Kyro н
     return navigate("/settings", true);
   }
 
+  async function renderToday() {
+    app.innerHTML = `
+      ${topbar("home")}
+      <section class="hero hero-compact">
+        <div class="home-brand-row">
+          <div>
+            <h1>Сегодня</h1>
+            <p class="hero-sub muted" id="today-meta">подбираем…</p>
+          </div>
+          <button type="button" class="btn ghost" id="today-back">← На главную</button>
+        </div>
+      </section>
+      <section class="today-section">
+        <div class="rail-head"><h2>Сейчас</h2><span class="muted" style="font-size:13px">смахните лишнее · добавьте в вечер</span></div>
+        <div id="today-now" class="today-stack"><div class="empty">Загрузка…</div></div>
+      </section>
+      <section class="today-section" style="margin-top:22px">
+        <div class="rail-head"><h2>На вечер</h2><span class="muted" style="font-size:13px">предложения и ваш план</span></div>
+        <div id="today-evening" class="today-stack"><div class="empty muted">…</div></div>
+      </section>`;
+    wireNav();
+    const back = $("#today-back");
+    if (back) back.onclick = () => navigate("/home");
+
+    const paintCard = (it, bucket) => `
+      <div class="today-card" data-video-id="${escapeHtml(it.video_id)}" data-bucket="${escapeHtml(bucket)}">
+        <a class="card-main" href="/v/${encodeURIComponent(it.video_id)}" data-nav>
+          <div class="card-thumb"><img src="${escapeHtml(it.thumb_url || "")}" alt="" loading="lazy" /></div>
+          <div class="card-body">
+            <div class="muted" style="font-size:12px;margin-bottom:4px">${escapeHtml(it.reason || "")}</div>
+            <h3 class="card-title">${escapeHtml(it.title || "")}</h3>
+            <div class="card-meta">${escapeHtml(it.channel_title || "")}${it.duration_label ? " · " + escapeHtml(it.duration_label) : ""}</div>
+          </div>
+        </a>
+        <div class="today-actions">
+          <button type="button" class="btn ghost" data-today-hide>Скрыть</button>
+          ${bucket === "now"
+            ? `<button type="button" class="btn secondary" data-today-add>В вечер</button>`
+            : `<a class="btn play-btn" href="${escapeHtml(it.watch_url || `https://www.youtube.com/watch?v=${it.video_id}`)}" target="_blank" rel="noopener">▶</a>`}
+        </div>
+      </div>`;
+
+    const wireStack = (el) => {
+      if (!el) return;
+      el.querySelectorAll("[data-today-hide]").forEach((btn) => {
+        btn.onclick = async () => {
+          const card = btn.closest("[data-video-id]");
+          const vid = card?.getAttribute("data-video-id");
+          if (!vid) return;
+          try {
+            await api("/api/home/today/hide", {
+              method: "POST",
+              body: JSON.stringify({ video_id: vid }),
+            });
+            card.remove();
+            toast("Скрыто на сегодня");
+          } catch (e) {
+            toast(e.message || "Не удалось скрыть");
+          }
+        };
+      });
+      el.querySelectorAll("[data-today-add]").forEach((btn) => {
+        btn.onclick = async () => {
+          const card = btn.closest("[data-video-id]");
+          const vid = card?.getAttribute("data-video-id");
+          if (!vid) return;
+          try {
+            await api("/api/home/today/add", {
+              method: "POST",
+              body: JSON.stringify({ video_id: vid }),
+            });
+            toast("В плане на вечер");
+            load();
+          } catch (e) {
+            toast(e.message || "Не удалось добавить");
+          }
+        };
+      });
+      // Swipe left to hide (touch)
+      el.querySelectorAll(".today-card").forEach((card) => {
+        let x0 = 0;
+        card.addEventListener("touchstart", (ev) => {
+          x0 = ev.changedTouches?.[0]?.clientX || 0;
+        }, { passive: true });
+        card.addEventListener("touchend", async (ev) => {
+          const x1 = ev.changedTouches?.[0]?.clientX || 0;
+          if (x0 - x1 < 80) return;
+          const vid = card.getAttribute("data-video-id");
+          if (!vid) return;
+          try {
+            await api("/api/home/today/hide", {
+              method: "POST",
+              body: JSON.stringify({ video_id: vid }),
+            });
+            card.style.transition = "transform .2s, opacity .2s";
+            card.style.transform = "translateX(-120%)";
+            card.style.opacity = "0";
+            setTimeout(() => card.remove(), 200);
+          } catch (_) {}
+        }, { passive: true });
+      });
+    };
+
+    const load = async () => {
+      try {
+        const data = await api("/api/home/today?limit=8");
+        const meta = $("#today-meta");
+        if (meta) {
+          const parts = [data.daypart_label, data.slot_label].filter(Boolean);
+          meta.textContent = parts.join(" · ") || "Рекомендации на сейчас";
+        }
+        const nowEl = $("#today-now");
+        const eveEl = $("#today-evening");
+        if (nowEl) {
+          nowEl.innerHTML = (data.now || []).length
+            ? data.now.map((it) => paintCard(it, "now")).join("")
+            : `<div class="empty">Пока нечего предложить</div>`;
+          wireStack(nowEl);
+        }
+        if (eveEl) {
+          eveEl.innerHTML = (data.evening || []).length
+            ? data.evening.map((it) => paintCard(it, "evening")).join("")
+            : `<div class="empty muted">Добавьте ролики кнопкой «В вечер»</div>`;
+          wireStack(eveEl);
+        }
+      } catch (e) {
+        const nowEl = $("#today-now");
+        if (nowEl) nowEl.innerHTML = `<div class="empty">${escapeHtml(e.message || "Ошибка")}</div>`;
+      }
+    };
+    load();
+  }
+
   async function renderSearch() {
     const q0 = new URL(location.href).searchParams.get("q") || "";
     app.innerHTML = `
@@ -3221,6 +3375,7 @@ Curate — идея отбора и создания коллекции. Kyro н
       if (!ok) return renderLogin();
     }
     if (path === "/" || path === "/home") return renderHome();
+    if (path === "/today") return renderToday();
     if (path === "/queue") return renderQueue();
     if (path === "/channels") return renderChannels();
     if (path === "/organize") return renderOrganize();

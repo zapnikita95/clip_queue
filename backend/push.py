@@ -121,6 +121,14 @@ def send_to_user(
     from firebase_admin import messaging
 
     payload = {k: str(v) for k, v in (data or {}).items()}
+    # Deep link for Android: system tray click opens MainActivity with these extras.
+    # Do NOT set click_action=OPEN_VIDEO unless Manifest has a matching filter —
+    # a missing filter makes the tap do nothing.
+    vid = (payload.get("video_id") or "").strip()
+    if vid and "deeplink" not in payload:
+        payload["deeplink"] = f"clipqueue://video/{vid}"
+    if vid and "route" not in payload:
+        payload["route"] = f"/v/{vid}"
     sent = 0
     dead: list[str] = []
     errors: list[str] = []
@@ -134,7 +142,8 @@ def send_to_user(
                     priority="high",
                     notification=messaging.AndroidNotification(
                         channel_id="kyro_classify",
-                        click_action="OPEN_VIDEO",
+                        # Default launcher click; video_id comes via data extras.
+                        click_action="OPEN_MAIN",
                     ),
                 ),
             )

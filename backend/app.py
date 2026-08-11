@@ -92,7 +92,7 @@ def create_app() -> Flask:
             {
                 "ok": True,
                 "service": "clip_queue",
-                "version": "0.4.1",
+                "version": "0.4.2",
                 "db": "postgres" if db.is_postgres() else "sqlite",
                 "google_oauth": google_oauth.configured(),
                 "llm": llm.available(),
@@ -1775,6 +1775,36 @@ def create_app() -> Flask:
         limit = min(12, max(3, int(request.args.get("limit") or 6)))
         data = now_plan.pick_now(uid, slot=slot, mood=mood, limit=limit)
         return jsonify({"ok": True, **data})
+
+    @app.get("/api/home/today")
+    @require_auth
+    def home_today():
+        """План на сегодня: сейчас + вечер; скрытые на день не возвращаются."""
+        uid = current_user()["user_id"]
+        limit = min(12, max(4, int(request.args.get("limit") or 8)))
+        return jsonify({"ok": True, **now_plan.build_today(uid, now_limit=limit)})
+
+    @app.post("/api/home/today/hide")
+    @require_auth
+    def home_today_hide():
+        uid = current_user()["user_id"]
+        body = request.get_json(silent=True) or {}
+        r = now_plan.hide_from_today(uid, body.get("video_id") or "")
+        if not r.get("ok"):
+            return json_error(r.get("error") or "Не удалось скрыть", 400)
+        return jsonify(r)
+
+    @app.post("/api/home/today/add")
+    @require_auth
+    def home_today_add():
+        """Добавить ролик в план на вечер с экрана «Сегодня»."""
+        uid = current_user()["user_id"]
+        body = request.get_json(silent=True) or {}
+        vid = (body.get("video_id") or "").strip()
+        if not vid:
+            return json_error("Нужен video_id")
+        plan = now_plan.add_to_light_plan(uid, vid, bucket="tonight")
+        return jsonify({"ok": True, **plan})
 
     @app.get("/api/home/digest")
     @require_auth

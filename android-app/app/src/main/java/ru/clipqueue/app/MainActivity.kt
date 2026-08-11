@@ -43,6 +43,8 @@ import ru.clipqueue.app.ui.screens.HomeScreen
 import ru.clipqueue.app.ui.screens.OnboardingScreen
 import ru.clipqueue.app.ui.screens.ProfileScreen
 import ru.clipqueue.app.ui.screens.SaveHistoryScreen
+import ru.clipqueue.app.ui.screens.SearchScreen
+import ru.clipqueue.app.ui.screens.TodayScreen
 import ru.clipqueue.app.ui.screens.VideoDetailScreen
 import ru.clipqueue.app.ui.theme.ClipQueueTheme
 import ru.clipqueue.app.ui.theme.CqBg
@@ -138,16 +140,35 @@ class MainActivity : ComponentActivity() {
 
     private fun ingestIntent(intent: Intent?) {
         if (intent == null) return
+        // FCM system-tray click puts data payload keys as String extras.
+        val extras = intent.extras
         val fromExtra = sequenceOf(
             intent.getStringExtra(EXTRA_VIDEO_ID),
             intent.getStringExtra("video_id"),
+            extras?.getString("video_id"),
+            extras?.get("video_id")?.toString(),
         ).mapNotNull { it?.trim()?.takeIf { s -> s.isNotBlank() } }.firstOrNull()
         if (fromExtra != null) {
             pendingVideoId.value = fromExtra
         }
-        val ctaExtra = intent.getStringExtra("cta")?.trim().orEmpty()
-        if (ctaExtra.isNotBlank()) pendingCta.value = ctaExtra
-        val data = intent.data ?: return
+        val ctaExtra = sequenceOf(
+            intent.getStringExtra("cta"),
+            extras?.getString("cta"),
+            extras?.getString("action"),
+        ).mapNotNull { it?.trim()?.takeIf { s -> s.isNotBlank() } }.firstOrNull()
+        if (!ctaExtra.isNullOrBlank()) pendingCta.value = ctaExtra
+
+        val deeplink = extras?.getString("deeplink")?.trim().orEmpty()
+        val route = extras?.getString("route")?.trim().orEmpty()
+        if (pendingVideoId.value.isNullOrBlank()) {
+            val fromRoute = Regex("""/v/([^/?#]+)""").find(route)?.groupValues?.getOrNull(1)
+            if (!fromRoute.isNullOrBlank()) pendingVideoId.value = fromRoute
+        }
+        val data = when {
+            intent.data != null -> intent.data
+            deeplink.isNotBlank() -> Uri.parse(deeplink)
+            else -> null
+        } ?: return
         if (data.scheme != "clipqueue") return
         when (data.host) {
             "auth" -> {
@@ -240,6 +261,22 @@ private fun ClipQueueNav(
                 onOpenFolder = ::openFolder,
                 onOpenFolders = { goTab("folders") },
                 onOpenProfile = { goTab("profile") },
+                onOpenToday = { nav.navigate("today") },
+                onOpenSearch = { nav.navigate("search") },
+            )
+        }
+        composable("today") {
+            TodayScreen(
+                api = api,
+                onBack = { nav.popBackStack() },
+                onOpenVideo = ::openVideo,
+            )
+        }
+        composable("search") {
+            SearchScreen(
+                api = api,
+                onBack = { nav.popBackStack() },
+                onOpenVideo = ::openVideo,
             )
         }
         composable("folders") {

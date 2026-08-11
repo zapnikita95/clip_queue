@@ -122,6 +122,26 @@ data class LightPlanResponse(
     val error: String? = null,
 )
 
+data class TodayResponse(
+    val ok: Boolean? = null,
+    val daypart: String? = null,
+    val daypart_label: String? = null,
+    val slot_label: String? = null,
+    val now: List<VideoCard>? = null,
+    val evening: List<VideoCard>? = null,
+    val hidden_count: Int? = null,
+    val error: String? = null,
+)
+
+data class SearchResponse(
+    val ok: Boolean? = null,
+    val items: List<VideoCard>? = null,
+    val shorts: List<VideoCard>? = null,
+    val query: String? = null,
+    val parsed: Any? = null,
+    val error: String? = null,
+)
+
 data class InboxOnboardingResponse(
     val ok: Boolean? = null,
     val has_inbox: Boolean? = null,

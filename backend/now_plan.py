@@ -796,3 +796,73 @@ def pick_for_morning_push(user_id: int) -> Optional[dict[str, Any]]:
         data = pick_now(user_id, slot="any", limit=3)
         picks = data.get("picks") or []
     return picks[0] if picks else None
+
+
+def _today_key() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
+def _today_hidden(user_id: int) -> set[str]:
+    prefs = get_prefs(user_id)
+    blob = prefs.get("today_hidden") or {}
+    if not isinstance(blob, dict):
+        return set()
+    if blob.get("day") != _today_key():
+        return set()
+    return {str(x) for x in (blob.get("ids") or []) if x}
+
+
+def hide_from_today(user_id: int, video_id: str) -> dict[str, Any]:
+    """Soft-hide a recommendation from today's plan (not library dismiss)."""
+    video_id = (video_id or "").strip()
+    if not video_id:
+        return {"ok": False, "error": "video_id"}
+    prefs = get_prefs(user_id)
+    blob = prefs.get("today_hidden") or {}
+    day = _today_key()
+    ids: list[str] = []
+    if isinstance(blob, dict) and blob.get("day") == day:
+        ids = [str(x) for x in (blob.get("ids") or []) if x]
+    if video_id not in ids:
+        ids.append(video_id)
+    set_prefs(user_id, {"today_hidden": {"day": day, "ids": ids[-80:]}})
+    return {"ok": True, "hidden": video_id}
+
+
+def build_today(user_id: int, *, now_limit: int = 8) -> dict[str, Any]:
+    """Day plan: current daypart picks + evening suggestions / plan."""
+    prefs = get_prefs(user_id)
+    daypart = current_daypart(prefs)
+    daypart_label = {"morning": "Утро", "day": "День", "evening": "Вечер"}.get(daypart, "")
+    hidden = _today_hidden(user_id)
+    now = pick_now(user_id, slot="any", limit=max(now_limit + 4, 10))
+    picks: list[dict] = []
+    seen: set[str] = set()
+    for src in (now.get("started") or []) + (now.get("picks") or []) + (now.get("suggestions") or []):
+        vid = str(src.get("video_id") or "")
+        if not vid or vid in seen or vid in hidden:
+            continue
+        seen.add(vid)
+        picks.append(src)
+        if len(picks) >= now_limit:
+            break
+
+    plan = get_light_plan(user_id)
+    evening: list[dict] = []
+    for src in (plan.get("tonight") or []) + (plan.get("suggest_tonight") or []):
+        vid = str(src.get("video_id") or "")
+        if not vid or vid in seen or vid in hidden:
+            continue
+        seen.add(vid)
+        evening.append(src)
+        if len(evening) >= 8:
+            break
+
+    return {
+        "daypart": daypart,
+        "daypart_label": daypart_label or (now.get("daypart_label") or ""),
+        "slot_label": now.get("slot_label") or "",
+        "now": picks,
+        "evening": evening,
+        "hidden_count": len(hidden),
+    }
