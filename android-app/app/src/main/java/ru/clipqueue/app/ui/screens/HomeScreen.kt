@@ -44,6 +44,9 @@ import android.widget.Toast
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
+import ru.clipqueue.app.data.LightPlanResponse
+import ru.clipqueue.app.data.NowResponse
 import ru.clipqueue.app.ApiClient
 import ru.clipqueue.app.AppCache
 import ru.clipqueue.app.ClipQueueApp
@@ -125,8 +128,7 @@ fun HomeScreen(
 
     fun usedTags(list: List<TagDto>) = list.filter { (it.video_count ?: 0) > 0 }
 
-    suspend fun loadNow(slot: String = nowSlot, mood: String = nowMood) {
-        val now = runCatching { api.homeNow(slot = slot, mood = mood, limit = 6) }.getOrNull()
+    fun applyNowResponse(now: NowResponse?) {
         if (now == null) {
             nowLoaded = true
             return
@@ -141,7 +143,8 @@ fun HomeScreen(
             merged = suggestions
             nowSuggestions = emptyList()
         } else {
-            nowSuggestions = suggestions.filter { it.video_id !in merged.mapNotNull { c -> c.video_id }.toSet() }
+            val mergedIds = merged.mapNotNull { it.video_id }.toSet()
+            nowSuggestions = suggestions.filter { it.video_id !in mergedIds }
         }
         nowPicks = merged
         if (now.slots.orEmpty().isNotEmpty()) nowSlots = now.slots.orEmpty()
@@ -149,6 +152,19 @@ fun HomeScreen(
         val day = now.daypart_label?.takeIf { it.isNotBlank() }
         nowMeta = listOfNotNull(day, now.slot_label?.takeIf { it.isNotBlank() }).joinToString(" · ")
         nowLoaded = true
+    }
+
+    fun applyPlanResponse(plan: LightPlanResponse?) {
+        planTonight = plan?.tonight.orEmpty()
+        planSuggestTonight = plan?.suggest_tonight.orEmpty()
+        planLoaded = true
+    }
+
+    suspend fun loadNow(slot: String = nowSlot, mood: String = nowMood) {
+        val now = withTimeoutOrNull(12_000) {
+            runCatching { api.homeNow(slot = slot, mood = mood, limit = 6) }.getOrNull()
+        }
+        applyNowResponse(now)
     }
 
     suspend fun loadHome(initial: Boolean, force: Boolean = false, silent: Boolean = false) {
@@ -169,8 +185,22 @@ fun HomeScreen(
                 val plDef = async { api.homeRail("from_playlists") }
                 val listsDef = async { api.lists(forHome = true) }
                 val tagsDef = async { runCatching { api.tags(onlyUsed = true) }.getOrNull() }
-                val nowDef = async { runCatching { api.homeNow(slot = nowSlot, mood = nowMood, limit = 6) }.getOrNull() }
-                val planDef = async { runCatching { api.homePlan() }.getOrNull() }
+                // Paint Now/Plan as soon as each returns — do not wait for other rails.
+                launch {
+                    val now = withTimeoutOrNull(12_000) {
+                        runCatching { api.homeNow(slot = nowSlot, mood = nowMood, limit = 6) }.getOrNull()
+                    }
+                    applyNowResponse(now)
+                    if (now != null) {
+                        runCatching { api.trackSurface("now_impression", surface = "android_home") }
+                    }
+                }
+                launch {
+                    val plan = withTimeoutOrNull(12_000) {
+                        runCatching { api.homePlan() }.getOrNull()
+                    }
+                    applyPlanResponse(plan)
+                }
                 recent = recentDef.await().items.orEmpty()
                 vibe = vibeDef.await().items.orEmpty()
                 fromPlaylists = plDef.await().items.orEmpty()
@@ -178,33 +208,6 @@ fun HomeScreen(
                     .sortedByDescending { it.count ?: 0 }
                     .take(8)
                 tags = usedTags(tagsDef.await()?.tags.orEmpty())
-                nowDef.await()?.let { now ->
-                    val started = now.started.orEmpty()
-                    val picks = now.picks.orEmpty()
-                    val seen = picks.mapNotNull { it.video_id }.toSet()
-                    var merged = started.filter { it.video_id !in seen } + picks
-                    val suggestions = now.suggestions.orEmpty()
-                    if (merged.isEmpty() && suggestions.isNotEmpty()) {
-                        merged = suggestions
-                        nowSuggestions = emptyList()
-                    } else {
-                        val mergedIds = merged.mapNotNull { it.video_id }.toSet()
-                        nowSuggestions = suggestions.filter { it.video_id !in mergedIds }
-                    }
-                    nowPicks = merged
-                    if (now.slots.orEmpty().isNotEmpty()) nowSlots = now.slots.orEmpty()
-                    if (now.moods.orEmpty().isNotEmpty()) nowMoods = now.moods.orEmpty()
-                    val day = now.daypart_label?.takeIf { it.isNotBlank() }
-                    nowMeta = listOfNotNull(day, now.slot_label?.takeIf { it.isNotBlank() }).joinToString(" · ")
-                    nowLoaded = true
-                    runCatching {
-                        api.trackSurface("now_impression", surface = "android_home")
-                    }
-                } ?: run { nowLoaded = true }
-                val plan = planDef.await()
-                planTonight = plan?.tonight.orEmpty()
-                planSuggestTonight = plan?.suggest_tonight.orEmpty()
-                planLoaded = true
                 appCache.home = AppCache.Home(
                     recent = recent,
                     vibe = vibe,
@@ -224,6 +227,8 @@ fun HomeScreen(
             }
         } catch (e: Exception) {
             if (recent.isEmpty()) error = e.message ?: "Не удалось загрузить"
+            if (!nowLoaded) nowLoaded = true
+            if (!planLoaded) planLoaded = true
         } finally {
             loading = false
             refreshing = false

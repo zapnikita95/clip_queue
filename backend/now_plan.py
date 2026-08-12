@@ -210,10 +210,37 @@ def _daypart_score(row: dict, theme_ids: list[str]) -> tuple[float, str]:
     return best, best_label
 
 
+def _habitual_counts(user_id: int) -> dict[str, int]:
+    """One query for all watch-event counts (avoid N+1 inside pick_now ranking)."""
+    rows = db.fetchall(
+        """
+        SELECT video_id, COUNT(*) AS c
+        FROM watch_events
+        WHERE user_id = ?
+          AND event_type IN ('open_yt', 'planned_watch', 'now_open', 'mark_started')
+        GROUP BY video_id
+        """,
+        (user_id,),
+    )
+    out: dict[str, int] = {}
+    for r in rows or []:
+        vid = str((r or {}).get("video_id") or "")
+        if not vid:
+            continue
+        out[vid] = int((r or {}).get("c") or 0)
+    return out
+
+
+def _habitual_hour_boost_from_counts(counts: dict[str, int], video_id: str) -> float:
+    c = int(counts.get(str(video_id), 0) or 0)
+    if c <= 0:
+        return 0.0
+    return min(2.0, 0.3 * c)
+
+
 def _habitual_hour_boost(user_id: int, video_id: str, local_hour: int) -> float:
-    """Boost videos historically opened around this local hour (watch_events)."""
-    # Store hours in UTC in DB; approximate with ±1h window in UTC-ish —
-    # we compare extracted hour loosely via string/timestamp when possible.
+    """Single-video helper (tests/call sites). pick_now uses batched counts."""
+    del local_hour  # reserved for hour-of-day weighting later
     rows = db.fetchall(
         """
         SELECT video_id, COUNT(*) AS c
@@ -227,11 +254,8 @@ def _habitual_hour_boost(user_id: int, video_id: str, local_hour: int) -> float:
     )
     if not rows:
         return 0.0
-    # Soft prior: if user often watches this video at all, slight bump at preferred hours
     c = int((rows[0] or {}).get("c") or 0)
-    if c <= 0:
-        return 0.0
-    return min(2.0, 0.3 * c)
+    return min(2.0, 0.3 * c) if c > 0 else 0.0
 
 
 def _card(row: dict, *, reason: str = "") -> dict[str, Any]:
@@ -281,7 +305,8 @@ def _mood_score(row: dict, mood: str) -> float:
     return float(hits)
 
 
-def fetch_plan_pool(user_id: int, *, limit: int = 400) -> list[dict]:
+def fetch_plan_pool(user_id: int, *, limit: int = 120) -> list[dict]:
+    """Queue pool for Now/Plan. Cap kept modest — home must stay snappy."""
     rows = db.fetchall(
         """
         SELECT v.video_id, v.title, v.channel_title, v.duration_sec, v.thumb_url,
@@ -312,9 +337,9 @@ def pick_now(
     prefs = get_prefs(user_id)
     daypart = current_daypart(prefs)
     theme_ids = _daypart_theme_ids(prefs, daypart)
-    local_hour = _local_hour(prefs)
 
-    pool = fetch_plan_pool(user_id)
+    pool = fetch_plan_pool(user_id, limit=120)
+    habitual = _habitual_counts(user_id)
     started = [_card(r, reason="Начали смотреть") for r in pool if r.get("status") == "in_progress"][:4]
 
     def _rank(require_mood: bool) -> list[tuple[float, dict, float, str]]:
@@ -333,7 +358,7 @@ def pick_now(
                 sc += 0.5
             dp, dp_label = _daypart_score(r, theme_ids)
             sc += dp * 2.5
-            sc += _habitual_hour_boost(user_id, r["video_id"], local_hour)
+            sc += _habitual_hour_boost_from_counts(habitual, r["video_id"])
             # Prefer known durations slightly, but never drop null-duration from «any»
             if r.get("duration_sec") is None:
                 sc -= 0.2
@@ -498,7 +523,7 @@ def _stale_folder_pick(user_id: int, exclude: set[str]) -> Optional[dict]:
         GROUP BY l.id, l.title
         HAVING COUNT(li.video_id) >= 2
         ORDER BY c DESC
-        LIMIT 12
+        LIMIT 4
         """,
         (user_id, "YT:%", "%скрыто%"),
     )
@@ -537,20 +562,15 @@ def get_light_plan(user_id: int) -> dict[str, Any]:
     week = _hydrate_ids(user_id, week_ids)
     suggest_tonight: list[dict] = []
     if not tonight:
-        # Propose evening plan candidates so the rail is never a dead empty state
-        now = pick_now(user_id, slot="any", mood="", limit=6)
+        # Light path — do NOT call full pick_now (Android already hits /api/home/now
+        # in parallel; double ranking + stale-folder scans made Plan crawl).
+        pool = fetch_plan_pool(user_id, limit=80)
         seen: set[str] = set()
-        for src in (now.get("picks") or []) + (now.get("suggestions") or []):
-            vid = str(src.get("video_id") or "")
-            if not vid or vid in seen:
-                continue
-            seen.add(vid)
+        for src in _suggestions(user_id, pool, exclude=seen, limit=4):
             card = dict(src)
             why = (card.get("reason") or "").strip()
             card["reason"] = f"В план · {why}" if why else "Добавить в план на вечер"
             suggest_tonight.append(card)
-            if len(suggest_tonight) >= 4:
-                break
     return {
         "tonight": tonight,
         "week": week,
@@ -605,18 +625,22 @@ def remove_from_light_plan(user_id: int, video_id: str, bucket: str = "tonight")
 def _hydrate_ids(user_id: int, ids: list[str]) -> list[dict]:
     if not ids:
         return []
+    # Preserve plan order; one IN-query instead of N round-trips.
+    placeholders = ", ".join("?" for _ in ids)
+    rows = db.fetchall(
+        f"""
+        SELECT v.video_id, v.title, v.channel_title, v.duration_sec, v.thumb_url,
+               li.status, li.interest, li.note
+        FROM videos v
+        JOIN library_items li ON li.video_id = v.video_id AND li.user_id = ?
+        WHERE v.video_id IN ({placeholders})
+        """,
+        (user_id, *ids),
+    )
+    by_id = {str(r["video_id"]): r for r in (rows or [])}
     out = []
     for vid in ids:
-        row = db.fetchone(
-            """
-            SELECT v.video_id, v.title, v.channel_title, v.duration_sec, v.thumb_url,
-                   li.status, li.interest, li.note
-            FROM videos v
-            JOIN library_items li ON li.video_id = v.video_id AND li.user_id = ?
-            WHERE v.video_id = ?
-            """,
-            (user_id, vid),
-        )
+        row = by_id.get(str(vid))
         if row:
             out.append(_card(row, reason="В вашем плане"))
     return out
