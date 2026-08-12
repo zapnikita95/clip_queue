@@ -126,7 +126,7 @@ fun ProfileScreen(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                Text("Настройки", style = MaterialTheme.typography.titleLarge)
+                Text("Профиль", style = MaterialTheme.typography.titleLarge)
                 Text(
                     me?.user?.email ?: session.email ?: "—",
                     style = MaterialTheme.typography.bodySmall,

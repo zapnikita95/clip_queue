@@ -4,6 +4,8 @@ import android.content.Context
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import ru.clipqueue.app.data.ListCard
+import ru.clipqueue.app.data.NowMoodDto
+import ru.clipqueue.app.data.NowSlotDto
 import ru.clipqueue.app.data.TagDto
 import ru.clipqueue.app.data.VideoCard
 import java.io.File
@@ -21,6 +23,16 @@ class AppCache(private val context: Context) {
         val fromPlaylists: List<VideoCard> = emptyList(),
         val topFolders: List<ListCard> = emptyList(),
         val tags: List<TagDto> = emptyList(),
+        /** Instant paint for «Сейчас» / plan on tab re-entry (avoid «Подбираем…» flash). */
+        val nowPicks: List<VideoCard> = emptyList(),
+        val nowSuggestions: List<VideoCard> = emptyList(),
+        val nowSlots: List<NowSlotDto> = emptyList(),
+        val nowMoods: List<NowMoodDto> = emptyList(),
+        val nowMeta: String = "",
+        val planTonight: List<VideoCard> = emptyList(),
+        val planSuggestTonight: List<VideoCard> = emptyList(),
+        val nowReady: Boolean = false,
+        val planReady: Boolean = false,
     )
 
     data class Folders(

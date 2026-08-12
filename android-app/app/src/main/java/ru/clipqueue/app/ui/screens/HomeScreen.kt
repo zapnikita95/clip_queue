@@ -103,15 +103,24 @@ fun HomeScreen(
     var taggedFolders by remember { mutableStateOf<List<ListCard>>(emptyList()) }
     var nowSlot by remember { mutableStateOf("any") }
     var nowMood by remember { mutableStateOf("") }
-    var nowPicks by remember { mutableStateOf<List<VideoCard>>(emptyList()) }
-    var nowSuggestions by remember { mutableStateOf<List<VideoCard>>(emptyList()) }
-    var nowSlots by remember { mutableStateOf<List<NowSlotDto>>(emptyList()) }
-    var nowMoods by remember { mutableStateOf<List<NowMoodDto>>(emptyList()) }
-    var nowMeta by remember { mutableStateOf("") }
-    var planTonight by remember { mutableStateOf<List<VideoCard>>(emptyList()) }
-    var planSuggestTonight by remember { mutableStateOf<List<VideoCard>>(emptyList()) }
-    var nowLoaded by remember { mutableStateOf(false) }
-    var planLoaded by remember { mutableStateOf(false) }
+    var nowPicks by remember { mutableStateOf(cached?.nowPicks.orEmpty()) }
+    var nowSuggestions by remember { mutableStateOf(cached?.nowSuggestions.orEmpty()) }
+    var nowSlots by remember { mutableStateOf(cached?.nowSlots.orEmpty()) }
+    var nowMoods by remember { mutableStateOf(cached?.nowMoods.orEmpty()) }
+    var nowMeta by remember { mutableStateOf(cached?.nowMeta.orEmpty()) }
+    var planTonight by remember { mutableStateOf(cached?.planTonight.orEmpty()) }
+    var planSuggestTonight by remember { mutableStateOf(cached?.planSuggestTonight.orEmpty()) }
+    // Warm cache ⇒ treat as loaded so tab re-entry never flashes «Подбираем…».
+    var nowLoaded by remember {
+        mutableStateOf(cached?.nowReady == true || !cached?.nowPicks.isNullOrEmpty())
+    }
+    var planLoaded by remember {
+        mutableStateOf(
+            cached?.planReady == true ||
+                !cached?.planTonight.isNullOrEmpty() ||
+                !cached?.planSuggestTonight.isNullOrEmpty(),
+        )
+    }
     var tagCard by remember { mutableStateOf<VideoCard?>(null) }
     var moveCard by remember { mutableStateOf<VideoCard?>(null) }
     var folderEdit by remember { mutableStateOf(false) }
@@ -128,9 +137,30 @@ fun HomeScreen(
 
     fun usedTags(list: List<TagDto>) = list.filter { (it.video_count ?: 0) > 0 }
 
+    fun persistHomeSnapshot() {
+        val prev = appCache.home
+        appCache.home = AppCache.Home(
+            recent = recent.ifEmpty { prev?.recent.orEmpty() },
+            vibe = vibe.ifEmpty { prev?.vibe.orEmpty() },
+            fromPlaylists = fromPlaylists.ifEmpty { prev?.fromPlaylists.orEmpty() },
+            topFolders = topFolders.ifEmpty { prev?.topFolders.orEmpty() },
+            tags = tags.ifEmpty { prev?.tags.orEmpty() },
+            nowPicks = nowPicks,
+            nowSuggestions = nowSuggestions,
+            nowSlots = nowSlots,
+            nowMoods = nowMoods,
+            nowMeta = nowMeta,
+            planTonight = planTonight,
+            planSuggestTonight = planSuggestTonight,
+            nowReady = nowLoaded,
+            planReady = planLoaded,
+        )
+    }
+
     fun applyNowResponse(now: NowResponse?) {
         if (now == null) {
             nowLoaded = true
+            persistHomeSnapshot()
             return
         }
         val started = now.started.orEmpty()
@@ -152,12 +182,14 @@ fun HomeScreen(
         val day = now.daypart_label?.takeIf { it.isNotBlank() }
         nowMeta = listOfNotNull(day, now.slot_label?.takeIf { it.isNotBlank() }).joinToString(" · ")
         nowLoaded = true
+        persistHomeSnapshot()
     }
 
     fun applyPlanResponse(plan: LightPlanResponse?) {
         planTonight = plan?.tonight.orEmpty()
         planSuggestTonight = plan?.suggest_tonight.orEmpty()
         planLoaded = true
+        persistHomeSnapshot()
     }
 
     suspend fun loadNow(slot: String = nowSlot, mood: String = nowMood) {
@@ -208,13 +240,7 @@ fun HomeScreen(
                     .sortedByDescending { it.count ?: 0 }
                     .take(8)
                 tags = usedTags(tagsDef.await()?.tags.orEmpty())
-                appCache.home = AppCache.Home(
-                    recent = recent,
-                    vibe = vibe,
-                    fromPlaylists = fromPlaylists,
-                    topFolders = topFolders,
-                    tags = tags,
-                )
+                persistHomeSnapshot()
             }
             val tid = selectedTagId
             if (tid != null) {
