@@ -13,8 +13,8 @@ android {
         applicationId = "ru.clipqueue.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 25
-        versionName = "0.1.24"
+        versionCode = 26
+        versionName = "0.1.25"
         buildConfigField(
             "String",
             "API_BASE",

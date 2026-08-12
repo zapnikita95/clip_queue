@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.RemoveRedEye
+import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -516,7 +517,7 @@ fun BottomBar(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             BottomTab(0, selected, "Главная", Icons.Default.Home, onHome, Modifier.weight(1f))
-            BottomTab(1, selected, "Папки", Icons.Default.Folder, onFolders, Modifier.weight(1f))
+            BottomTab(1, selected, "Библиотека", Icons.Default.VideoLibrary, onFolders, Modifier.weight(1f))
             BottomTab(2, selected, "Профиль", Icons.Default.Person, onProfile, Modifier.weight(1f))
         }
     }

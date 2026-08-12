@@ -216,9 +216,9 @@ fun FoldersScreen(
     Column(modifier = Modifier.fillMaxSize().background(CqBg)) {
         Column(modifier = Modifier.padding(horizontal = 12.dp)) {
             Spacer(Modifier.height(14.dp))
-            Text("Папки", style = MaterialTheme.typography.titleLarge)
+            Text("Библиотека", style = MaterialTheme.typography.titleLarge)
             Spacer(Modifier.height(10.dp))
-            SearchBarWithMic(value = query, onValueChange = { query = it }, placeholder = "Найти папку")
+            SearchBarWithMic(value = query, onValueChange = { query = it }, placeholder = "Найти папку или видео")
             Spacer(Modifier.height(10.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Box {

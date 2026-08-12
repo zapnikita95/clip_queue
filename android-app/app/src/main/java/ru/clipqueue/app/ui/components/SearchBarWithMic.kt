@@ -8,7 +8,6 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -35,7 +34,6 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import ru.clipqueue.app.ui.theme.CqAccent
-import ru.clipqueue.app.ui.theme.CqBorder
 import ru.clipqueue.app.ui.theme.CqElev
 import ru.clipqueue.app.ui.theme.CqElev2
 import ru.clipqueue.app.ui.theme.CqMuted
@@ -65,9 +63,8 @@ fun SearchBarWithMic(
         modifier = modifier
             .fillMaxWidth()
             .height(48.dp)
-            .clip(RoundedCornerShape(24.dp))
+            .clip(RoundedCornerShape(14.dp))
             .background(CqElev)
-            .border(1.dp, CqBorder, RoundedCornerShape(24.dp))
             .padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),

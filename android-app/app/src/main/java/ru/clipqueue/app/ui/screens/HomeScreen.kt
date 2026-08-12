@@ -41,8 +41,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import android.widget.Toast
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import ru.clipqueue.app.data.LightPlanResponse
@@ -62,6 +64,7 @@ import ru.clipqueue.app.ui.components.EditableFolderGrid
 import ru.clipqueue.app.ui.components.FolderGrid
 import ru.clipqueue.app.ui.components.FolderRemoveDialog
 import ru.clipqueue.app.ui.components.FolderTrashZone
+import ru.clipqueue.app.ui.components.SearchBarWithMic
 import ru.clipqueue.app.ui.components.SectionLabel
 import ru.clipqueue.app.ui.components.TagChip
 import ru.clipqueue.app.ui.components.VideoRail
@@ -121,6 +124,11 @@ fun HomeScreen(
                 !cached?.planSuggestTonight.isNullOrEmpty(),
         )
     }
+    var searchQuery by remember { mutableStateOf("") }
+    var searchItems by remember { mutableStateOf<List<VideoCard>>(emptyList()) }
+    var searchLoading by remember { mutableStateOf(false) }
+    var searchMeta by remember { mutableStateOf("") }
+    var searchJob by remember { mutableStateOf<Job?>(null) }
     var tagCard by remember { mutableStateOf<VideoCard?>(null) }
     var moveCard by remember { mutableStateOf<VideoCard?>(null) }
     var folderEdit by remember { mutableStateOf(false) }
@@ -130,12 +138,48 @@ fun HomeScreen(
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
 
-    BackHandler(enabled = folderEdit) {
-        folderEdit = false
-        trashHot = false
+    BackHandler(enabled = folderEdit || searchQuery.isNotBlank()) {
+        when {
+            folderEdit -> {
+                folderEdit = false
+                trashHot = false
+            }
+            searchQuery.isNotBlank() -> {
+                searchJob?.cancel()
+                searchQuery = ""
+                searchItems = emptyList()
+                searchMeta = ""
+                searchLoading = false
+            }
+        }
     }
 
     fun usedTags(list: List<TagDto>) = list.filter { (it.video_count ?: 0) > 0 }
+
+    fun runSmartSearch(q: String) {
+        searchJob?.cancel()
+        searchJob = scope.launch {
+            delay(280)
+            val trimmed = q.trim()
+            if (trimmed.length < 2) {
+                searchItems = emptyList()
+                searchMeta = ""
+                searchLoading = false
+                return@launch
+            }
+            searchLoading = true
+            try {
+                val r = api.search(trimmed, limit = 40)
+                searchItems = r.items.orEmpty()
+                searchMeta = if (searchItems.isEmpty()) "Ничего не нашлось" else "${searchItems.size} в библиотеке"
+            } catch (e: Exception) {
+                searchMeta = e.message ?: "Ошибка поиска"
+                searchItems = emptyList()
+            } finally {
+                searchLoading = false
+            }
+        }
+    }
 
     fun persistHomeSnapshot() {
         val prev = appCache.home
@@ -407,24 +451,55 @@ fun HomeScreen(
                 }
             }
 
-            Box(
+            SearchBarWithMic(
+                value = searchQuery,
+                onValueChange = {
+                    searchQuery = it
+                    runSmartSearch(it)
+                },
+                placeholder = "Что посмотреть? название, канал, тема…",
                 modifier = Modifier
-                    .fillMaxWidth()
                     .padding(horizontal = 16.dp)
-                    .padding(bottom = 8.dp)
-                    .height(48.dp)
-                    .clip(RoundedCornerShape(24.dp))
-                    .background(CqElev)
-                    .border(1.dp, CqBorder, RoundedCornerShape(24.dp))
-                    .clickable(onClick = onOpenSearch)
-                    .padding(horizontal = 14.dp),
-                contentAlignment = Alignment.CenterStart,
-            ) {
-                Text("⌕  Название, канал, описание…", color = CqMuted, style = MaterialTheme.typography.bodyMedium)
-            }
+                    .padding(bottom = 10.dp),
+            )
 
             Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                val searching = searchQuery.trim().length >= 2
                 when {
+                    searching -> {
+                        when {
+                            searchLoading && searchItems.isEmpty() -> Box(
+                                Modifier.fillMaxSize(),
+                                contentAlignment = Alignment.Center,
+                            ) { CircularProgressIndicator(color = CqAccent) }
+                            else -> LazyColumn(
+                                modifier = Modifier.fillMaxSize(),
+                                contentPadding = PaddingValues(bottom = 72.dp),
+                            ) {
+                                item {
+                                    Text(
+                                        searchMeta.ifBlank { "Ищем в вашей библиотеке…" },
+                                        color = CqMuted,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+                                    )
+                                }
+                                if (searchItems.isNotEmpty()) {
+                                    item {
+                                        VideoSpine(searchItems) { c, a -> actions.handle(c, a) }
+                                    }
+                                } else if (!searchLoading) {
+                                    item {
+                                        Text(
+                                            "Попробуйте другие слова или откройте Библиотеку",
+                                            color = CqMuted,
+                                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
                     loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         CircularProgressIndicator(color = CqAccent)
                     }
