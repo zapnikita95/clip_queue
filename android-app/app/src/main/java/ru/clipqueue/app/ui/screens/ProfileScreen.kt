@@ -136,7 +136,12 @@ fun ProfileScreen(
             FaqSparkleButton(onClick = onOpenFaq)
         }
 
-        Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState())) {
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .verticalScroll(rememberScrollState())
+                .padding(bottom = 96.dp),
+        ) {
             Spacer(Modifier.height(14.dp))
             ProfileBlock(
                 "YouTube",

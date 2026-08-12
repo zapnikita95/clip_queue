@@ -23,11 +23,15 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.RemoveRedEye
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -197,6 +201,15 @@ fun VideoThumbCard(
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize(),
                 )
+            } else {
+                Icon(
+                    imageVector = Icons.Default.PlayArrow,
+                    contentDescription = null,
+                    tint = CqMuted.copy(alpha = 0.55f),
+                    modifier = Modifier
+                        .size(36.dp)
+                        .align(Alignment.Center),
+                )
             }
             ThumbOverlayButton(
                 modifier = Modifier.align(Alignment.TopStart).padding(6.dp),
@@ -256,7 +269,7 @@ fun VideoThumbCard(
             modifier = Modifier.clickable { onAction(card, CardAction.Open) },
         )
         Text(
-            text = card.channel_title.orEmpty(),
+            text = card.channel_title.orEmpty().ifBlank { "Канал неизвестен" },
             style = MaterialTheme.typography.bodySmall,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
@@ -326,6 +339,15 @@ fun VideoSpineItem(
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.fillMaxSize(),
                     )
+                } else {
+                    Icon(
+                        imageVector = Icons.Default.PlayArrow,
+                        contentDescription = null,
+                        tint = CqMuted.copy(alpha = 0.55f),
+                        modifier = Modifier
+                            .size(28.dp)
+                            .align(Alignment.Center),
+                    )
                 }
                 ThumbOverlayButton(
                     modifier = Modifier.align(Alignment.TopStart).padding(4.dp),
@@ -387,7 +409,7 @@ private fun statusShort(status: String): String? = when (status) {
     "watched" -> "смотрели"
     "in_progress" -> "начато"
     "archived" -> "архив"
-    "queue" -> "в очереди"
+    "queue" -> "сохранено"
     else -> null
 }
 
@@ -507,6 +529,16 @@ private fun BottomTab(
     modifier: Modifier = Modifier,
 ) {
     val on = selected == index
+    val tint by animateColorAsState(
+        targetValue = if (on) CqText else CqMuted,
+        animationSpec = tween(220),
+        label = "tabTint",
+    )
+    val indicatorW by animateDpAsState(
+        targetValue = if (on) 14.dp else 0.dp,
+        animationSpec = tween(220),
+        label = "tabIndicator",
+    )
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
@@ -517,13 +549,13 @@ private fun BottomTab(
         Icon(
             icon,
             contentDescription = label,
-            tint = if (on) CqText else CqMuted,
+            tint = tint,
             modifier = Modifier.size(24.dp),
         )
         Spacer(modifier = Modifier.height(3.dp))
         Text(
             label,
-            color = if (on) CqText else CqMuted,
+            color = tint,
             fontSize = 11.sp,
             fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal,
             fontFamily = KyroFont,
@@ -532,7 +564,7 @@ private fun BottomTab(
         Spacer(modifier = Modifier.height(4.dp))
         Box(
             modifier = Modifier
-                .width(14.dp)
+                .width(indicatorW)
                 .height(2.dp)
                 .clip(RoundedCornerShape(1.dp))
                 .background(if (on) CqText else Color.Transparent),

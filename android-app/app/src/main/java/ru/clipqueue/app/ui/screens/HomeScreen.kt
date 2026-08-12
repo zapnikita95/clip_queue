@@ -108,6 +108,7 @@ fun HomeScreen(
     var planTonight by remember { mutableStateOf<List<VideoCard>>(emptyList()) }
     var planSuggestTonight by remember { mutableStateOf<List<VideoCard>>(emptyList()) }
     var nowLoaded by remember { mutableStateOf(false) }
+    var planLoaded by remember { mutableStateOf(false) }
     var tagCard by remember { mutableStateOf<VideoCard?>(null) }
     var moveCard by remember { mutableStateOf<VideoCard?>(null) }
     var folderEdit by remember { mutableStateOf(false) }
@@ -150,14 +151,15 @@ fun HomeScreen(
         nowLoaded = true
     }
 
-    suspend fun loadHome(initial: Boolean, force: Boolean = false) {
-        if (!force && !initial && appCache.home != null && recent.isNotEmpty()) {
-            // silent background refresh without blanking UI
-            refreshing = true
-        } else if (initial && recent.isEmpty()) {
-            loading = true
-        } else if (force) {
-            refreshing = true
+    suspend fun loadHome(initial: Boolean, force: Boolean = false, silent: Boolean = false) {
+        if (!silent) {
+            if (!force && !initial && appCache.home != null && recent.isNotEmpty()) {
+                refreshing = true
+            } else if (initial && recent.isEmpty()) {
+                loading = true
+            } else if (force) {
+                refreshing = true
+            }
         }
         error = null
         try {
@@ -202,6 +204,7 @@ fun HomeScreen(
                 val plan = planDef.await()
                 planTonight = plan?.tonight.orEmpty()
                 planSuggestTonight = plan?.suggest_tonight.orEmpty()
+                planLoaded = true
                 appCache.home = AppCache.Home(
                     recent = recent,
                     vibe = vibe,
@@ -246,10 +249,10 @@ fun HomeScreen(
     )
 
     LaunchedEffect(Unit) {
-        // Disk cache paints instantly; always refresh so «Сейчас»/plan slots load.
+        // Disk cache paints instantly; silent refresh so pull spinner / «Подбираем…» do not flash.
         if (appCache.home != null) {
             loading = false
-            loadHome(initial = false, force = true)
+            loadHome(initial = false, force = true, silent = true)
         } else {
             loadHome(initial = true, force = true)
         }
@@ -407,7 +410,10 @@ fun HomeScreen(
                         },
                         modifier = Modifier.fillMaxSize(),
                     ) {
-                        LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 8.dp)) {
+                        LazyColumn(
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = PaddingValues(bottom = 96.dp),
+                        ) {
                             if (tags.isNotEmpty()) {
                                 item {
                                     SectionLabel("Теги", Modifier.padding(horizontal = 12.dp))
@@ -445,61 +451,64 @@ fun HomeScreen(
                                     }
                                 }
                             } else {
-                                item {
-                                    SectionLabel("Сейчас", Modifier.padding(horizontal = 12.dp))
-                                    if (nowMeta.isNotBlank()) {
-                                        Text(
-                                            nowMeta,
-                                            color = CqMuted,
-                                            style = MaterialTheme.typography.bodySmall,
-                                            modifier = Modifier.padding(horizontal = 12.dp).padding(bottom = 6.dp),
-                                        )
-                                    }
-                                    if (nowSlots.isNotEmpty()) {
-                                        LazyRow(
-                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                            contentPadding = PaddingValues(horizontal = 12.dp),
-                                        ) {
-                                            items(nowSlots, key = { it.id.orEmpty() }) { s ->
-                                                TagChip(s.label.orEmpty(), selected = nowSlot == s.id) {
-                                                    nowSlot = s.id.orEmpty().ifBlank { "any" }
-                                                    scope.launch { loadNow(slot = nowSlot, mood = nowMood) }
-                                                }
-                                            }
+                                // Hide empty «Сейчас» / plan shells after load — less hierarchy noise.
+                                if (!nowLoaded || nowPicks.isNotEmpty() || nowSlots.isNotEmpty() || nowMoods.isNotEmpty()) {
+                                    item {
+                                        SectionLabel("Сейчас", Modifier.padding(horizontal = 12.dp))
+                                        if (nowMeta.isNotBlank()) {
+                                            Text(
+                                                nowMeta,
+                                                color = CqMuted,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                modifier = Modifier.padding(horizontal = 12.dp).padding(bottom = 6.dp),
+                                            )
                                         }
-                                        Spacer(modifier = Modifier.height(8.dp))
-                                    }
-                                    if (nowMoods.isNotEmpty()) {
-                                        LazyRow(
-                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                            contentPadding = PaddingValues(horizontal = 12.dp),
-                                        ) {
-                                            item {
-                                                TagChip("Все", selected = nowMood.isBlank()) {
-                                                    nowMood = ""
-                                                    scope.launch { loadNow(slot = nowSlot, mood = "") }
+                                        if (nowSlots.isNotEmpty()) {
+                                            LazyRow(
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                                contentPadding = PaddingValues(horizontal = 12.dp),
+                                            ) {
+                                                items(nowSlots, key = { it.id.orEmpty() }) { s ->
+                                                    val slotLabel = s.label.orEmpty().ifBlank { "Слот" }
+                                                    TagChip(slotLabel, selected = nowSlot == s.id) {
+                                                        nowSlot = s.id.orEmpty().ifBlank { "any" }
+                                                        scope.launch { loadNow(slot = nowSlot, mood = nowMood) }
+                                                    }
                                                 }
                                             }
-                                            items(nowMoods, key = { it.id.orEmpty() }) { m ->
-                                                TagChip(m.label.orEmpty(), selected = nowMood == m.id) {
-                                                    nowMood = m.id.orEmpty()
-                                                    scope.launch { loadNow(slot = nowSlot, mood = nowMood) }
-                                                }
-                                            }
+                                            Spacer(modifier = Modifier.height(8.dp))
                                         }
-                                        Spacer(modifier = Modifier.height(8.dp))
-                                    }
-                                    if (nowPicks.isEmpty()) {
-                                        Text(
-                                            when {
-                                                !nowLoaded || refreshing || loading -> "Подбираем…"
-                                                else -> "В очереди пока нечего предложить — сохраните видео из YouTube"
-                                            },
-                                            color = CqMuted,
-                                            modifier = Modifier.padding(horizontal = 12.dp),
-                                        )
-                                    } else {
-                                        VideoRail(nowPicks) { c, a -> actions.handle(c, a) }
+                                        if (nowMoods.isNotEmpty()) {
+                                            LazyRow(
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                                contentPadding = PaddingValues(horizontal = 12.dp),
+                                            ) {
+                                                item {
+                                                    TagChip("Все", selected = nowMood.isBlank()) {
+                                                        nowMood = ""
+                                                        scope.launch { loadNow(slot = nowSlot, mood = "") }
+                                                    }
+                                                }
+                                                items(nowMoods, key = { it.id.orEmpty() }) { m ->
+                                                    val moodLabel = m.label.orEmpty().ifBlank { "Настроение" }
+                                                    TagChip(moodLabel, selected = nowMood == m.id) {
+                                                        nowMood = m.id.orEmpty()
+                                                        scope.launch { loadNow(slot = nowSlot, mood = nowMood) }
+                                                    }
+                                                }
+                                            }
+                                            Spacer(modifier = Modifier.height(8.dp))
+                                        }
+                                        if (nowPicks.isEmpty()) {
+                                            Text(
+                                                if (!nowLoaded) "Подбираем…"
+                                                else "Пока нечего предложить — сохраните видео из YouTube",
+                                                color = CqMuted,
+                                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                                            )
+                                        } else {
+                                            VideoRail(nowPicks) { c, a -> actions.handle(c, a) }
+                                        }
                                     }
                                 }
                                 if (nowSuggestions.isNotEmpty()) {
@@ -508,37 +517,47 @@ fun HomeScreen(
                                         VideoRail(nowSuggestions) { c, a -> actions.handle(c, a) }
                                     }
                                 }
-                                item {
-                                    SectionLabel("План на вечер", Modifier.padding(horizontal = 12.dp))
-                                    if (planTonight.isNotEmpty()) {
-                                        VideoRail(planTonight) { c, a -> actions.handle(c, a) }
-                                    } else if (planSuggestTonight.isNotEmpty()) {
-                                        Text(
-                                            "Предложения — нажмите ⋮ → «В план на вечер»",
-                                            color = CqMuted,
-                                            style = MaterialTheme.typography.bodySmall,
-                                            modifier = Modifier.padding(horizontal = 12.dp).padding(bottom = 6.dp),
-                                        )
-                                        VideoRail(planSuggestTonight) { c, a -> actions.handle(c, a) }
-                                    } else {
-                                        Text(
-                                            if (!nowLoaded || refreshing || loading) "Подбираем…"
-                                            else "Сохраните видео — предложим, что добавить в план",
-                                            color = CqMuted,
-                                            modifier = Modifier.padding(horizontal = 12.dp),
-                                        )
+                                if (!planLoaded || planTonight.isNotEmpty() || planSuggestTonight.isNotEmpty()) {
+                                    item {
+                                        SectionLabel("План на вечер", Modifier.padding(horizontal = 12.dp))
+                                        if (planTonight.isNotEmpty()) {
+                                            VideoRail(planTonight) { c, a -> actions.handle(c, a) }
+                                        } else if (planSuggestTonight.isNotEmpty()) {
+                                            Text(
+                                                "Предложения — нажмите ⋮ → «В план на вечер»",
+                                                color = CqMuted,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                modifier = Modifier.padding(horizontal = 12.dp).padding(bottom = 6.dp),
+                                            )
+                                            VideoRail(planSuggestTonight) { c, a -> actions.handle(c, a) }
+                                        } else {
+                                            Text(
+                                                if (!planLoaded) "Подбираем…"
+                                                else "Сохраните видео — предложим, что добавить в план",
+                                                color = CqMuted,
+                                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                                            )
+                                        }
                                     }
                                 }
                                 item {
                                     SectionLabel("Недавно сохранили", Modifier.padding(horizontal = 12.dp))
-                                    if (recent.isEmpty()) Text("Пока пусто", color = CqMuted, modifier = Modifier.padding(horizontal = 12.dp))
-                                    else VideoSpine(recent.take(12)) { c, a -> actions.handle(c, a) }
+                                    if (recent.isEmpty()) {
+                                        Text(
+                                            "Пока пусто — сохраните ролик из YouTube через «Поделиться» → Kyro",
+                                            color = CqMuted,
+                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                        )
+                                    } else {
+                                        VideoSpine(recent.take(12)) { c, a -> actions.handle(c, a) }
+                                    }
                                 }
-                                item {
-                                    SectionLabel("Могут подойти", Modifier.padding(horizontal = 12.dp))
-                                    val recs = if (vibe.isNotEmpty()) vibe else fromPlaylists
-                                    if (recs.isEmpty()) Text("Пока нечего предложить", color = CqMuted, modifier = Modifier.padding(horizontal = 12.dp))
-                                    else VideoRail(recs) { c, a -> actions.handle(c, a) }
+                                val recs = if (vibe.isNotEmpty()) vibe else fromPlaylists
+                                if (recs.isNotEmpty()) {
+                                    item {
+                                        SectionLabel("Могут подойти", Modifier.padding(horizontal = 12.dp))
+                                        VideoRail(recs) { c, a -> actions.handle(c, a) }
+                                    }
                                 }
                                 item {
                                     Row(

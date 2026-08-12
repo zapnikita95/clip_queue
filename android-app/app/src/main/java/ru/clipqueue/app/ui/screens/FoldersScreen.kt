@@ -99,11 +99,12 @@ fun FoldersScreen(
     var filterMenu by remember { mutableStateOf(false) }
     var tagCard by remember { mutableStateOf<VideoCard?>(null) }
     var moveCard by remember { mutableStateOf<VideoCard?>(null) }
+    var previewEpoch by remember { mutableStateOf(0) }
 
     fun usedTags(list: List<TagDto>) = list.filter { (it.video_count ?: 0) > 0 }
 
-    /** Network only when force=true (pull-to-refresh). */
-    suspend fun loadFolders(force: Boolean) {
+    /** Network when force=true; silent=true skips pull-to-refresh spinner. */
+    suspend fun loadFolders(force: Boolean, silent: Boolean = false) {
         if (!force) {
             val warm = appCache.folders
             if (warm != null) {
@@ -113,7 +114,7 @@ fun FoldersScreen(
                 return
             }
             if (folders.isEmpty()) loading = true
-        } else {
+        } else if (!silent) {
             refreshing = true
         }
         error = null
@@ -127,7 +128,11 @@ fun FoldersScreen(
             folders.sortedByDescending { it.count ?: 0 }.take(TOP_CAROUSEL_COUNT).forEach { f ->
                 val id = f.id ?: return@forEach
                 runCatching {
-                    appCache.putFolderItems(id, api.listDetail(id).items.orEmpty())
+                    val preview = api.listDetail(id, limit = 24).items.orEmpty()
+                    // Never cache a failed/empty payload over a non-empty folder.
+                    if (preview.isNotEmpty() || (f.count ?: 0) == 0) {
+                        appCache.putFolderItems(id, preview)
+                    }
                 }
             }
         } catch (e: Exception) {
@@ -135,6 +140,7 @@ fun FoldersScreen(
         } finally {
             loading = false
             refreshing = false
+            previewEpoch += 1
         }
     }
 
@@ -143,6 +149,8 @@ fun FoldersScreen(
             folders = appCache.folders!!.folders
             tags = appCache.folders!!.tags
             loading = false
+            // Warm UI from disk, then refresh list + top previews without spinner flash.
+            loadFolders(force = true, silent = true)
         } else {
             loadFolders(force = true)
         }
@@ -270,7 +278,7 @@ fun FoldersScreen(
             error != null && folders.isEmpty() -> Text(error.orEmpty(), color = CqAccent, modifier = Modifier.padding(12.dp))
             selectedTagId != null -> LazyColumn(
                 modifier = Modifier.weight(1f),
-                contentPadding = PaddingValues(top = 4.dp, bottom = 8.dp),
+                contentPadding = PaddingValues(top = 4.dp, bottom = 96.dp),
             ) {
                 item {
                     Text("Папки", style = MaterialTheme.typography.labelSmall, color = CqMuted, modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp))
@@ -301,7 +309,7 @@ fun FoldersScreen(
             ) {
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(top = 4.dp, bottom = 10.dp),
+                    contentPadding = PaddingValues(top = 4.dp, bottom = 96.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     items(topCarousel, key = { "top-${it.id}" }) { folder ->
@@ -309,7 +317,7 @@ fun FoldersScreen(
                             api = api,
                             folder = folder,
                             appCache = appCache,
-                            forceRefreshTick = refreshing,
+                            forceRefreshTick = previewEpoch,
                             onOpenFolder = onOpenFolder,
                             onOpenVideo = onOpenVideo,
                             onTag = { tagCard = it },
@@ -334,7 +342,7 @@ private fun FolderCarouselBlock(
     api: ApiClient,
     folder: ListCard,
     appCache: AppCache,
-    forceRefreshTick: Boolean,
+    forceRefreshTick: Int,
     onOpenFolder: (ListCard) -> Unit,
     onOpenVideo: (String) -> Unit,
     onTag: (VideoCard) -> Unit,
@@ -359,15 +367,36 @@ private fun FolderCarouselBlock(
 
     LaunchedEffect(id, forceRefreshTick) {
         val warm = appCache.folderItems(id)
-        if (warm != null && !forceRefreshTick) {
+        val count = folder.count ?: 0
+        val warmStaleEmpty = warm != null && warm.isEmpty() && count > 0
+        // Epoch 0 = first composition; prefer warm cache. Later epochs force network refresh.
+        if (warm != null && forceRefreshTick == 0 && !warmStaleEmpty) {
             items = warm
             isLoadingItems = false
             return@LaunchedEffect
         }
-        if (warm == null) isLoadingItems = true
-        val loaded = runCatching { api.listDetail(id).items.orEmpty() }.getOrDefault(warm.orEmpty())
-        items = loaded
-        appCache.putFolderItems(id, loaded)
+        if (warm != null && !warmStaleEmpty && forceRefreshTick > 0) {
+            // After parent loadFolders wrote previews — adopt cache without spinner flash.
+            val cached = appCache.folderItems(id)
+            if (!cached.isNullOrEmpty()) {
+                items = cached
+                isLoadingItems = false
+                return@LaunchedEffect
+            }
+        }
+        if (warm == null || warmStaleEmpty) isLoadingItems = true
+        val loaded = runCatching { api.listDetail(id, limit = 24).items.orEmpty() }.getOrNull()
+        if (loaded != null) {
+            val next = if (loaded.isEmpty() && count > 0 && !warm.isNullOrEmpty()) warm else loaded
+            items = next
+            if (loaded.isNotEmpty() || count == 0) {
+                appCache.putFolderItems(id, loaded)
+            }
+        } else if (warm != null) {
+            items = warm
+        } else {
+            items = emptyList()
+        }
         isLoadingItems = false
     }
 
@@ -399,7 +428,11 @@ private fun FolderCarouselBlock(
             ) {
                 CircularProgressIndicator(color = CqAccent, strokeWidth = 2.dp, modifier = Modifier.height(28.dp))
             }
-            current.isEmpty() -> Text("Пусто", color = CqMuted)
+            current.isEmpty() -> Text(
+                if ((folder.count ?: 0) > 0) "Превью скоро появится — откройте папку"
+                else "Пусто",
+                color = CqMuted,
+            )
             else -> VideoRail(current.take(24)) { card, act -> actions.handle(card, act) }
         }
     }
@@ -457,7 +490,7 @@ fun FolderDetailScreen(
             refreshing = true
         }
         try {
-            val r = api.listDetail(listId)
+            val r = api.listDetail(listId, limit = 200)
             title = r.list?.title ?: title
             items = r.items.orEmpty()
             appCache.putFolderItems(listId, items)

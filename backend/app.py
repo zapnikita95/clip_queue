@@ -2597,6 +2597,18 @@ def create_app() -> Flask:
         )
         if not lst:
             return json_error("Список не найден", 404)
+        # Cap payload size: large playlists (e.g. YouTube Likes) used to timeout
+        # Android/web clients and leave folder carousels stuck on «Пусто».
+        try:
+            limit = int(request.args.get("limit") or 120)
+        except (TypeError, ValueError):
+            limit = 120
+        limit = max(1, min(limit, 400))
+        try:
+            offset = int(request.args.get("offset") or 0)
+        except (TypeError, ValueError):
+            offset = 0
+        offset = max(0, offset)
         rows = db.fetchall(
             """
             SELECT v.*, li.status, li.saved_at
@@ -2606,27 +2618,41 @@ def create_app() -> Flask:
               ON li.video_id = x.video_id AND li.user_id = ?
             WHERE x.list_id = ?
             ORDER BY x.position ASC, x.added_at DESC
+            LIMIT ? OFFSET ?
             """,
-            (uid, list_id),
+            (uid, list_id, limit, offset),
         )
-        cards = []
-        for r in rows:
-            tags = db.fetchall(
-                """
-                SELECT t.id, t.name, t.emoji, t.color
+        video_ids = [r["video_id"] for r in rows]
+        tags_by_video: dict[str, list] = {vid: [] for vid in video_ids}
+        if video_ids:
+            placeholders = ",".join("?" for _ in video_ids)
+            tag_rows = db.fetchall(
+                f"""
+                SELECT it.video_id, t.id, t.name, t.emoji, t.color
                 FROM item_tags it
                 JOIN user_tags t ON t.id = it.tag_id
-                WHERE it.user_id = ? AND it.video_id = ?
+                WHERE it.user_id = ? AND it.video_id IN ({placeholders})
                 """,
-                (uid, r["video_id"]),
+                (uid, *video_ids),
             )
+            for tr in tag_rows:
+                tags_by_video.setdefault(tr["video_id"], []).append(
+                    {
+                        "id": tr["id"],
+                        "name": tr["name"],
+                        "emoji": tr["emoji"],
+                        "color": tr["color"],
+                    }
+                )
+        cards = []
+        for r in rows:
             cards.append(
                 yt.card_from_video_row(
                     r,
                     {
                         "status": r.get("status"),
                         "saved_at": str(r.get("saved_at") or ""),
-                        "user_tags": tags,
+                        "user_tags": tags_by_video.get(r["video_id"], []),
                     },
                 )
             )
@@ -2635,6 +2661,8 @@ def create_app() -> Flask:
                 "ok": True,
                 "list": {"id": lst["id"], "title": lst["title"]},
                 "items": cards,
+                "limit": limit,
+                "offset": offset,
             }
         )
 

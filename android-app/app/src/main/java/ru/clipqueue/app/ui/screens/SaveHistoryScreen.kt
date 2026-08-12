@@ -79,7 +79,7 @@ fun SaveHistoryScreen(
     ) {
         Spacer(Modifier.height(18.dp))
         Text(
-            "← назад",
+            "Назад",
             color = CqMuted,
             style = MaterialTheme.typography.bodySmall,
             modifier = Modifier.clickable(onClick = onBack),

@@ -165,7 +165,8 @@ class ApiClient(private val session: SessionStore) {
         return get("/api/lists$qs")
     }
 
-    suspend fun listDetail(id: Int): ListDetailResponse = get("/api/lists/$id")
+    suspend fun listDetail(id: Int, limit: Int = 120, offset: Int = 0): ListDetailResponse =
+        get("/api/lists/$id?limit=$limit&offset=$offset")
 
     suspend fun createList(title: String): CreateListResponse =
         post("/api/lists", mapOf("title" to title))

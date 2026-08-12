@@ -3,11 +3,17 @@ package ru.clipqueue.app.ui.screens
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
@@ -15,11 +21,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -41,6 +49,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import kotlinx.coroutines.launch
@@ -89,26 +98,47 @@ fun VideoDetailScreen(
             .background(CqBg)
             .padding(horizontal = 20.dp),
     ) {
-        Spacer(Modifier.height(14.dp))
-        Text(
-            "← назад",
-            color = CqMuted,
-            style = MaterialTheme.typography.bodySmall,
-            modifier = Modifier.clickable(onClick = onBack),
-        )
-        when {
-            loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Spacer(Modifier.height(10.dp))
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .clip(RoundedCornerShape(12.dp))
+                .clickable(onClick = onBack)
+                .padding(vertical = 10.dp, horizontal = 4.dp),
+        ) {
+            Icon(
+                Icons.AutoMirrored.Filled.ArrowBack,
+                contentDescription = "Назад",
+                tint = CqMuted,
+                modifier = Modifier.size(20.dp),
+            )
+            Spacer(Modifier.width(6.dp))
+            Text("Назад", color = CqMuted, style = MaterialTheme.typography.bodyMedium)
+        }
+        AnimatedContent(
+            targetState = when {
+                loading -> 0
+                item == null -> 1
+                else -> 2
+            },
+            transitionSpec = { fadeIn(tween(280)) togetherWith fadeOut(tween(180)) },
+            label = "videoDetailBody",
+            modifier = Modifier.weight(1f),
+        ) { state ->
+        when (state) {
+            0 -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator(color = CqAccent)
             }
-            item == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            1 -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text("Не найдено", color = CqMuted)
             }
             else -> {
                 val v = item!!
                 Column(
                     modifier = Modifier
-                        .weight(1f)
-                        .verticalScroll(rememberScrollState()),
+                        .fillMaxSize()
+                        .verticalScroll(rememberScrollState())
+                        .padding(bottom = 28.dp),
                 ) {
                     Spacer(Modifier.height(10.dp))
                     Box(
@@ -135,6 +165,13 @@ fun VideoDetailScreen(
                                 contentDescription = null,
                                 contentScale = ContentScale.Crop,
                                 modifier = Modifier.fillMaxSize(),
+                            )
+                        } else {
+                            Icon(
+                                Icons.Default.PlayArrow,
+                                contentDescription = null,
+                                tint = CqMuted.copy(alpha = 0.5f),
+                                modifier = Modifier.size(48.dp),
                             )
                         }
                         Box(
@@ -166,11 +203,19 @@ fun VideoDetailScreen(
                         }
                     }
                         Spacer(Modifier.height(14.dp))
-                        Text(v.title.orEmpty(), style = MaterialTheme.typography.titleLarge)
+                        Text(
+                            v.title.orEmpty().ifBlank { "Без названия" },
+                            style = MaterialTheme.typography.titleLarge,
+                            color = CqText,
+                            maxLines = 4,
+                            overflow = TextOverflow.Ellipsis,
+                        )
                         Text(
                             listOfNotNull(v.channel_title, v.duration_label, statusLabel(v.status)).joinToString(" · "),
                             style = MaterialTheme.typography.bodySmall,
                             color = CqMuted,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
                         )
                         val folderNames = v.in_lists.orEmpty().mapNotNull { it.title?.takeIf { t -> t.isNotBlank() } }
                         val tagNames = v.user_tags.orEmpty().mapNotNull { t ->
@@ -208,7 +253,7 @@ fun VideoDetailScreen(
                             modifier = Modifier.fillMaxWidth().height(48.dp),
                             shape = RoundedCornerShape(12.dp),
                             colors = ButtonDefaults.buttonColors(containerColor = CqAccent, contentColor = CqOnAccent),
-                        ) { Text("Смотреть") }
+                        ) { Text("Смотреть", color = CqOnAccent) }
                         Spacer(Modifier.height(8.dp))
                         OutlinedButton(
                             onClick = {
@@ -222,7 +267,7 @@ fun VideoDetailScreen(
                             shape = RoundedCornerShape(12.dp),
                             enabled = v.status != "watched",
                         ) {
-                            Text(if (v.status == "watched") "Уже просмотрено" else "Уже видел")
+                            Text(if (v.status == "watched") "Уже просмотрено" else "Уже смотрели")
                         }
                         Spacer(Modifier.height(8.dp))
                         OutlinedButton(
@@ -241,13 +286,13 @@ fun VideoDetailScreen(
                             onClick = {
                                 scope.launch {
                                     api.patchLibrary(videoId, mapOf("status" to "queue"))
-                                    Toast.makeText(context, "В очереди", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, "В сохранённых", Toast.LENGTH_SHORT).show()
                                     reload()
                                 }
                             },
                             modifier = Modifier.fillMaxWidth().height(48.dp),
                             shape = RoundedCornerShape(12.dp),
-                        ) { Text("Вернуть в очередь") }
+                        ) { Text("Вернуть в сохранённые") }
                         Spacer(Modifier.height(8.dp))
                         OutlinedButton(
                             onClick = {
@@ -262,7 +307,7 @@ fun VideoDetailScreen(
                         ) { Text("Убрать из библиотеки") }
 
                         if (similar.isNotEmpty()) {
-                            SectionLabel("Похожие из твоих")
+                            SectionLabel("Похожие из ваших")
                             VideoRail(similar) { card, act ->
                                 if (act == CardAction.Open) onOpenVideo(card.video_id.orEmpty())
                                 else actions.handle(card, act)
@@ -272,6 +317,7 @@ fun VideoDetailScreen(
                     }
             }
         }
+        }
     }
 }
 
@@ -279,6 +325,6 @@ private fun statusLabel(status: String?): String? = when (status) {
     "watched" -> "просмотрено"
     "in_progress" -> "начато"
     "archived" -> "архив"
-    "queue" -> "в очереди"
+    "queue" -> "сохранено"
     else -> null
 }
