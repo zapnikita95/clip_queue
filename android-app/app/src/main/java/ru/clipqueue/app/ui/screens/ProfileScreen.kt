@@ -7,7 +7,6 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.browser.customtabs.CustomTabsIntent
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -20,18 +19,17 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.HelpOutline
+import androidx.compose.material.icons.automirrored.outlined.HelpOutline
+import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
@@ -44,9 +42,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -57,7 +58,6 @@ import ru.clipqueue.app.data.TagDto
 import ru.clipqueue.app.ui.TimeFormat
 import ru.clipqueue.app.ui.components.BottomBar
 import ru.clipqueue.app.ui.components.TagChip
-import ru.clipqueue.app.ui.screens.FaqSparkleButton
 import ru.clipqueue.app.ui.theme.CqAccent
 import ru.clipqueue.app.ui.theme.CqBg
 import ru.clipqueue.app.ui.theme.CqBorder
@@ -65,6 +65,8 @@ import ru.clipqueue.app.ui.theme.CqElev
 import ru.clipqueue.app.ui.theme.CqMuted
 import ru.clipqueue.app.ui.theme.CqOk
 import ru.clipqueue.app.ui.theme.CqText
+import ru.clipqueue.app.ui.theme.CqWhisper
+import ru.clipqueue.app.ui.theme.KyroFont
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -87,6 +89,7 @@ fun ProfileScreen(
     var showTakeoutHelp by remember { mutableStateOf(false) }
     var takeoutMsg by remember { mutableStateOf<String?>(null) }
     var draft by remember { mutableStateOf("") }
+    var tagsExpanded by remember { mutableStateOf(false) }
 
     fun reload() {
         scope.launch {
@@ -118,22 +121,40 @@ fun ProfileScreen(
         }
     }
 
-    Column(modifier = Modifier.fillMaxSize().background(CqBg).padding(horizontal = 12.dp)) {
-        Spacer(Modifier.height(14.dp))
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(CqBg)
+            .padding(horizontal = 16.dp),
+    ) {
+        Spacer(Modifier.height(12.dp))
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                Text("Профиль", style = MaterialTheme.typography.titleLarge)
+                Text(
+                    "Профиль",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontFamily = KyroFont,
+                )
                 Text(
                     me?.user?.email ?: session.email ?: "—",
                     style = MaterialTheme.typography.bodySmall,
                     color = CqMuted,
+                    maxLines = 1,
                 )
             }
-            FaqSparkleButton(onClick = onOpenFaq)
+            Icon(
+                Icons.AutoMirrored.Outlined.HelpOutline,
+                contentDescription = "Справка",
+                tint = CqMuted,
+                modifier = Modifier
+                    .size(40.dp)
+                    .clickable(onClick = onOpenFaq)
+                    .padding(8.dp),
+            )
         }
 
         Column(
@@ -142,131 +163,148 @@ fun ProfileScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(bottom = 72.dp),
         ) {
-            Spacer(Modifier.height(14.dp))
-            ProfileBlock(
-                "YouTube",
-                "Мы бережно подтягиваем лайки и плейлисты, когда вы открываете приложение.",
-                if (me?.youtube_connected == true) "подключено" else "нужно подключить",
-                me?.youtube_connected == true,
-            )
-            ProfileBlock("Последнее обновление", TimeFormat.syncLocal(me?.last_youtube_sync?.at))
-            ProfileBlock("Библиотека", "${me?.library_count ?: 0} сохранённых")
+            Spacer(Modifier.height(18.dp))
 
-            Spacer(Modifier.height(8.dp))
-            Text("Управление", style = MaterialTheme.typography.titleMedium)
-            Spacer(Modifier.height(8.dp))
-            OutlinedButton(onClick = { draft = ""; showNewFolder = true }, modifier = Modifier.fillMaxWidth().height(48.dp), shape = RoundedCornerShape(12.dp)) { Text("Создать папку") }
-            Spacer(Modifier.height(8.dp))
-            OutlinedButton(onClick = { draft = ""; showNewTag = true }, modifier = Modifier.fillMaxWidth().height(48.dp), shape = RoundedCornerShape(12.dp)) { Text("Создать тег") }
-            Spacer(Modifier.height(8.dp))
-            OutlinedButton(
-                onClick = {
+            // Status — compact facts, no framed cards
+            SettingsSectionLabel("Аккаунт")
+            SettingsGroup {
+                SettingsValueRow(
+                    title = "YouTube",
+                    value = if (me?.youtube_connected == true) "подключено" else "не подключено",
+                    valueColor = if (me?.youtube_connected == true) CqOk else CqMuted,
+                )
+                SettingsDivider()
+                SettingsValueRow(
+                    title = "Обновление",
+                    value = TimeFormat.syncLocal(me?.last_youtube_sync?.at).ifBlank { "—" },
+                )
+                SettingsDivider()
+                SettingsValueRow(
+                    title = "В библиотеке",
+                    value = "${me?.library_count ?: 0}",
+                )
+            }
+
+            Spacer(Modifier.height(20.dp))
+            SettingsSectionLabel("Организация")
+            SettingsGroup {
+                SettingsNavRow("Новая папка") {
+                    draft = ""
+                    showNewFolder = true
+                }
+                SettingsDivider()
+                SettingsNavRow("Новый тег") {
+                    draft = ""
+                    showNewTag = true
+                }
+                SettingsDivider()
+                SettingsNavRow("Добавить базовые теги") {
                     scope.launch {
                         tags = runCatching { api.seedTags().tags.orEmpty() }.getOrDefault(tags)
                         Toast.makeText(context, "Базовые теги добавлены", Toast.LENGTH_SHORT).show()
                     }
-                },
-                modifier = Modifier.fillMaxWidth().height(48.dp),
-                shape = RoundedCornerShape(12.dp),
-            ) { Text("Добавить базовые теги") }
-            if (tags.isNotEmpty()) {
+                }
+                if (tags.isNotEmpty()) {
+                    SettingsDivider()
+                    SettingsNavRow(
+                        title = "Теги",
+                        trailing = "${tags.size}",
+                        showChevron = true,
+                    ) { tagsExpanded = !tagsExpanded }
+                }
+            }
+            if (tagsExpanded && tags.isNotEmpty()) {
                 Spacer(Modifier.height(10.dp))
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.padding(horizontal = 2.dp),
+                ) {
                     tags.forEach { t ->
-                        TagChip(listOfNotNull(t.emoji?.takeIf { it.isNotBlank() }, t.name).joinToString(" "))
+                        TagChip(
+                            listOfNotNull(t.emoji?.takeIf { it.isNotBlank() }, t.name).joinToString(" "),
+                        )
                     }
                 }
             }
 
-            Spacer(Modifier.height(14.dp))
-            Text("Синхронизация", style = MaterialTheme.typography.titleMedium)
-            Spacer(Modifier.height(8.dp))
-            OutlinedButton(
-                onClick = {
+            Spacer(Modifier.height(20.dp))
+            SettingsSectionLabel("Синхронизация")
+            SettingsGroup {
+                SettingsNavRow(syncMsg ?: "Обновить библиотеку") {
                     scope.launch {
                         syncMsg = "Обновляем…"
                         val r = runCatching { api.startYoutubeSync(full = false) }.getOrNull()
                         syncMsg = if (r?.ok == true) "Обновление запущено" else (r?.error ?: "Не удалось обновить")
                         me = runCatching { api.me() }.getOrNull()
                     }
-                },
-                modifier = Modifier.fillMaxWidth().height(48.dp),
-                shape = RoundedCornerShape(12.dp),
-            ) { Text(syncMsg ?: "Обновить библиотеку") }
-            Spacer(Modifier.height(8.dp))
-            OutlinedButton(
-                onClick = {
+                }
+                SettingsDivider()
+                SettingsNavRow("Полное обновление") {
                     scope.launch {
                         syncMsg = "Полное обновление…"
                         val r = runCatching { api.startYoutubeSync(full = true) }.getOrNull()
                         syncMsg = if (r?.ok == true) "Полное обновление запущено" else (r?.error ?: "Не удалось обновить")
                         me = runCatching { api.me() }.getOrNull()
                     }
-                },
-                modifier = Modifier.fillMaxWidth().height(48.dp),
-                shape = RoundedCornerShape(12.dp),
-            ) { Text("Полное обновление") }
-            Spacer(Modifier.height(8.dp))
-            OutlinedButton(
-                onClick = {
+                }
+                SettingsDivider()
+                SettingsNavRow("Разложить необработанные") {
                     scope.launch {
                         val r = runCatching { api.startClassifyPending() }.getOrNull()
                         Toast.makeText(
                             context,
-                            if (r?.ok == true) "Раскладываем необработанные видео по папкам" else (r?.error ?: "Не удалось запустить"),
+                            if (r?.ok == true) {
+                                "Раскладываем необработанные видео по папкам"
+                            } else {
+                                (r?.error ?: "Не удалось запустить")
+                            },
                             Toast.LENGTH_SHORT,
                         ).show()
                     }
-                },
-                modifier = Modifier.fillMaxWidth().height(48.dp),
-                shape = RoundedCornerShape(12.dp),
-            ) { Text("Разложить необработанные") }
-
-            Spacer(Modifier.height(14.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Takeout", style = MaterialTheme.typography.titleMedium)
-                Spacer(Modifier.size(8.dp))
-                Icon(
-                    Icons.Outlined.HelpOutline,
-                    contentDescription = "Что такое Takeout",
-                    tint = CqMuted,
-                    modifier = Modifier.size(22.dp).clickable { showTakeoutHelp = true },
-                )
+                }
+                SettingsDivider()
+                SettingsNavRow(
+                    title = takeoutMsg ?: "Загрузить Takeout",
+                    trailing = null,
+                    leadingHelp = { showTakeoutHelp = true },
+                ) { takeoutPicker.launch("application/json") }
             }
-            Spacer(Modifier.height(8.dp))
-            OutlinedButton(
-                onClick = { takeoutPicker.launch("application/json") },
-                modifier = Modifier.fillMaxWidth().height(48.dp),
-                shape = RoundedCornerShape(12.dp),
-            ) { Text(takeoutMsg ?: "Загрузить watch-history.json") }
 
-            Spacer(Modifier.height(14.dp))
-            Text("Ещё", style = MaterialTheme.typography.titleMedium)
-            Spacer(Modifier.height(8.dp))
-            OutlinedButton(onClick = onOpenHistory, modifier = Modifier.fillMaxWidth().height(48.dp), shape = RoundedCornerShape(12.dp)) { Text("История сохранений") }
-            Spacer(Modifier.height(8.dp))
-            OutlinedButton(onClick = { openWeb("/organize") }, modifier = Modifier.fillMaxWidth().height(48.dp), shape = RoundedCornerShape(12.dp)) { Text("Редактор раскладки (веб)") }
-            Spacer(Modifier.height(8.dp))
-            OutlinedButton(onClick = { openWeb("/search") }, modifier = Modifier.fillMaxWidth().height(48.dp), shape = RoundedCornerShape(12.dp)) { Text("Умный поиск") }
-            Spacer(Modifier.height(8.dp))
-            OutlinedButton(
-                onClick = {
+            Spacer(Modifier.height(20.dp))
+            SettingsSectionLabel("Ещё")
+            SettingsGroup {
+                SettingsNavRow("История сохранений", onClick = onOpenHistory)
+                SettingsDivider()
+                SettingsNavRow("Редактор раскладки") { openWeb("/organize") }
+                SettingsDivider()
+                SettingsNavRow("Умный поиск") { openWeb("/search") }
+                SettingsDivider()
+                SettingsNavRow("Movie Planner") {
                     context.startActivity(
                         Intent(Intent.ACTION_VIEW, Uri.parse("https://movie-planner.ru/?open_login=1")),
                     )
-                },
-                modifier = Modifier.fillMaxWidth().height(48.dp),
-                shape = RoundedCornerShape(12.dp),
-            ) { Text("Кино — Movie Planner") }
+                }
+            }
 
-            Spacer(Modifier.height(10.dp))
-            Button(
-                onClick = { session.clear(); onLoggedOut() },
-                modifier = Modifier.fillMaxWidth().height(48.dp),
-                shape = RoundedCornerShape(12.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = CqElev, contentColor = CqText),
-            ) { Text("Выйти") }
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(22.dp))
+            Text(
+                "Выйти",
+                color = CqWhisper,
+                fontFamily = KyroFont,
+                fontWeight = FontWeight.Medium,
+                fontSize = 15.sp,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .clickable {
+                        session.clear()
+                        onLoggedOut()
+                    }
+                    .padding(vertical = 14.dp)
+                    .padding(horizontal = 4.dp),
+            )
+            Spacer(Modifier.height(12.dp))
         }
         BottomBar(selected = 2, onHome = onHome, onFolders = onFolders, onProfile = {})
     }
@@ -309,6 +347,108 @@ fun ProfileScreen(
 }
 
 @Composable
+private fun SettingsSectionLabel(text: String) {
+    Text(
+        text.uppercase(),
+        color = CqMuted,
+        fontFamily = KyroFont,
+        fontWeight = FontWeight.Medium,
+        fontSize = 11.sp,
+        letterSpacing = 0.6.sp,
+        modifier = Modifier.padding(start = 4.dp, bottom = 8.dp),
+    )
+}
+
+@Composable
+private fun SettingsGroup(content: @Composable () -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(CqElev),
+    ) {
+        content()
+    }
+}
+
+@Composable
+private fun SettingsDivider() {
+    HorizontalDivider(
+        modifier = Modifier.padding(start = 14.dp),
+        thickness = 0.5.dp,
+        color = CqBorder,
+    )
+}
+
+@Composable
+private fun SettingsValueRow(
+    title: String,
+    value: String,
+    valueColor: androidx.compose.ui.graphics.Color = CqMuted,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 14.dp, vertical = 13.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(title, color = CqText, fontFamily = KyroFont, fontSize = 15.sp)
+        Text(value, color = valueColor, fontFamily = KyroFont, fontSize = 13.sp)
+    }
+}
+
+@Composable
+private fun SettingsNavRow(
+    title: String,
+    trailing: String? = null,
+    showChevron: Boolean = true,
+    leadingHelp: (() -> Unit)? = null,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 13.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            title,
+            color = CqText,
+            fontFamily = KyroFont,
+            fontSize = 15.sp,
+            modifier = Modifier.weight(1f),
+            maxLines = 1,
+        )
+        if (leadingHelp != null) {
+            Icon(
+                Icons.AutoMirrored.Outlined.HelpOutline,
+                contentDescription = "Подсказка",
+                tint = CqMuted,
+                modifier = Modifier
+                    .size(28.dp)
+                    .clickable(onClick = leadingHelp)
+                    .padding(4.dp),
+            )
+            Spacer(Modifier.width(4.dp))
+        }
+        if (!trailing.isNullOrBlank()) {
+            Text(trailing, color = CqMuted, fontFamily = KyroFont, fontSize = 13.sp)
+            Spacer(Modifier.width(4.dp))
+        }
+        if (showChevron) {
+            Icon(
+                Icons.AutoMirrored.Outlined.KeyboardArrowRight,
+                contentDescription = null,
+                tint = CqMuted.copy(alpha = 0.7f),
+                modifier = Modifier.size(20.dp),
+            )
+        }
+    }
+}
+
+@Composable
 private fun NameDialog(title: String, value: String, onChange: (String) -> Unit, onDismiss: () -> Unit, onConfirm: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -325,22 +465,4 @@ private fun NameDialog(title: String, value: String, onChange: (String) -> Unit,
         confirmButton = { TextButton(onClick = onConfirm) { Text("Создать") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Отмена") } },
     )
-}
-
-@Composable
-private fun ProfileBlock(title: String, body: String, chip: String? = null, chipOk: Boolean = true) {
-    Column(
-        modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp)
-            .background(CqElev, RoundedCornerShape(14.dp))
-            .border(1.dp, CqBorder, RoundedCornerShape(14.dp))
-            .padding(14.dp),
-    ) {
-        Text(title, style = MaterialTheme.typography.titleMedium)
-        Spacer(Modifier.height(4.dp))
-        Text(body, style = MaterialTheme.typography.bodySmall, color = CqMuted)
-        if (chip != null) {
-            Spacer(Modifier.height(8.dp))
-            Text(chip, color = if (chipOk) CqOk else CqAccent, style = MaterialTheme.typography.bodySmall)
-        }
-    }
 }
