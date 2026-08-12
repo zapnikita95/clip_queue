@@ -140,7 +140,7 @@ fun ProfileScreen(
             modifier = Modifier
                 .weight(1f)
                 .verticalScroll(rememberScrollState())
-                .padding(bottom = 96.dp),
+                .padding(bottom = 72.dp),
         ) {
             Spacer(Modifier.height(14.dp))
             ProfileBlock(

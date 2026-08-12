@@ -24,7 +24,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Folder
@@ -486,6 +485,9 @@ private fun FolderGridCell(
     }
 }
 
+/** Compact bottom nav height (content only; system gesture inset is extra). */
+val KyroBottomBarContentHeight = 52.dp
+
 @Composable
 fun BottomBar(
     selected: Int,
@@ -508,11 +510,12 @@ fun BottomBar(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 8.dp),
+                .height(KyroBottomBarContentHeight)
+                .padding(horizontal = 4.dp),
             horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            BottomTab(0, selected, "Библиотека", Icons.Default.Home, onHome, Modifier.weight(1f))
+            BottomTab(0, selected, "Главная", Icons.Default.Home, onHome, Modifier.weight(1f))
             BottomTab(1, selected, "Папки", Icons.Default.Folder, onFolders, Modifier.weight(1f))
             BottomTab(2, selected, "Профиль", Icons.Default.Person, onProfile, Modifier.weight(1f))
         }
@@ -531,43 +534,41 @@ private fun BottomTab(
     val on = selected == index
     val tint by animateColorAsState(
         targetValue = if (on) CqText else CqMuted,
-        animationSpec = tween(220),
+        animationSpec = tween(180),
         label = "tabTint",
-    )
-    val indicatorW by animateDpAsState(
-        targetValue = if (on) 14.dp else 0.dp,
-        animationSpec = tween(220),
-        label = "tabIndicator",
     )
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
         modifier = modifier
-            .clickable(onClick = onClick)
-            .padding(vertical = 6.dp),
+            .fillMaxHeight()
+            .clickable(onClick = onClick),
     ) {
-        Icon(
-            icon,
-            contentDescription = label,
-            tint = tint,
-            modifier = Modifier.size(24.dp),
-        )
-        Spacer(modifier = Modifier.height(3.dp))
+        // Active mark sits on the icon — no third “floor” under the label.
+        Box(contentAlignment = Alignment.Center) {
+            if (on) {
+                Box(
+                    modifier = Modifier
+                        .size(width = 40.dp, height = 22.dp)
+                        .clip(RoundedCornerShape(11.dp))
+                        .background(CqElev2),
+                )
+            }
+            Icon(
+                icon,
+                contentDescription = label,
+                tint = tint,
+                modifier = Modifier.size(22.dp),
+            )
+        }
         Text(
             label,
             color = tint,
-            fontSize = 11.sp,
+            fontSize = 10.sp,
             fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal,
             fontFamily = KyroFont,
             maxLines = 1,
-        )
-        Spacer(modifier = Modifier.height(4.dp))
-        Box(
-            modifier = Modifier
-                .width(indicatorW)
-                .height(2.dp)
-                .clip(RoundedCornerShape(1.dp))
-                .background(if (on) CqText else Color.Transparent),
+            modifier = Modifier.padding(top = 2.dp),
         )
     }
 }

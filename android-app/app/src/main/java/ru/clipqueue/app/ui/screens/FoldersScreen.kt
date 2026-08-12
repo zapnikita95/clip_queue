@@ -278,7 +278,7 @@ fun FoldersScreen(
             error != null && folders.isEmpty() -> Text(error.orEmpty(), color = CqAccent, modifier = Modifier.padding(12.dp))
             selectedTagId != null -> LazyColumn(
                 modifier = Modifier.weight(1f),
-                contentPadding = PaddingValues(top = 4.dp, bottom = 96.dp),
+                contentPadding = PaddingValues(top = 4.dp, bottom = 72.dp),
             ) {
                 item {
                     Text("Папки", style = MaterialTheme.typography.labelSmall, color = CqMuted, modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp))
@@ -309,7 +309,7 @@ fun FoldersScreen(
             ) {
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(top = 4.dp, bottom = 96.dp),
+                    contentPadding = PaddingValues(top = 4.dp, bottom = 72.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     items(topCarousel, key = { "top-${it.id}" }) { folder ->

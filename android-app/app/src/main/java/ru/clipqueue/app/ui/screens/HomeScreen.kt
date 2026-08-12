@@ -443,7 +443,7 @@ fun HomeScreen(
                     ) {
                         LazyColumn(
                             modifier = Modifier.fillMaxSize(),
-                            contentPadding = PaddingValues(bottom = 96.dp),
+                            contentPadding = PaddingValues(bottom = 72.dp),
                         ) {
                             if (tags.isNotEmpty()) {
                                 item {
@@ -634,7 +634,7 @@ fun HomeScreen(
             onBounds = { trashBounds = it },
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .padding(bottom = 96.dp)
+                .padding(bottom = 72.dp)
                 .zIndex(40f),
         )
     }
