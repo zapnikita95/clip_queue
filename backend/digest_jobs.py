@@ -117,26 +117,34 @@ def send_morning_for_user(user_id: int) -> dict:
     pick = now_plan.pick_for_morning_push(user_id)
     if not pick:
         return {"ok": True, "sent": 0, "skipped": "empty"}
+    vid = str(pick.get("video_id") or "")
     title = "Kyro · на утро"
-    body = (pick.get("title") or "Ролик из вашей очереди")[:120]
+    why = (pick.get("reason") or "").strip()
+    name = (pick.get("title") or "Ролик из вашей очереди")[:100]
+    body = f"{name}" + (f"\n{why}" if why else "")
     result = push.send_to_user(
         user_id,
         title=title,
-        body=body,
+        body=body[:400],
         data={
             "type": "morning",
-            "video_id": pick["video_id"],
-            "route": f"/v/{pick['video_id']}",
+            "video_id": vid,
+            "route": f"/v/{vid}",
+            "deeplink": f"clipqueue://video/{vid}?surface=push",
+            "actions": "open,not_interested",
         },
+        data_only=True,
     )
     now_plan.set_prefs(
         user_id,
         {"morning_push_last_sent": datetime.now(timezone.utc).isoformat()},
     )
+    if int((result or {}).get("sent") or 0) > 0:
+        now_plan.record_push_sent(user_id, vid, kind="morning")
     return {
         "ok": True,
         "sent": int((result or {}).get("sent") or 0),
-        "video_id": pick["video_id"],
+        "video_id": vid,
         "push": result,
     }
 

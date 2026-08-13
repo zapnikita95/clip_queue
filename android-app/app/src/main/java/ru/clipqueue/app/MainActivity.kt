@@ -72,6 +72,10 @@ class MainActivity : ComponentActivity() {
             handlePendingCta()
         }
         setContent {
+            // Read .value inside composition so onNewIntent / cold-start extras recompose nav.
+            val token = pendingAuthToken.value
+            val videoId = pendingVideoId.value
+            val cta = pendingCta.value
             ClipQueueTheme {
                 Surface(
                     modifier = Modifier
@@ -82,10 +86,14 @@ class MainActivity : ComponentActivity() {
                     ClipQueueNav(
                         api = app.api,
                         session = app.session,
-                        pendingToken = pendingAuthToken.value,
+                        pendingToken = token,
                         onTokenConsumed = { pendingAuthToken.value = null },
-                        pendingVideoId = pendingVideoId.value,
-                        onVideoConsumed = { pendingVideoId.value = null },
+                        pendingVideoId = videoId,
+                        pendingCta = cta,
+                        onVideoConsumed = {
+                            pendingVideoId.value = null
+                            pendingCta.value = null
+                        },
                         onLoggedIn = {
                             maybeRequestNotifPermission()
                             PushRegistrar.syncIfLoggedIn(this)
@@ -116,6 +124,18 @@ class MainActivity : ComponentActivity() {
         val id = pendingVideoId.value?.trim().orEmpty()
         val cta = pendingCta.value?.trim().orEmpty()
         if (id.isBlank() || cta.isBlank()) return
+        // «open» / blank — only navigate to in-app video page (LaunchedEffect).
+        if (cta == "open" || cta == "later") {
+            pendingCta.value = null
+            Thread {
+                runCatching {
+                    kotlinx.coroutines.runBlocking {
+                        app.api.pushFeedback(id, action = "opened", surface = "push")
+                    }
+                }
+            }.start()
+            return
+        }
         pendingCta.value = null
         Thread {
             when (cta) {
@@ -126,6 +146,7 @@ class MainActivity : ComponentActivity() {
                 }
                 "watch" -> runCatching {
                     kotlinx.coroutines.runBlocking {
+                        app.api.pushFeedback(id, action = "opened", surface = "push")
                         val r = app.api.openVideo(id, surface = "push")
                         val url = r.watch_url ?: "https://www.youtube.com/watch?v=$id"
                         startActivity(
@@ -133,7 +154,12 @@ class MainActivity : ComponentActivity() {
                         )
                     }
                 }
-                "later" -> { /* stay in library; just open card */ }
+                "not_interested" -> runCatching {
+                    kotlinx.coroutines.runBlocking {
+                        app.api.pushFeedback(id, action = "not_interested", surface = "push")
+                        app.api.setInterest(id, -1)
+                    }
+                }
             }
         }.start()
     }
@@ -201,6 +227,7 @@ private fun ClipQueueNav(
     pendingToken: String?,
     onTokenConsumed: () -> Unit,
     pendingVideoId: String?,
+    pendingCta: String? = null,
     onVideoConsumed: () -> Unit,
     onLoggedIn: () -> Unit,
 ) {
@@ -220,6 +247,12 @@ private fun ClipQueueNav(
     }
 
     var needOnboard by remember { mutableStateOf(!session.onboardingDone) }
+    // Keep deep-link video until onboarding finishes — then open card.
+    var queuedVideo by remember { mutableStateOf<String?>(null) }
+    if (pendingVideoId != null && needOnboard) {
+        queuedVideo = pendingVideoId
+    }
+
     if (needOnboard) {
         OnboardingScreen(api, session) { needOnboard = false }
         return
@@ -235,7 +268,9 @@ private fun ClipQueueNav(
 
     fun openVideo(videoId: String) {
         if (videoId.isBlank()) return
-        nav.navigate("video/${Uri.encode(videoId)}")
+        nav.navigate("video/${Uri.encode(videoId)}") {
+            launchSingleTop = true
+        }
     }
 
     fun goTab(route: String) {
@@ -246,10 +281,17 @@ private fun ClipQueueNav(
         }
     }
 
-    LaunchedEffect(pendingVideoId) {
-        val id = pendingVideoId?.trim().orEmpty()
+    LaunchedEffect(pendingVideoId, queuedVideo, pendingCta) {
+        val id = (pendingVideoId ?: queuedVideo)?.trim().orEmpty()
         if (id.isBlank()) return@LaunchedEffect
+        // «Неинтересно» handled in receiver / CTA — don't open card.
+        if (pendingCta == "not_interested") {
+            onVideoConsumed()
+            queuedVideo = null
+            return@LaunchedEffect
+        }
         openVideo(id)
+        queuedVideo = null
         onVideoConsumed()
     }
 

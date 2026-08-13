@@ -103,8 +103,15 @@ def send_to_user(
     title: str,
     body: str,
     data: Optional[dict[str, str]] = None,
+    data_only: bool = False,
 ) -> dict[str, Any]:
-    """Send notification to all registered devices. Returns send stats."""
+    """Send notification to all registered devices. Returns send stats.
+
+    data_only=True (default for video pushes): no FCM ``notification`` payload so
+    Android always delivers to KyroMessagingService, which builds a local notif
+    with a reliable clipqueue:// PendingIntent + action buttons. Tray-only FCM
+    notifications often drop extras / ignore click on OEM skins (Huawei).
+    """
     tokens = tokens_for_user(user_id)
     if not tokens:
         return {"ok": True, "sent": 0, "skipped": "no_tokens"}
@@ -121,32 +128,44 @@ def send_to_user(
     from firebase_admin import messaging
 
     payload = {k: str(v) for k, v in (data or {}).items()}
-    # Deep link for Android: system tray click opens MainActivity with these extras.
-    # Do NOT set click_action=OPEN_VIDEO unless Manifest has a matching filter —
-    # a missing filter makes the tap do nothing.
     vid = (payload.get("video_id") or "").strip()
     if vid and "deeplink" not in payload:
-        payload["deeplink"] = f"clipqueue://video/{vid}"
+        payload["deeplink"] = f"clipqueue://video/{vid}?surface=push"
     if vid and "route" not in payload:
         payload["route"] = f"/v/{vid}"
+    # Title/body in data so the app can render when data_only.
+    payload.setdefault("title", (title or "Kyro")[:120])
+    payload.setdefault("body", (body or "")[:400])
+
+    # Video-related pushes → data-only for reliable open + actions.
+    kind = (payload.get("type") or "").strip().lower()
+    if vid or kind in ("morning", "classify", "classified", "reminder", "share"):
+        data_only = True
+
     sent = 0
     dead: list[str] = []
     errors: list[str] = []
     for token in tokens:
         try:
-            msg = messaging.Message(
-                token=token,
-                notification=messaging.Notification(title=title[:120], body=body[:400]),
-                data=payload,
-                android=messaging.AndroidConfig(
-                    priority="high",
-                    notification=messaging.AndroidNotification(
-                        channel_id="kyro_classify",
-                        # Default launcher click; video_id comes via data extras.
-                        click_action="OPEN_MAIN",
+            if data_only:
+                msg = messaging.Message(
+                    token=token,
+                    data=payload,
+                    android=messaging.AndroidConfig(priority="high"),
+                )
+            else:
+                msg = messaging.Message(
+                    token=token,
+                    notification=messaging.Notification(title=title[:120], body=body[:400]),
+                    data=payload,
+                    android=messaging.AndroidConfig(
+                        priority="high",
+                        notification=messaging.AndroidNotification(
+                            channel_id="kyro_classify",
+                            click_action="OPEN_MAIN",
+                        ),
                     ),
-                ),
-            )
+                )
             messaging.send(msg)
             sent += 1
         except Exception as e:
@@ -161,4 +180,4 @@ def send_to_user(
             db.execute("DELETE FROM device_tokens WHERE token = ?", (token,))
         except Exception:
             pass
-    return {"ok": True, "sent": sent, "failed": len(errors), "errors": errors[:5]}
+    return {"ok": True, "sent": sent, "failed": len(errors), "errors": errors[:5], "data_only": data_only}

@@ -812,14 +812,201 @@ def daypart_theme_catalog() -> list[dict[str, str]]:
     return [{"id": k, "label": v["label"]} for k, v in DAYPART_THEMES.items()]
 
 
+def _push_history_ids(prefs: dict, *, key: str = "morning_push_history", days: int = 21) -> set[str]:
+    """Recently pushed video ids (avoid repeating the same morning clip)."""
+    raw = prefs.get(key) or []
+    if not isinstance(raw, list):
+        return set()
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    out: set[str] = set()
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        vid = str(item.get("video_id") or "").strip()
+        if not vid:
+            continue
+        ts = str(item.get("ts") or "").strip()
+        if ts:
+            try:
+                dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                if dt < cutoff:
+                    continue
+            except Exception:
+                pass
+        out.add(vid)
+    return out
+
+
+def _not_interested_penalties(user_id: int, prefs: dict) -> tuple[set[str], set[str]]:
+    """Return (video_ids, channel_keys) the user dismissed via push for this daypart."""
+    daypart = current_daypart(prefs)
+    raw = prefs.get("push_not_interested") or []
+    if not isinstance(raw, list):
+        return set(), set()
+    vids: set[str] = set()
+    channels: set[str] = set()
+    cutoff = datetime.now(timezone.utc) - timedelta(days=45)
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        ts = str(item.get("ts") or "").strip()
+        if ts:
+            try:
+                dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                if dt < cutoff:
+                    continue
+            except Exception:
+                pass
+        # Prefer same daypart; still soft-exclude video globally for a while.
+        item_dp = str(item.get("daypart") or "")
+        vid = str(item.get("video_id") or "").strip()
+        ch = str(item.get("channel") or "").strip().lower()
+        if vid:
+            vids.add(vid)
+        if ch and (not item_dp or item_dp == daypart):
+            channels.add(ch)
+    # Also respect library interest=-1
+    rows = db.fetchall(
+        """
+        SELECT video_id FROM library_items
+        WHERE user_id = ? AND COALESCE(interest, 0) <= -1
+        LIMIT 200
+        """,
+        (user_id,),
+    )
+    for r in rows or []:
+        vids.add(str(r.get("video_id") or ""))
+    vids.discard("")
+    return vids, channels
+
+
+def record_push_sent(user_id: int, video_id: str, *, kind: str = "morning") -> None:
+    video_id = (video_id or "").strip()
+    if not video_id:
+        return
+    prefs = get_prefs(user_id)
+    key = "morning_push_history" if kind == "morning" else "push_history"
+    hist = list(prefs.get(key) or []) if isinstance(prefs.get(key), list) else []
+    hist = [x for x in hist if isinstance(x, dict)]
+    hist.insert(
+        0,
+        {
+            "video_id": video_id,
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "kind": kind,
+        },
+    )
+    set_prefs(user_id, {key: hist[:60]})
+
+
+def record_push_not_interested(
+    user_id: int,
+    video_id: str,
+    *,
+    surface: str = "morning",
+) -> dict[str, Any]:
+    """Learn from push «Неинтересно»: demote video + channel at this daypart."""
+    video_id = (video_id or "").strip()
+    if not video_id:
+        return {"ok": False, "error": "video_id"}
+    prefs = get_prefs(user_id)
+    daypart = current_daypart(prefs)
+    hour = _local_hour(prefs)
+    row = db.fetchone(
+        """
+        SELECT v.channel_title, v.title
+        FROM videos v
+        WHERE v.video_id = ?
+        """,
+        (video_id,),
+    )
+    channel = ((row or {}).get("channel_title") or "").strip()
+    blob = list(prefs.get("push_not_interested") or []) if isinstance(prefs.get("push_not_interested"), list) else []
+    blob = [x for x in blob if isinstance(x, dict)]
+    blob.insert(
+        0,
+        {
+            "video_id": video_id,
+            "channel": channel,
+            "daypart": daypart,
+            "hour": hour,
+            "surface": surface,
+            "ts": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+    set_prefs(user_id, {"push_not_interested": blob[:80]})
+    # Soft library signal + hide from today's rails
+    try:
+        db.execute(
+            "UPDATE library_items SET interest = ? WHERE user_id = ? AND video_id = ?",
+            (-1, user_id, video_id),
+        )
+    except Exception:
+        pass
+    hide_from_today(user_id, video_id)
+    return {
+        "ok": True,
+        "video_id": video_id,
+        "daypart": daypart,
+        "channel": channel,
+    }
+
+
 def pick_for_morning_push(user_id: int) -> Optional[dict[str, Any]]:
-    """One video for morning push — prefer morning themes."""
-    data = pick_now(user_id, slot="short", limit=3)
-    picks = data.get("picks") or data.get("suggestions") or []
-    if not picks:
-        data = pick_now(user_id, slot="any", limit=3)
-        picks = data.get("picks") or []
-    return picks[0] if picks else None
+    """One fresh video for morning push — rotate, skip repeats & «неинтересно»."""
+    import random
+
+    prefs = get_prefs(user_id)
+    recent = _push_history_ids(prefs, key="morning_push_history", days=21)
+    recent |= _push_history_ids(prefs, key="push_history", days=7)
+    bad_vids, bad_channels = _not_interested_penalties(user_id, prefs)
+    hidden = _today_hidden(user_id)
+
+    def _collect(slot: str, limit: int) -> list[dict]:
+        data = pick_now(user_id, slot=slot, mood="", limit=limit)
+        out: list[dict] = []
+        for src in (data.get("picks") or []) + (data.get("suggestions") or []) + (data.get("started") or []):
+            if isinstance(src, dict):
+                out.append(src)
+        return out
+
+    pool = _collect("short", 14) + _collect("any", 14)
+    ranked: list[dict] = []
+    seen: set[str] = set()
+    for card in pool:
+        vid = str(card.get("video_id") or "").strip()
+        if not vid or vid in seen:
+            continue
+        seen.add(vid)
+        if vid in recent or vid in bad_vids or vid in hidden:
+            continue
+        ch = str(card.get("channel_title") or "").strip().lower()
+        if ch and ch in bad_channels:
+            continue
+        ranked.append(card)
+
+    if not ranked:
+        # Last resort: allow older history but still skip hard not-interested
+        for card in pool:
+            vid = str(card.get("video_id") or "").strip()
+            if not vid or vid in bad_vids:
+                continue
+            ranked.append(card)
+            if len(ranked) >= 6:
+                break
+
+    if not ranked:
+        return None
+
+    # Live rotation among top candidates — not always picks[0]
+    top = ranked[:8]
+    weights = [max(1.0, 9.0 - i) for i in range(len(top))]
+    pick = random.choices(top, weights=weights, k=1)[0]
+    return pick
 
 
 def _today_key() -> str:

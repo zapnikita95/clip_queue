@@ -1865,6 +1865,32 @@ def create_app() -> Flask:
             return json_error(f"Не удалось отправить: {e}", 502)
         return jsonify({"ok": True, **result})
 
+    @app.post("/api/home/push-feedback")
+    @require_auth
+    def home_push_feedback():
+        """Push actions: open | not_interested — teaches morning/daypart picks."""
+        uid = current_user()["user_id"]
+        body = request.get_json(silent=True) or {}
+        video_id = (body.get("video_id") or "").strip()
+        action = (body.get("action") or "").strip().lower()
+        surface = (body.get("surface") or "morning").strip() or "morning"
+        if not video_id:
+            return json_error("video_id")
+        if action in ("not_interested", "dislike", "skip"):
+            r = now_plan.record_push_not_interested(uid, video_id, surface=surface)
+            try:
+                metrics.track(uid, "push_not_interested", video_id=video_id, surface=surface)
+            except Exception:
+                pass
+            return jsonify(r)
+        if action in ("opened", "open"):
+            try:
+                metrics.track(uid, "push_open", video_id=video_id, surface=surface)
+            except Exception:
+                pass
+            return jsonify({"ok": True, "video_id": video_id, "action": "opened"})
+        return json_error("unknown action", 400)
+
     @app.post("/api/videos/<video_id>/reclassify")
     @require_auth
     def reclassify_video(video_id: str):

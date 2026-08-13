@@ -211,6 +211,20 @@ class ApiClient(private val session: SessionStore) {
             mapOf("interest" to interest),
         )
 
+    suspend fun pushFeedback(
+        videoId: String,
+        action: String,
+        surface: String = "morning",
+    ): OkResponse =
+        post(
+            "/api/home/push-feedback",
+            mapOf(
+                "video_id" to videoId,
+                "action" to action,
+                "surface" to surface,
+            ),
+        )
+
     suspend fun tagVideo(videoId: String, tagId: Int): OkResponse =
         post(
             "/api/videos/${java.net.URLEncoder.encode(videoId, "UTF-8")}/tags",
