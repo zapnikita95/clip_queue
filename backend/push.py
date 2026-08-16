@@ -134,8 +134,16 @@ def send_to_user(
     if vid and "route" not in payload:
         payload["route"] = f"/v/{vid}"
     # Title/body in data so the app can render when data_only.
-    payload.setdefault("title", (title or "Kyro")[:120])
+    # Prefer explicit video_title over a generic "Kyro" notification title.
+    video_title = (payload.get("video_title") or "").strip()
+    if video_title:
+        payload["title"] = video_title[:120]
+        payload["video_title"] = video_title[:200]
+    else:
+        payload.setdefault("title", (title or "Kyro")[:120])
     payload.setdefault("body", (body or "")[:400])
+    # If caller still sent title="Kyro" but body embeds «video» — keep body; client
+    # prefers video_title/title that is not Kyro.
 
     # Video-related pushes → data-only for reliable open + actions.
     kind = (payload.get("type") or "").strip().lower()

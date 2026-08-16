@@ -25,12 +25,22 @@ class KyroMessagingService : FirebaseMessagingService() {
         super.onMessageReceived(message)
         val payload = message.data
         val videoId = payload["video_id"].orEmpty().trim()
-        val listTitle = payload["list_title"].orEmpty()
-        val title = payload["title"]
-            ?: message.notification?.title
-            ?: getString(R.string.app_name)
-        val body = payload["body"]
-            ?: message.notification?.body
+        val listTitle = payload["list_title"].orEmpty().trim()
+        val videoTitle = sequenceOf(
+            payload["video_title"],
+            payload["title"],
+            message.notification?.title,
+        ).mapNotNull { it?.trim()?.takeIf { s -> s.isNotBlank() && !s.equals("Kyro", ignoreCase = true) } }
+            .firstOrNull()
+            .orEmpty()
+        val title = videoTitle.ifBlank {
+            listTitle.ifBlank { getString(R.string.app_name) }
+        }
+        val body = sequenceOf(
+            payload["body"],
+            message.notification?.body,
+        ).mapNotNull { it?.trim()?.takeIf { s -> s.isNotBlank() } }
+            .firstOrNull()
             ?: listTitle.takeIf { it.isNotBlank() }?.let { "→ $it" }
             ?: "Новое в Kyro"
         val surface = payload["type"].orEmpty().ifBlank { "push" }

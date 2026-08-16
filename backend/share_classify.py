@@ -105,15 +105,14 @@ def _record_save_event(
 
 
 def _push_copy(title: str, folder_titles: list[str]) -> tuple[str, str]:
-    short = (title or "Видео").strip()
-    if len(short) > 60:
-        short = short[:57] + "…"
+    """Notification title = video name; body = folder it landed in."""
+    short = (title or "Видео").strip() or "Видео"
+    if len(short) > 80:
+        short = short[:77] + "…"
     if folder_titles:
         folders = ", ".join(folder_titles[:3])
-        body = f"«{short}» → {folders}"
-    else:
-        body = f"«{short}» сохранено в очередь"
-    return "Kyro", body
+        return short, f"→ {folders}"
+    return short, "Сохранено в очередь"
 
 
 def _run(
@@ -185,7 +184,9 @@ def _run(
                 "type": "classified",
                 "video_id": video_id,
                 "list_title": primary_folder,
-                "title": (title or "")[:200],
+                "video_title": (title or "")[:200],
+                "title": push_title[:120],
+                "body": push_body[:400],
             },
         )
         log.info(
