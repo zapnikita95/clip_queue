@@ -186,6 +186,18 @@ data class OkResponse(
     val error: String? = null,
 )
 
+data class PrefsResponse(
+    val ok: Boolean? = null,
+    val prefs: Map<String, Any?>? = null,
+    val purpose_options: List<PurposeOption>? = null,
+    val error: String? = null,
+)
+
+data class PurposeOption(
+    val id: String? = null,
+    val label: String? = null,
+)
+
 data class ListsResponse(
     val ok: Boolean? = null,
     val lists: List<ListCard>? = null,

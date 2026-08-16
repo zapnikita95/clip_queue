@@ -27,6 +27,7 @@ import ru.clipqueue.app.data.MetricsSummaryResponse
 import ru.clipqueue.app.data.NowResponse
 import ru.clipqueue.app.data.OkResponse
 import ru.clipqueue.app.data.OpenResponse
+import ru.clipqueue.app.data.PrefsResponse
 import ru.clipqueue.app.data.RailResponse
 import ru.clipqueue.app.data.SaveHistoryResponse
 import ru.clipqueue.app.data.SaveResponse
@@ -143,7 +144,9 @@ class ApiClient(private val session: SessionStore) {
     suspend fun setReminder(videoId: String, remindAtIso: String): OkResponse =
         post("/api/reminders", mapOf("video_id" to videoId, "remind_at" to remindAtIso))
 
-    suspend fun setPrefs(body: Map<String, Any?>): OkResponse = post("/api/prefs", body)
+    suspend fun setPrefs(body: Map<String, Any?>): PrefsResponse = post("/api/prefs", body)
+
+    suspend fun getPrefs(): PrefsResponse = get("/api/prefs")
 
     suspend fun trackSurface(eventType: String, videoId: String = "", surface: String = ""): OkResponse =
         post(

@@ -212,6 +212,7 @@ def suggest_video_themes(
     existing_lists: list[str],
     *,
     for_classify: bool = False,
+    use_purposes: list[str] | None = None,
 ) -> dict[str, Any]:
     """Suggest tags + list folder for one video."""
     fallback = {
@@ -220,10 +221,29 @@ def suggest_video_themes(
         "reason": "LLM недоступен — теги вручную",
         "engine": "none",
     }
+    purpose_hint = ""
+    if use_purposes:
+        labels = []
+        for p in use_purposes:
+            labels.append(
+                {"study": "учёба", "work": "работа", "entertainment": "развлечение"}.get(
+                    p, p
+                )
+            )
+        purpose_hint = (
+            f"Цели пользователя: {', '.join(labels)}. "
+            "Выбирай папки строго из existing_lists. "
+        )
+        if "study" in use_purposes:
+            purpose_hint += (
+                "Для учебных роликов предпочитай папки «Учёба · …» (направления), "
+                "а не общие развлекательные. "
+            )
     if for_classify:
         system = (
             "Ты классификатор YouTube-видео для личной библиотеки. "
-            "Верни JSON: {\"tags\": [\"до 3 коротких тематических тегов на русском\"], "
+            + purpose_hint
+            + "Верни JSON: {\"tags\": [\"до 3 коротких тематических тегов на русском\"], "
             "\"list_titles\": [\"до 3 названий папок из existing_lists\"], "
             "\"list_title\": \"главная папка или null\", \"reason\": \"кратко почему\"}. "
             "Не больше 3 тегов и 3 папок. Теги обязательны, если тема понятна. "
@@ -234,7 +254,8 @@ def suggest_video_themes(
     else:
         system = (
             "Ты классификатор YouTube-видео для личного планировщика. "
-            "Верни JSON: {\"tags\": [\"до 3 коротких тегов на русском\"], "
+            + purpose_hint
+            + "Верни JSON: {\"tags\": [\"до 3 коротких тегов на русском\"], "
             "\"list_title\": \"название папки или null\", \"reason\": \"кратко почему\"}. "
             "Ставь тег ТОЛЬКО если он следует из названия/описания/канала. "
             "Не переиспользуй сленговые или личные теги пользователя без явных доказательств в тексте. "
@@ -249,6 +270,7 @@ def suggest_video_themes(
                 "description": (description or "")[:400],
                 "existing_tags": existing_tags[:60],
                 "existing_lists": existing_lists[:40],
+                "use_purposes": use_purposes or [],
                 "allowed_themes": sorted(CLASSIFY_THEME_TAGS) if for_classify else [],
             },
             ensure_ascii=False,

@@ -90,11 +90,20 @@ fun ProfileScreen(
     var takeoutMsg by remember { mutableStateOf<String?>(null) }
     var draft by remember { mutableStateOf("") }
     var tagsExpanded by remember { mutableStateOf(false) }
+    var selectedPurposes by remember { mutableStateOf(setOf("entertainment")) }
+    var purposeMsg by remember { mutableStateOf<String?>(null) }
 
     fun reload() {
         scope.launch {
             me = runCatching { api.me() }.getOrNull()
             tags = runCatching { api.tags().tags.orEmpty() }.getOrDefault(emptyList())
+            val prefs = runCatching { api.getPrefs() }.getOrNull()?.prefs
+            val raw = prefs?.get("use_purposes")
+            val list = when (raw) {
+                is List<*> -> raw.mapNotNull { it?.toString() }
+                else -> listOf("entertainment")
+            }
+            if (list.isNotEmpty()) selectedPurposes = list.toSet()
         }
     }
     LaunchedEffect(Unit) { reload() }
@@ -183,6 +192,71 @@ fun ProfileScreen(
                     title = "В библиотеке",
                     value = "${me?.library_count ?: 0}",
                 )
+            }
+
+            Spacer(Modifier.height(20.dp))
+            SettingsSectionLabel("Цели")
+            Text(
+                "От выбора зависят папки и категоризация новых сохранений.",
+                color = CqMuted,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(bottom = 8.dp),
+            )
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                listOf(
+                    "study" to "Учёба",
+                    "work" to "Работа",
+                    "entertainment" to "Развлечение",
+                ).forEach { (id, label) ->
+                    val on = id in selectedPurposes
+                    Text(
+                        label,
+                        color = if (on) CqText else CqMuted,
+                        fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(if (on) CqAccent.copy(alpha = 0.14f) else CqElev)
+                            .clickable {
+                                selectedPurposes = if (on) {
+                                    if (selectedPurposes.size <= 1) selectedPurposes
+                                    else selectedPurposes - id
+                                } else {
+                                    selectedPurposes + id
+                                }
+                            }
+                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                    )
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+            Text(
+                "Сохранить цели",
+                color = CqText,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(CqElev)
+                    .clickable {
+                        scope.launch {
+                            val r = runCatching {
+                                api.setPrefs(mapOf("use_purposes" to selectedPurposes.toList()))
+                            }.getOrNull()
+                            purposeMsg = if (r?.ok == true) {
+                                "Цели сохранены, папки обновлены"
+                            } else {
+                                r?.error ?: "Не удалось сохранить"
+                            }
+                            Toast.makeText(context, purposeMsg, Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
+            )
+            purposeMsg?.let {
+                Spacer(Modifier.height(6.dp))
+                Text(it, color = CqMuted, style = MaterialTheme.typography.bodySmall)
             }
 
             Spacer(Modifier.height(20.dp))

@@ -7,7 +7,7 @@ import re
 from collections import Counter, defaultdict
 from typing import Any
 
-from backend import db, llm, themes, youtube as yt
+from backend import db, llm, purposes, themes, youtube as yt
 
 _TOKEN = re.compile(r"[a-zA-Zа-яА-ЯёЁ0-9]{4,}", re.UNICODE)
 _STOP = {
@@ -149,6 +149,7 @@ def heuristic_propose(user_id: int) -> dict[str, Any]:
     shortform: list[str] = []
     longform: list[str] = []
     music: list[str] = []
+    active_catalog = purposes.active_themes_for_user(user_id)
 
     music_ids: set[str] = set()
     shortform_ids: set[str] = set()
@@ -201,6 +202,7 @@ def heuristic_propose(user_id: int) -> dict[str, Any]:
             r.get("channel_title"),
             description=r.get("description"),
             min_score=3,
+            catalog=active_catalog,
         )
         if not found:
             continue
@@ -222,7 +224,7 @@ def heuristic_propose(user_id: int) -> dict[str, Any]:
         themed_ids.add(vid)
 
     theme_folders = []
-    for theme_def in themes.THEMES:
+    for theme_def in active_catalog:
         tid = theme_def["id"]
         vids = by_theme.get(tid) or []
         if len(vids) < 2:
@@ -632,6 +634,7 @@ def apply_tags_for_video(
             existing_tags=existing,
             existing_lists=lists,
             for_classify=True,
+            use_purposes=purposes.get_user_purposes(user_id),
         )
         if use_llm
         else {
@@ -797,6 +800,7 @@ def classify_new_video(
         existing_tags=existing_tags,
         existing_lists=existing_lists,
         for_classify=True,
+        use_purposes=purposes.get_user_purposes(user_id),
     )
     picks = [
         str(x).strip()
@@ -1195,7 +1199,7 @@ def saved_structure(user_id: int, *, items_per_folder: int = 24) -> dict[str, An
 
     theme_opts = [
         {"id": t["id"], "title": t["title"]}
-        for t in themes.THEMES
+        for t in purposes.active_themes_for_user(user_id)
     ]
     return {
         "has_structure": bool(folders),
@@ -1341,7 +1345,14 @@ def _themed_list_ids(user_id: int) -> set[int]:
         t = (lst.get("title") or "").strip().lower()
         if not t or _is_catchall_list_title(t) or "скрыто" in t:
             continue
-        if t in theme_titles or t.startswith("канал:") or t.startswith("тема:"):
+        if (
+            t in theme_titles
+            or t.startswith("канал:")
+            or t.startswith("тема:")
+            or t.startswith("учёба ·")
+            or t.startswith("учеба ·")
+            or t.startswith("работа ·")
+        ):
             out.add(int(lst["id"]))
     return out
 
@@ -1371,8 +1382,13 @@ def _match_theme_folders(
     description: str | None,
 ) -> list[dict]:
     """Put video into existing folders whose titles match detected themes."""
+    catalog = purposes.active_themes_for_user(user_id)
     detected = themes.detect_themes(
-        title, channel_title, description=description or "", min_score=3
+        title,
+        channel_title,
+        description=description or "",
+        min_score=3,
+        catalog=catalog,
     )
     if not detected:
         return []
@@ -1405,6 +1421,43 @@ def _match_theme_folders(
             }
         )
     return matched
+
+
+def seed_purpose_theme_folders(user_id: int) -> dict[str, Any]:
+    """Create missing theme lists + classify_rules for the user's purpose packs."""
+    ensure_classify_tables()
+    catalog = purposes.active_themes_for_user(user_id)
+    existing_rules = {
+        (r.get("rule_type"), str(r.get("rule_value") or "")): r
+        for r in list_rules(user_id)
+    }
+    created: list[dict[str, Any]] = []
+    rules_added = 0
+    priority = 50
+    for th in catalog:
+        title = (th.get("title") or "").strip()[:120]
+        tid = (th.get("id") or "").strip()
+        if not title or not tid:
+            continue
+        list_id = _ensure_list(user_id, title)
+        key = ("theme", tid)
+        if key not in existing_rules:
+            db.execute(
+                "INSERT INTO classify_rules (user_id, list_id, rule_type, rule_value, priority) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (user_id, list_id, "theme", tid, priority),
+            )
+            existing_rules[key] = {"list_id": list_id}
+            rules_added += 1
+            priority += 5
+        created.append({"id": list_id, "title": title, "theme_id": tid})
+    return {
+        "ok": True,
+        "purposes": purposes.get_user_purposes(user_id),
+        "lists": created,
+        "rules_added": rules_added,
+        "count": len(created),
+    }
 
 
 def pending_to_classify(user_id: int, *, limit: int = 250) -> list[dict[str, Any]]:

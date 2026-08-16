@@ -344,6 +344,258 @@ THEMES: list[dict[str, Any]] = [
         ],
         "channels": [],
     },
+    # Purpose packs: study (detailed directions)
+    {
+        "id": "study_english",
+        "title": "Учёба · Английский",
+        "keywords": [
+            r"\benglish\b",
+            r"\benglishbad\b",
+            r"английск",
+            r"\bie\s*lts\b",
+            r"\btoefl\b",
+            r"\bphrasal\b",
+            r"\bvocabulary\b",
+            r"\bgrammar\b",
+            r"произношени",
+            r"\bpronunciation\b",
+            r"english\s+class",
+            r"учить\s+англий",
+            r"урок.*англий",
+        ],
+        "channels": [
+            "englishbad",
+            "english class",
+            "engvid",
+            "bbc learning english",
+            "rachel's english",
+            "english with lucy",
+        ],
+        "weight": 3,
+    },
+    {
+        "id": "study_languages",
+        "title": "Учёба · Языки",
+        "keywords": [
+            r"\blanguage\b",
+            r"языки?",
+            r"иностранн",
+            r"\bpolyglot\b",
+            r"\bspanish\b",
+            r"\bfrench\b",
+            r"\bgerman\b",
+            r"\bchinese\b",
+            r"\bjapanese\b",
+            r"учить\s+(испан|франц|немец|китай|япон)",
+        ],
+        "channels": [],
+        "weight": 2,
+    },
+    {
+        "id": "study_math",
+        "title": "Учёба · Математика",
+        "keywords": [
+            r"математик",
+            r"\bmath\b",
+            r"алгебр",
+            r"геометр",
+            r"тригонометр",
+            r"производн",
+            r"интеграл",
+            r"уравнени",
+            r"\bcalculus\b",
+            r"егэ.*матем",
+            r"огэ.*матем",
+        ],
+        "channels": [],
+        "weight": 3,
+    },
+    {
+        "id": "study_programming",
+        "title": "Учёба · Программирование",
+        "keywords": [
+            r"программир",
+            r"\bcoding\b",
+            r"\bpython\b",
+            r"\bjavascript\b",
+            r"\btypescript\b",
+            r"\bjava\b",
+            r"\bc\+\+",
+            r"алгоритм",
+            r"\bleetcode\b",
+            r"урок.*код",
+            r"\breact\b",
+            r"\bkotlin\b",
+        ],
+        "channels": ["freecodecamp", "cs50", "программирование"],
+        "weight": 3,
+    },
+    {
+        "id": "study_exams",
+        "title": "Учёба · Экзамены",
+        "keywords": [
+            r"\bегэ\b",
+            r"\bогэ\b",
+            r"экзамен",
+            r"подготовк.*экзамен",
+            r"\bielts\b",
+            r"\btoefl\b",
+            r"тест.*задани",
+            r"вариант\s+\d",
+            r"демоверси",
+        ],
+        "channels": [],
+        "weight": 3,
+        "negatives": [r"экзамен.*вод", r"автошкол", r"\bпдд\b"],
+    },
+    {
+        "id": "study_lectures",
+        "title": "Учёба · Лекции",
+        "keywords": [
+            r"лекци",
+            r"\blecture\b",
+            r"семинар",
+            r"курс\s+(по|от)",
+            r"открыт.*урок",
+            r"вебинар",
+            r"\bcoursera\b",
+            r"\budemy\b",
+        ],
+        "channels": [],
+        "weight": 2,
+    },
+    {
+        "id": "study_science",
+        "title": "Учёба · Наука",
+        "keywords": [
+            r"наук",
+            r"физик",
+            r"хими",
+            r"биологи",
+            r"космос",
+            r"\bscience\b",
+            r"эксперимент",
+            r"урок.*(физик|хими|биологи)",
+        ],
+        "channels": ["veritasium", "vsauce", "наука"],
+        "weight": 2,
+    },
+    {
+        "id": "study_history",
+        "title": "Учёба · История",
+        "keywords": [
+            r"истори",
+            r"средневек",
+            r"древн",
+            r"импери",
+            r"войн[аыуе]",
+            r"\bhistory\b",
+            r"археолог",
+            r"урок.*истори",
+        ],
+        "channels": ["arzamas", "история", "кликклак"],
+        "negatives": [r"завтрашн.*истори"],
+        "weight": 2,
+    },
+    {
+        "id": "study_psychology",
+        "title": "Учёба · Психология",
+        "keywords": [
+            r"психолог",
+            r"ментальн",
+            r"тревог",
+            r"депресс",
+            r"самооценк",
+            r"\btherapy\b",
+            r"когнитивн",
+            r"учеб.*психолог",
+        ],
+        "channels": ["психолог"],
+        "weight": 2,
+    },
+    {
+        "id": "study_notes",
+        "title": "Учёба · Конспекты",
+        "keywords": [
+            r"конспект",
+            r"заметк",
+            r"\bnotes?\b",
+            r"как\s+учить",
+            r"методик.*запомин",
+            r"spaced\s+repetition",
+            r"\banki\b",
+            r"конспектир",
+        ],
+        "channels": [],
+        "weight": 2,
+    },
+    {
+        "id": "work_productivity",
+        "title": "Работа · Продуктивность",
+        "keywords": [
+            r"продуктивн",
+            r"\bproductivity\b",
+            r"тайм.?менедж",
+            r"\btime\s+management\b",
+            r"привычк",
+            r"\bhabits?\b",
+            r"фокус",
+            r"\bdeep\s+work\b",
+            r"планирован.*дня",
+        ],
+        "channels": [],
+        "weight": 3,
+    },
+    {
+        "id": "work_career",
+        "title": "Работа · Карьера",
+        "keywords": [
+            r"карьер",
+            r"собеседован",
+            r"\binterview\b",
+            r"резюме",
+            r"\bcv\b",
+            r"ваканси",
+            r"найм",
+            r"повышение",
+            r"менеджер",
+            r"лидерств",
+        ],
+        "channels": [],
+        "weight": 3,
+    },
+    {
+        "id": "work_tools",
+        "title": "Работа · Инструменты",
+        "keywords": [
+            r"\bexcel\b",
+            r"\bnotion\b",
+            r"\bfigma\b",
+            r"\bslack\b",
+            r"\bjira\b",
+            r"\btrello\b",
+            r"google\s+sheets",
+            r"powerpoint",
+            r"\bcrm\b",
+            r"автоматизац.*работ",
+        ],
+        "channels": [],
+        "weight": 2,
+    },
+    {
+        "id": "work_presentations",
+        "title": "Работа · Презентации",
+        "keywords": [
+            r"презентац",
+            r"\bpitch\b",
+            r"\bslides?\b",
+            r"доклад",
+            r"публичн.*выступ",
+            r"\bkeynote\b",
+        ],
+        "channels": [],
+        "weight": 2,
+    },
 ]
 
 
@@ -379,8 +631,10 @@ def score_theme(theme: dict[str, Any], title: str, channel: str, description: st
         if rx.search(blob):
             score += kw_w
     # English theme should not steal pure "languages" unless english-specific
-    if theme["id"] == "languages" and score_theme(_BY_ID["english"], title, channel, description) >= 4:
-        score = max(0, score - 3)
+    if theme["id"] in ("languages", "study_languages"):
+        eng = _BY_ID.get("english") or _BY_ID.get("study_english")
+        if eng and score_theme(eng, title, channel, description) >= 4:
+            score = max(0, score - 3)
     # Cinema beats comedy when both fire on film reviews
     if theme["id"] == "comedy":
         cine = score_theme(_BY_ID["cinema"], title, channel, description)
@@ -409,13 +663,18 @@ def detect_themes(
     *,
     description: str | None = None,
     min_score: int = 3,
+    catalog: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
-    """Return themes sorted by score desc (may be empty)."""
+    """Return themes sorted by score desc (may be empty).
+
+    catalog: optional compiled theme list (purpose-filtered). Default = all THEMES.
+    """
     title = title or ""
     channel = channel_title or ""
     desc = description or ""
+    pool = catalog if catalog is not None else _COMPILED
     scored = []
-    for theme in _COMPILED:
+    for theme in pool:
         sc = score_theme(theme, title, channel, desc)
         if sc >= min_score:
             scored.append((sc, theme))
@@ -428,8 +687,11 @@ def primary_theme(
     channel_title: str | None,
     *,
     description: str | None = None,
+    catalog: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any] | None:
-    themes = detect_themes(title, channel_title, description=description, min_score=3)
+    themes = detect_themes(
+        title, channel_title, description=description, min_score=3, catalog=catalog
+    )
     return themes[0] if themes else None
 
 

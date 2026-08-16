@@ -747,6 +747,8 @@ def get_prefs(user_id: int) -> dict[str, Any]:
         "morning_push_hour": 9,
         "digest_weekday": 6,
         "digest_hour": 10,
+        "use_purposes": ["entertainment"],
+        "purposes_onboarding_done": False,
     }
     row = db.fetchone("SELECT prefs_json FROM user_prefs WHERE user_id = ?", (user_id,))
     if not row:
@@ -757,6 +759,12 @@ def get_prefs(user_id: int) -> dict[str, Any]:
         cur = {}
     out = dict(defaults)
     out.update(cur)
+    try:
+        from backend import purposes as _purposes
+
+        out["use_purposes"] = _purposes.normalize_purposes(out.get("use_purposes"))
+    except Exception:
+        out["use_purposes"] = ["entertainment"]
     return out
 
 
@@ -765,11 +773,25 @@ def set_prefs(user_id: int, patch: dict[str, Any]) -> dict[str, Any]:
 
     ensure_prefs_table()
     cur = get_prefs(user_id)
+    purposes_touched = False
+    first_purpose_save = False
     for k, v in (patch or {}).items():
         if v is None:
             continue
         if k in ("morning_themes", "evening_themes") and isinstance(v, list):
             cur[k] = [str(x) for x in v if str(x) in DAYPART_THEMES][:6]
+            continue
+        if k == "use_purposes":
+            from backend import purposes as _purposes
+
+            before_done = bool(cur.get("purposes_onboarding_done"))
+            cur["use_purposes"] = _purposes.normalize_purposes(v)
+            cur["purposes_onboarding_done"] = True
+            purposes_touched = True
+            first_purpose_save = not before_done
+            continue
+        if k == "purposes_onboarding_done":
+            cur[k] = bool(v)
             continue
         if k in (
             "quiet_start",
@@ -787,6 +809,24 @@ def set_prefs(user_id: int, patch: dict[str, Any]) -> dict[str, Any]:
                 continue
             continue
         cur[k] = v
+
+    if purposes_touched and first_purpose_save:
+        try:
+            from backend import purposes as _purposes
+
+            defaults = _purposes.daypart_defaults_for_purposes(cur["use_purposes"])
+            # Only fill if still at stock defaults (don't clobber custom)
+            if cur.get("morning_themes") == list(DEFAULT_MORNING_THEMES):
+                cur["morning_themes"] = [
+                    x for x in defaults["morning_themes"] if x in DAYPART_THEMES
+                ][:6]
+            if cur.get("evening_themes") == list(DEFAULT_EVENING_THEMES):
+                cur["evening_themes"] = [
+                    x for x in defaults["evening_themes"] if x in DAYPART_THEMES
+                ][:6]
+        except Exception:
+            pass
+
     raw = json.dumps(cur, ensure_ascii=False)
     if db.is_postgres():
         db.execute(

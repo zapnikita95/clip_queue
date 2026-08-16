@@ -1138,6 +1138,12 @@ Curate — идея отбора и создания коллекции. Kyro н
       </section>
 
       <div class="panel settings-panel">
+        <h2>Зачем тебе Kyro?</h2>
+        <p class="muted" style="margin:0 0 10px">Можно несколько. Для учёбы папки подробнее по направлениям.</p>
+        <div class="filter-chips" id="use-purposes"></div>
+      </div>
+
+      <div class="panel settings-panel">
         <h2>Утро и вечер</h2>
         <div class="settings-row">
           <label>Часовой пояс (UTC±)</label>
@@ -1237,11 +1243,36 @@ Curate — идея отбора и создания коллекции. Kyro н
     const selectedThemes = (el) =>
       [...(el?.querySelectorAll(".chip.active") || [])].map((b) => b.getAttribute("data-theme")).filter(Boolean);
 
+    const paintPurposeChips = (el, selected, catalog) => {
+      if (!el) return;
+      const set = new Set(selected || []);
+      el.innerHTML = (catalog || []).map((t) =>
+        `<button type="button" class="chip ${set.has(t.id) ? "active" : ""}" data-purpose="${escapeHtml(t.id)}">${escapeHtml(t.label)}</button>`
+      ).join("");
+      el.querySelectorAll("[data-purpose]").forEach((btn) => {
+        btn.onclick = () => {
+          btn.classList.toggle("active");
+          const active = el.querySelectorAll(".chip.active");
+          if (!active.length) btn.classList.add("active");
+        };
+      });
+    };
+    const selectedPurposes = (el) =>
+      [...(el?.querySelectorAll(".chip.active") || [])].map((b) => b.getAttribute("data-purpose")).filter(Boolean);
+
     let themeCatalog = [];
+    let purposeCatalog = [
+      { id: "study", label: "Учёба" },
+      { id: "work", label: "Работа" },
+      { id: "entertainment", label: "Развлечение" },
+    ];
     try {
       const prefsRes = await api("/api/prefs");
       const p = prefsRes.prefs || {};
       themeCatalog = prefsRes.daypart_themes || [];
+      if (Array.isArray(prefsRes.purpose_options) && prefsRes.purpose_options.length) {
+        purposeCatalog = prefsRes.purpose_options;
+      }
       const setVal = (id, v) => { const n = $(id); if (n && v != null) n.value = v; };
       setVal("#tz-offset", p.tz_offset_hours);
       setVal("#morning-until", p.morning_until);
@@ -1255,6 +1286,7 @@ Curate — идея отбора и создания коллекции. Kyro н
       if (mpe) mpe.checked = p.morning_push_enabled !== false;
       const de = $("#digest-enabled");
       if (de) de.checked = p.digest_enabled !== false;
+      paintPurposeChips($("#use-purposes"), p.use_purposes || ["entertainment"], purposeCatalog);
       paintThemeChips($("#morning-themes"), p.morning_themes, themeCatalog);
       paintThemeChips($("#evening-themes"), p.evening_themes, themeCatalog);
       const m = await api("/api/metrics/summary").catch(() => null);
@@ -1263,6 +1295,7 @@ Curate — идея отбора и создания коллекции. Kyro н
         mo.textContent = `За неделю из плана: ${m.weekly_planned_watches || 0} · в папках ${m.depth_themed_pct || 0}%`;
       }
     } catch (_) {
+      paintPurposeChips($("#use-purposes"), ["entertainment"], purposeCatalog);
       paintThemeChips($("#morning-themes"), ["новости", "обучение", "подкаст"], themeCatalog);
       paintThemeChips($("#evening-themes"), ["история", "документалка", "кино"], themeCatalog);
     }
@@ -1271,9 +1304,11 @@ Curate — идея отбора и создания коллекции. Kyro н
     if (prefsSave) {
       prefsSave.onclick = async () => {
         try {
+          const purposes = selectedPurposes($("#use-purposes"));
           await api("/api/prefs", {
             method: "POST",
             body: JSON.stringify({
+              use_purposes: purposes.length ? purposes : ["entertainment"],
               tz_offset_hours: Number($("#tz-offset")?.value || 3),
               morning_until: Number($("#morning-until")?.value || 12),
               evening_from: Number($("#evening-from")?.value || 18),

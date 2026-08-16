@@ -12,7 +12,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from flask import Flask, g, jsonify, redirect, request, send_from_directory
 
-from backend import auth, db, digest_jobs, google_oauth, llm, metrics, now_plan, organize, push, reminders_svc, search as cq_search, share_classify, sync_jobs, takeout, themes, yt_sync
+from backend import auth, db, digest_jobs, google_oauth, llm, metrics, now_plan, organize, purposes, push, reminders_svc, search as cq_search, share_classify, sync_jobs, takeout, themes, yt_sync
 from backend import classify_jobs
 from backend import similarity as sim
 from backend import youtube as yt
@@ -1264,7 +1264,10 @@ def create_app() -> Flask:
                 "theme": theme or None,
                 "dur_min": dur_min or None,
                 "dur_max": dur_max or None,
-                "themes": [{"id": t["id"], "title": t["title"]} for t in themes.THEMES],
+                "themes": [
+                    {"id": t["id"], "title": t["title"]}
+                    for t in purposes.active_themes_for_user(uid)
+                ],
             }
         )
 
@@ -1837,12 +1840,18 @@ def create_app() -> Flask:
     @require_auth
     def get_user_prefs():
         uid = current_user()["user_id"]
+        prefs = now_plan.get_prefs(uid)
         return jsonify(
             {
                 "ok": True,
-                "prefs": now_plan.get_prefs(uid),
+                "prefs": prefs,
                 "daypart_themes": now_plan.daypart_theme_catalog(),
-                "daypart": now_plan.current_daypart(now_plan.get_prefs(uid)),
+                "daypart": now_plan.current_daypart(prefs),
+                "purpose_options": purposes.purpose_catalog(),
+                "active_themes": [
+                    {"id": t["id"], "title": t["title"]}
+                    for t in purposes.active_themes_for_user(uid)
+                ],
             }
         )
 
@@ -1852,7 +1861,24 @@ def create_app() -> Flask:
         uid = current_user()["user_id"]
         body = request.get_json(silent=True) or {}
         prefs = now_plan.set_prefs(uid, body)
-        return jsonify({"ok": True, "prefs": prefs})
+        seeded = None
+        if "use_purposes" in body:
+            try:
+                seeded = organize.seed_purpose_theme_folders(uid)
+            except Exception as e:
+                log.warning("purpose seed failed: %s", e)
+                seeded = {"ok": False, "error": str(e)}
+        return jsonify(
+            {
+                "ok": True,
+                "prefs": prefs,
+                "seeded": seeded,
+                "active_themes": [
+                    {"id": t["id"], "title": t["title"]}
+                    for t in purposes.active_themes_for_user(uid)
+                ],
+            }
+        )
 
     @app.post("/api/home/morning-push/send")
     @require_auth
@@ -2913,6 +2939,7 @@ def create_app() -> Flask:
             description=row.get("description") or "",
             existing_tags=[t["name"] for t in tags],
             existing_lists=[l["title"] for l in lists],
+            use_purposes=purposes.get_user_purposes(uid),
         )
         apply = bool((request.get_json(silent=True) or {}).get("apply"))
         applied = {"tags": [], "list_id": None}
