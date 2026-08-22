@@ -996,8 +996,114 @@ def record_push_not_interested(
     }
 
 
+_MORNING_USER_SOURCES = frozenset(
+    {"android_share", "share_target", "pwa_share", "paste", "add", "chrome_extension"}
+)
+_YT_BULK_SOURCES = frozenset({"liked", "playlist", "takeout"})
+
+
+def _parse_saved_at(raw: Any) -> Optional[datetime]:
+    if raw is None:
+        return None
+    if isinstance(raw, datetime):
+        return raw if raw.tzinfo else raw.replace(tzinfo=timezone.utc)
+    s = str(raw).strip()
+    if not s:
+        return None
+    try:
+        if s.endswith("Z"):
+            s = s[:-1] + "+00:00"
+        dt = datetime.fromisoformat(s)
+        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
+def _morning_pool_meta(user_id: int, video_ids: list[str]) -> dict[str, dict[str, Any]]:
+    """Per-video library + folder hints for morning push ranking."""
+    from backend.yt_sync import is_inbox_playlist_title
+
+    ids = [v for v in video_ids if v]
+    if not ids:
+        return {}
+    placeholders = ", ".join("?" for _ in ids)
+    rows = db.fetchall(
+        f"""
+        SELECT li.video_id, li.status, li.source, li.saved_at, li.interest
+        FROM library_items li
+        WHERE li.user_id = ? AND li.video_id IN ({placeholders})
+        """,
+        (user_id, *ids),
+    )
+    folder_rows = db.fetchall(
+        f"""
+        SELECT x.video_id, l.title
+        FROM list_items x
+        JOIN lists l ON l.id = x.list_id
+        WHERE l.user_id = ? AND x.video_id IN ({placeholders})
+        """,
+        (user_id, *ids),
+    )
+    folders: dict[str, list[str]] = {}
+    for r in folder_rows or []:
+        vid = str(r.get("video_id") or "")
+        if vid:
+            folders.setdefault(vid, []).append(str(r.get("title") or ""))
+
+    out: dict[str, dict[str, Any]] = {}
+    now = datetime.now(timezone.utc)
+    for r in rows or []:
+        vid = str(r.get("video_id") or "")
+        if not vid:
+            continue
+        titles = folders.get(vid, [])
+        yt_inbox_only = False
+        if titles:
+            yt_inbox_only = all(
+                is_inbox_playlist_title(t.replace("YT: ", "", 1)) for t in titles if t
+            )
+        saved = _parse_saved_at(r.get("saved_at"))
+        days_old = (now - saved).days if saved else 9999
+        source = str(r.get("source") or "").strip().lower()
+        out[vid] = {
+            "status": r.get("status") or "queue",
+            "source": source,
+            "interest": int(r.get("interest") or 0),
+            "days_old": days_old,
+            "yt_inbox_only": yt_inbox_only,
+        }
+    return out
+
+
+def _morning_tier(meta: dict[str, Any]) -> int:
+    """Lower = better for morning push. Tier 9 = never pick unless desperate."""
+    if not meta:
+        return 9
+    status = meta.get("status") or "queue"
+    source = meta.get("source") or ""
+    days_old = int(meta.get("days_old") or 9999)
+    interest = int(meta.get("interest") or 0)
+    yt_inbox_only = bool(meta.get("yt_inbox_only"))
+
+    if status == "in_progress":
+        return 0
+    if source in _MORNING_USER_SOURCES:
+        return 1
+    if interest >= 1:
+        return 2
+    if days_old <= 30:
+        return 3
+    if source not in _YT_BULK_SOURCES and days_old <= 120:
+        return 4
+    if yt_inbox_only and source in _YT_BULK_SOURCES:
+        return 9
+    if days_old <= 180:
+        return 6
+    return 8
+
+
 def pick_for_morning_push(user_id: int) -> Optional[dict[str, Any]]:
-    """One fresh video for morning push — rotate, skip repeats & «неинтересно»."""
+    """One fresh video for morning push — prefer recent saves, skip YT-sync cruft."""
     import random
 
     prefs = get_prefs(user_id)
@@ -1015,8 +1121,8 @@ def pick_for_morning_push(user_id: int) -> Optional[dict[str, Any]]:
         return out
 
     pool = _collect("short", 14) + _collect("any", 14)
-    ranked: list[dict] = []
     seen: set[str] = set()
+    candidates: list[dict] = []
     for card in pool:
         vid = str(card.get("video_id") or "").strip()
         if not vid or vid in seen:
@@ -1027,26 +1133,32 @@ def pick_for_morning_push(user_id: int) -> Optional[dict[str, Any]]:
         ch = str(card.get("channel_title") or "").strip().lower()
         if ch and ch in bad_channels:
             continue
-        ranked.append(card)
+        candidates.append(card)
 
-    if not ranked:
-        # Last resort: allow older history but still skip hard not-interested
-        for card in pool:
-            vid = str(card.get("video_id") or "").strip()
-            if not vid or vid in bad_vids:
-                continue
-            ranked.append(card)
-            if len(ranked) >= 6:
-                break
-
-    if not ranked:
+    if not candidates:
         return None
 
-    # Live rotation among top candidates — not always picks[0]
-    top = ranked[:8]
+    meta = _morning_pool_meta(user_id, [str(c.get("video_id") or "") for c in candidates])
+    # Drop ancient YT playlist dumps sitting only in «смотреть позже»-style folders.
+    candidates = [
+        c
+        for c in candidates
+        if _morning_tier(meta.get(str(c.get("video_id") or ""), {})) < 9
+    ]
+    if not candidates:
+        return None
+
+    candidates.sort(
+        key=lambda c: (
+            _morning_tier(meta.get(str(c.get("video_id") or ""), {})),
+            -int(meta.get(str(c.get("video_id") or ""), {}).get("interest") or 0),
+            int(meta.get(str(c.get("video_id") or ""), {}).get("days_old") or 9999),
+        ),
+    )
+
+    top = candidates[:8]
     weights = [max(1.0, 9.0 - i) for i in range(len(top))]
-    pick = random.choices(top, weights=weights, k=1)[0]
-    return pick
+    return random.choices(top, weights=weights, k=1)[0]
 
 
 def _today_key() -> str:

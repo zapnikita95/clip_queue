@@ -111,26 +111,45 @@ def send_digest_for_user(user_id: int) -> dict:
 
 
 def send_morning_for_user(user_id: int) -> dict:
+    from backend import youtube as yt
+
     prefs = now_plan.get_prefs(user_id)
     if prefs.get("morning_push_enabled") is False:
         return {"ok": True, "sent": 0, "skipped": "disabled"}
     pick = now_plan.pick_for_morning_push(user_id)
     if not pick:
         return {"ok": True, "sent": 0, "skipped": "empty"}
-    vid = str(pick.get("video_id") or "")
-    title = "Kyro · на утро"
+    vid = str(pick.get("video_id") or "").strip()
+    if not vid:
+        return {"ok": True, "sent": 0, "skipped": "no_video_id"}
+    row = db.fetchone(
+        """
+        SELECT v.video_id, v.title, v.channel_title, li.status
+        FROM library_items li
+        JOIN videos v ON v.video_id = li.video_id
+        WHERE li.user_id = ? AND li.video_id = ?
+          AND li.status IN ('queue', 'in_progress')
+        """,
+        (user_id, vid),
+    )
+    if not row or yt.is_unavailable_video(row.get("title")):
+        return {"ok": True, "sent": 0, "skipped": "unavailable"}
+    name = (pick.get("title") or row.get("title") or "Ролик из очереди").strip()[:100]
     why = (pick.get("reason") or "").strip()
-    name = (pick.get("title") or "Ролик из вашей очереди")[:100]
-    body = f"{name}" + (f"\n{why}" if why else "")
+    push_title = name
+    push_body = why if why else "На утро из вашей очереди"
     result = push.send_to_user(
         user_id,
-        title=title,
-        body=body[:400],
+        title=push_title,
+        body=push_body[:400],
         data={
             "type": "morning",
             "video_id": vid,
+            "video_title": name[:200],
+            "title": push_title[:120],
+            "body": push_body[:400],
             "route": f"/v/{vid}",
-            "deeplink": f"clipqueue://video/{vid}?surface=push",
+            "deeplink": f"clipqueue://video/{vid}?surface=morning&action=open",
             "actions": "open,not_interested",
         },
         data_only=True,
@@ -177,16 +196,25 @@ def tick() -> dict:
             continue
         try:
             due = reminders_svc.due_reminders(uid)
-            for item in due[:5]:
+            for item in due[:1]:
+                vid = str(item.get("video_id") or "").strip()
+                if not vid:
+                    continue
+                vtitle = (item.get("title") or "Ролик ждёт вас").strip()[:120]
                 push.send_to_user(
                     uid,
-                    title="Напоминание Kyro",
-                    body=(item.get("title") or "Ролик ждёт вас")[:120],
+                    title=vtitle,
+                    body="Напоминание Kyro",
                     data={
                         "type": "reminder",
-                        "video_id": item["video_id"],
-                        "route": f"/v/{item['video_id']}",
+                        "video_id": vid,
+                        "video_title": vtitle[:200],
+                        "title": vtitle[:120],
+                        "body": "Напоминание Kyro",
+                        "route": f"/v/{vid}",
+                        "deeplink": f"clipqueue://video/{vid}?surface=reminder&action=open",
                     },
+                    data_only=True,
                 )
                 reminders_svc.complete_reminder(uid, int(item["id"]))
                 rem_sent += 1

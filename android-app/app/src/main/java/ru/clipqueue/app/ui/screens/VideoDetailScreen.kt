@@ -36,6 +36,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -52,6 +53,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import ru.clipqueue.app.ApiClient
 import ru.clipqueue.app.data.VideoCard
@@ -81,11 +83,25 @@ fun VideoDetailScreen(
     var similar by remember { mutableStateOf<List<VideoCard>>(emptyList()) }
     val actions = rememberVideoActions(api, onOpenVideo)
 
+    var loadFailed by remember { mutableStateOf(false) }
+
     fun reload() {
         scope.launch {
             loading = true
-            item = runCatching { api.video(videoId).item }.getOrNull()
-            similar = runCatching { api.similar(videoId).items }.getOrNull().orEmpty()
+            loadFailed = false
+            var loaded: VideoCard? = null
+            repeat(3) { attempt ->
+                loaded = runCatching { api.video(videoId).item }.getOrNull()
+                if (loaded != null) return@repeat
+                if (attempt < 2) delay(500L * (attempt + 1))
+            }
+            item = loaded
+            loadFailed = loaded == null
+            similar = if (loaded != null) {
+                runCatching { api.similar(videoId).items }.getOrNull().orEmpty()
+            } else {
+                emptyList()
+            }
             loading = false
         }
     }
@@ -130,7 +146,18 @@ fun VideoDetailScreen(
                 CircularProgressIndicator(color = CqAccent)
             }
             1 -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("Не найдено", color = CqMuted)
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        if (loadFailed) "Не удалось загрузить видео" else "Не найдено",
+                        color = CqMuted,
+                    )
+                    if (loadFailed) {
+                        Spacer(Modifier.height(12.dp))
+                        TextButton(onClick = { reload() }) {
+                            Text("Повторить", color = CqAccent)
+                        }
+                    }
+                }
             }
             else -> {
                 val v = item!!

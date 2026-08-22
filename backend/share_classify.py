@@ -11,6 +11,11 @@ from backend import db, organize, push, youtube as yt
 
 log = logging.getLogger("clip_queue.share_classify")
 
+# Only explicit share/save actions get a classify push — never bulk/sync.
+_CLASSIFY_PUSH_SOURCES = frozenset(
+    {"android_share", "share_target", "pwa_share", "paste", "add", "chrome_extension"}
+)
+
 
 def enqueue_after_save(
     user_id: int,
@@ -176,19 +181,28 @@ def _run(
 
         push_title, push_body = _push_copy(title, unique_folders)
         primary_folder = unique_folders[0] if unique_folders else ""
-        push.send_to_user(
-            user_id,
-            title=push_title,
-            body=push_body,
-            data={
-                "type": "classified",
-                "video_id": video_id,
-                "list_title": primary_folder,
-                "video_title": (title or "")[:200],
-                "title": push_title[:120],
-                "body": push_body[:400],
-            },
-        )
+        src = (source or "").strip().lower()
+        if src in _CLASSIFY_PUSH_SOURCES:
+            push.send_to_user(
+                user_id,
+                title=push_title,
+                body=push_body,
+                data={
+                    "type": "classified",
+                    "video_id": video_id,
+                    "list_title": primary_folder,
+                    "video_title": (title or push_title)[:200],
+                    "title": push_title[:120],
+                    "body": push_body[:400],
+                },
+            )
+        else:
+            log.info(
+                "share classify done (no push, source=%s) user=%s video=%s",
+                source,
+                user_id,
+                video_id,
+            )
         log.info(
             "share classify done user=%s video=%s folders=%s engine=%s",
             user_id,
