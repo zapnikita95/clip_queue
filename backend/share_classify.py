@@ -7,7 +7,7 @@ import logging
 import threading
 from typing import Any, Optional
 
-from backend import db, organize, push, youtube as yt
+from backend import db, organize, push, push_copy, youtube as yt
 
 log = logging.getLogger("clip_queue.share_classify")
 
@@ -110,14 +110,7 @@ def _record_save_event(
 
 
 def _push_copy(title: str, folder_titles: list[str]) -> tuple[str, str]:
-    """Notification title = video name; body = folder it landed in."""
-    short = (title or "Видео").strip() or "Видео"
-    if len(short) > 80:
-        short = short[:77] + "…"
-    if folder_titles:
-        folders = ", ".join(folder_titles[:3])
-        return short, f"→ {folders}"
-    return short, "Сохранено в очередь"
+    return push_copy.classified(title, folder_titles)
 
 
 def _run(
@@ -191,7 +184,7 @@ def _run(
                     "type": "classified",
                     "video_id": video_id,
                     "list_title": primary_folder,
-                    "video_title": (title or push_title)[:200],
+                    "video_title": push_copy.video_label(title)[:200],
                     "title": push_title[:120],
                     "body": push_body[:400],
                 },

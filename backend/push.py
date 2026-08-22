@@ -133,17 +133,13 @@ def send_to_user(
         payload["deeplink"] = f"clipqueue://video/{vid}?surface=push"
     if vid and "route" not in payload:
         payload["route"] = f"/v/{vid}"
-    # Title/body in data so the app can render when data_only.
-    # Prefer explicit video_title over a generic "Kyro" notification title.
-    video_title = (payload.get("video_title") or "").strip()
-    if video_title:
-        payload["title"] = video_title[:120]
-        payload["video_title"] = video_title[:200]
-    else:
-        payload.setdefault("title", (title or "Kyro")[:120])
-    payload.setdefault("body", (body or "")[:400])
-    # If caller still sent title="Kyro" but body embeds «video» — keep body; client
-    # prefers video_title/title that is not Kyro.
+    # Caller sets human headline in title/body; video_title is metadata for body fallback.
+    if not (payload.get("title") or "").strip():
+        payload["title"] = (title or "Kyro")[:120]
+    if not (payload.get("body") or "").strip():
+        payload["body"] = (body or payload.get("video_title") or "")[:400]
+    if not (payload.get("video_title") or "").strip() and (body or title):
+        payload["video_title"] = (body or title)[:200]
 
     # Video-related pushes → data-only for reliable open + actions.
     kind = (payload.get("type") or "").strip().lower()

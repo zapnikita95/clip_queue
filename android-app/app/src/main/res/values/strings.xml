@@ -9,4 +9,9 @@
     <string name="share_saved_none">Сохранено</string>
     <string name="notif_channel_classify">Классификация</string>
     <string name="notif_channel_classify_desc">Куда Kyro разложил сохранённое видео</string>
+    <string name="notif_morning_title">Рекомендуем посмотреть</string>
+    <string name="notif_reminder_title">Напоминание</string>
+    <string name="notif_classified_title">Сохранено в Kyro</string>
+    <string name="notif_default_title">Kyro</string>
+    <string name="notif_default_body">Откройте, чтобы посмотреть</string>
 </resources>

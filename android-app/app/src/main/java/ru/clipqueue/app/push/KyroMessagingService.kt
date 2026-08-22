@@ -25,26 +25,22 @@ class KyroMessagingService : FirebaseMessagingService() {
         super.onMessageReceived(message)
         val payload = message.data
         val videoId = payload["video_id"].orEmpty().trim()
-        val listTitle = payload["list_title"].orEmpty().trim()
-        val videoTitle = sequenceOf(
-            payload["video_title"],
+        val pushType = payload["type"].orEmpty().trim().lowercase()
+        val headline = sequenceOf(
             payload["title"],
             message.notification?.title,
-        ).mapNotNull { it?.trim()?.takeIf { s -> s.isNotBlank() && !s.equals("Kyro", ignoreCase = true) } }
+        ).mapNotNull { it?.trim()?.takeIf { s -> s.isNotBlank() } }
             .firstOrNull()
-            .orEmpty()
-        val title = videoTitle.ifBlank {
-            listTitle.ifBlank { getString(R.string.app_name) }
-        }
+            ?: defaultHeadline(pushType)
         val body = sequenceOf(
             payload["body"],
+            payload["video_title"],
             message.notification?.body,
         ).mapNotNull { it?.trim()?.takeIf { s -> s.isNotBlank() } }
             .firstOrNull()
-            ?: listTitle.takeIf { it.isNotBlank() }?.let { "→ $it" }
-            ?: "Новое в Kyro"
-        val surface = payload["type"].orEmpty().ifBlank { "push" }
-        val notifId = (videoId.ifBlank { "$title$body" }).hashCode()
+            ?: getString(R.string.notif_default_body)
+        val surface = pushType.ifBlank { "push" }
+        val notifId = (videoId.ifBlank { "$headline$body" }).hashCode()
 
         PushRegistrar.ensureChannel(this)
 
@@ -56,7 +52,7 @@ class KyroMessagingService : FirebaseMessagingService() {
         )
         val builder = NotificationCompat.Builder(this, PushRegistrar.CHANNEL_CLASSIFY)
             .setSmallIcon(R.mipmap.ic_launcher)
-            .setContentTitle(title)
+            .setContentTitle(headline)
             .setContentText(body)
             .setStyle(NotificationCompat.BigTextStyle().bigText(body))
             .setAutoCancel(true)
@@ -131,5 +127,12 @@ class KyroMessagingService : FirebaseMessagingService() {
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
+    }
+
+    private fun defaultHeadline(type: String): String = when (type) {
+        "morning" -> getString(R.string.notif_morning_title)
+        "reminder" -> getString(R.string.notif_reminder_title)
+        "classified", "classify" -> getString(R.string.notif_classified_title)
+        else -> getString(R.string.notif_default_title)
     }
 }

@@ -9,7 +9,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from backend import db, now_plan, push
+from backend import db, now_plan, push, push_copy, reminders_svc
 
 log = logging.getLogger("clip_queue.digest")
 
@@ -134,18 +134,17 @@ def send_morning_for_user(user_id: int) -> dict:
     )
     if not row or yt.is_unavailable_video(row.get("title")):
         return {"ok": True, "sent": 0, "skipped": "unavailable"}
-    name = (pick.get("title") or row.get("title") or "Ролик из очереди").strip()[:100]
+    name = (pick.get("title") or row.get("title") or "Ролик из очереди").strip()
     why = (pick.get("reason") or "").strip()
-    push_title = name
-    push_body = why if why else "На утро из вашей очереди"
+    push_title, push_body = push_copy.morning(name, reason=why)
     result = push.send_to_user(
         user_id,
         title=push_title,
-        body=push_body[:400],
+        body=push_body,
         data={
             "type": "morning",
             "video_id": vid,
-            "video_title": name[:200],
+            "video_title": push_copy.video_label(name)[:200],
             "title": push_title[:120],
             "body": push_body[:400],
             "route": f"/v/{vid}",
@@ -200,17 +199,18 @@ def tick() -> dict:
                 vid = str(item.get("video_id") or "").strip()
                 if not vid:
                     continue
-                vtitle = (item.get("title") or "Ролик ждёт вас").strip()[:120]
+                vtitle = (item.get("title") or "Ролик ждёт вас").strip()
+                push_title, push_body = push_copy.reminder(vtitle)
                 push.send_to_user(
                     uid,
-                    title=vtitle,
-                    body="Напоминание Kyro",
+                    title=push_title,
+                    body=push_body,
                     data={
                         "type": "reminder",
                         "video_id": vid,
-                        "video_title": vtitle[:200],
-                        "title": vtitle[:120],
-                        "body": "Напоминание Kyro",
+                        "video_title": push_copy.video_label(vtitle)[:200],
+                        "title": push_title[:120],
+                        "body": push_body[:400],
                         "route": f"/v/{vid}",
                         "deeplink": f"clipqueue://video/{vid}?surface=reminder&action=open",
                     },
