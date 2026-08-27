@@ -114,8 +114,11 @@ THEMES: list[dict[str, Any]] = [
             r"сводка",
             r"политик",
             r"выборы",
+            r"цензур",
+            r"выгоран",
         ],
-        "channels": ["редакция", "вдудь", "дождь", "bbc", "cnn"],
+        "channels": ["редакция", "вдудь", "дождь", "bbc", "cnn", "spoyk"],
+        "weight": 2,
     },
     {
         "id": "history",
@@ -171,27 +174,40 @@ THEMES: list[dict[str, Any]] = [
     {
         "id": "cinema",
         "title": "Кино и сериалы",
-        "keywords": [
-            r"кино",
+        # title_keywords: only title/channel — «фильма» / «КиноПоиск» в описании
+        # эссе про политику не должны кидать в кино.
+        "title_keywords": [
+            r"\bкино\b",
             r"фильм",
             r"сериал",
-            r"режиссёр",
-            r"режиссер",
             r"\bmovie\b",
             r"\bfilm\b",
             r"\bcinema\b",
-            r"кинопоиск",
+            r"премьер[аыуе]?",
+        ],
+        "keywords": [
+            r"режиссёр",
+            r"режиссер",
             r"обзор.*фильм",
-            r"\bобзор\b",
-            r"\breview\b",
+            r"разбор.*фильм",
+            r"разбор.*сериал",
             r"трейлер",
             r"\bmarvel\b",
             r"\bthor\b",
             r"тор\s*\d",
             r"кинокритик",
-            r"премьер",
+            r"кинопоиск.*(обзор|рейтинг|топ|фильм)",
+            r"(обзор|рейтинг|топ).{0,20}кинопоиск",
         ],
-        "channels": ["кинопоиск", "badcomedian", "кино", "letterboxd"],
+        "channels": ["кинопоиск", "badcomedian", "letterboxd", "bad comedian"],
+        # «резня аниме на КиноПоиске», эссе с отсылкой к фильму — не кино-контент
+        "negatives": [
+            r"цензур",
+            r"выгоран",
+            r"новостн\w*\s+поток",
+            r"отъезд",
+            r"эмиграц",
+        ],
         "weight": 3,
     },
     {
@@ -261,6 +277,7 @@ THEMES: list[dict[str, Any]] = [
             r"самооценк",
             r"\btherapy\b",
             r"мотивац",
+            r"выгоран",
         ],
         "channels": ["психолог"],
     },
@@ -603,6 +620,7 @@ def _compile_theme(theme: dict[str, Any]) -> dict[str, Any]:
     return {
         **theme,
         "_kw": [re.compile(p, re.I) for p in theme.get("keywords") or []],
+        "_title_kw": [re.compile(p, re.I) for p in theme.get("title_keywords") or []],
         "_ch": [c.lower() for c in (theme.get("channels") or [])],
         "_neg": [re.compile(p, re.I) for p in theme.get("negatives") or []],
     }
@@ -617,7 +635,9 @@ def theme_by_id(theme_id: str) -> dict[str, Any] | None:
 
 
 def score_theme(theme: dict[str, Any], title: str, channel: str, description: str = "") -> int:
-    blob = f"{title or ''} {channel or ''} {(description or '')[:400]}"
+    title_ch = f"{title or ''} {channel or ''}"
+    desc = (description or "")[:400]
+    blob = f"{title_ch} {desc}"
     ch_l = (channel or "").lower()
     score = 0
     for neg in theme.get("_neg") or []:
@@ -627,6 +647,10 @@ def score_theme(theme: dict[str, Any], title: str, channel: str, description: st
     for ch in theme.get("_ch") or []:
         if ch and ch in ch_l:
             score += 6
+    # title_keywords: only title/channel (weak tokens like «фильм» in essay desc)
+    for rx in theme.get("_title_kw") or []:
+        if rx.search(title_ch):
+            score += kw_w
     for rx in theme.get("_kw") or []:
         if rx.search(blob):
             score += kw_w
