@@ -148,9 +148,13 @@ class MainActivity : ComponentActivity() {
                     kotlinx.coroutines.runBlocking {
                         app.api.pushFeedback(id, action = "opened", surface = "push")
                         val r = app.api.openVideo(id, surface = "push")
-                        val url = r.watch_url ?: "https://www.youtube.com/watch?v=$id"
-                        startActivity(
-                            Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                        val detail = runCatching { app.api.video(id).item }.getOrNull()
+                        ru.clipqueue.app.ui.YouTubeWatchLauncher.open(
+                            this@MainActivity,
+                            id,
+                            r.watch_url,
+                            title = detail?.title,
+                            durationSec = detail?.duration_sec,
                         )
                     }
                 }

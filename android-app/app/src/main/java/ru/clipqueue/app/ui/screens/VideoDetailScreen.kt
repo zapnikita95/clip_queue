@@ -1,7 +1,5 @@
 package ru.clipqueue.app.ui.screens
 
-import android.content.Intent
-import android.net.Uri
 import android.widget.Toast
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
@@ -57,6 +55,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import ru.clipqueue.app.ApiClient
 import ru.clipqueue.app.data.VideoCard
+import ru.clipqueue.app.ui.YouTubeWatchLauncher
 import ru.clipqueue.app.ui.components.CardAction
 import ru.clipqueue.app.ui.components.SectionLabel
 import ru.clipqueue.app.ui.components.VideoRail
@@ -179,8 +178,13 @@ fun VideoDetailScreen(
                                 scope.launch {
                                     val url = runCatching { api.openVideo(videoId, surface = "push").watch_url }.getOrNull()
                                         ?: v.watch_url
-                                        ?: "https://www.youtube.com/watch?v=$videoId"
-                                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                                    YouTubeWatchLauncher.open(
+                                        context,
+                                        videoId,
+                                        url,
+                                        title = v.title,
+                                        durationSec = v.duration_sec,
+                                    )
                                     reload()
                                 }
                             },
@@ -238,7 +242,12 @@ fun VideoDetailScreen(
                             overflow = TextOverflow.Ellipsis,
                         )
                         Text(
-                            listOfNotNull(v.channel_title, v.duration_label, statusLabel(v.status)).joinToString(" · "),
+                            listOfNotNull(
+                                v.channel_title,
+                                v.duration_label,
+                                statusLabel(v.status),
+                                v.progress_label?.let { "на $it" },
+                            ).joinToString(" · "),
                             style = MaterialTheme.typography.bodySmall,
                             color = CqMuted,
                             maxLines = 2,
@@ -272,8 +281,13 @@ fun VideoDetailScreen(
                                 scope.launch {
                                     val url = runCatching { api.openVideo(videoId, surface = "push").watch_url }.getOrNull()
                                         ?: v.watch_url
-                                        ?: "https://www.youtube.com/watch?v=$videoId"
-                                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                                    YouTubeWatchLauncher.open(
+                                        context,
+                                        videoId,
+                                        url,
+                                        title = v.title,
+                                        durationSec = v.duration_sec,
+                                    )
                                     reload()
                                 }
                             },

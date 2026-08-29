@@ -56,9 +56,12 @@ import ru.clipqueue.app.data.ListCard
 import ru.clipqueue.app.data.NowMoodDto
 import ru.clipqueue.app.data.NowSlotDto
 import ru.clipqueue.app.data.TagDto
+import ru.clipqueue.app.data.TasteResponse
 import ru.clipqueue.app.data.VideoCard
 import ru.clipqueue.app.ui.MovePickerDialog
+import ru.clipqueue.app.ui.PendingRatingsDialog
 import ru.clipqueue.app.ui.TagPickerDialog
+import ru.clipqueue.app.ui.TasteConfirmDialog
 import ru.clipqueue.app.ui.components.BottomBar
 import ru.clipqueue.app.ui.components.EditableFolderGrid
 import ru.clipqueue.app.ui.components.FolderGrid
@@ -99,6 +102,7 @@ fun HomeScreen(
     var recent by remember { mutableStateOf(cached?.recent.orEmpty()) }
     var vibe by remember { mutableStateOf(cached?.vibe.orEmpty()) }
     var fromPlaylists by remember { mutableStateOf(cached?.fromPlaylists.orEmpty()) }
+    var fromLikes by remember { mutableStateOf(cached?.fromLikes.orEmpty()) }
     var topFolders by remember { mutableStateOf(cached?.topFolders.orEmpty()) }
     var tags by remember { mutableStateOf(cached?.tags.orEmpty()) }
     var selectedTagId by remember { mutableStateOf<Int?>(null) }
@@ -135,6 +139,8 @@ fun HomeScreen(
     var trashHot by remember { mutableStateOf(false) }
     var trashBounds by remember { mutableStateOf<Rect?>(null) }
     var removeTarget by remember { mutableStateOf<ListCard?>(null) }
+    var pendingRatings by remember { mutableStateOf<List<VideoCard>>(emptyList()) }
+    var tastePrompt by remember { mutableStateOf<TasteResponse?>(null) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
 
@@ -187,6 +193,7 @@ fun HomeScreen(
             recent = recent.ifEmpty { prev?.recent.orEmpty() },
             vibe = vibe.ifEmpty { prev?.vibe.orEmpty() },
             fromPlaylists = fromPlaylists.ifEmpty { prev?.fromPlaylists.orEmpty() },
+            fromLikes = fromLikes.ifEmpty { prev?.fromLikes.orEmpty() },
             topFolders = topFolders.ifEmpty { prev?.topFolders.orEmpty() },
             tags = tags.ifEmpty { prev?.tags.orEmpty() },
             nowPicks = nowPicks,
@@ -258,6 +265,7 @@ fun HomeScreen(
             coroutineScope {
                 val recentDef = async { api.homeRail("queue") }
                 val vibeDef = async { api.homeRail("continue_vibe") }
+                val likesDef = async { api.homeRail("from_likes") }
                 val plDef = async { api.homeRail("from_playlists") }
                 val listsDef = async { api.lists(forHome = true) }
                 val tagsDef = async { runCatching { api.tags(onlyUsed = true) }.getOrNull() }
@@ -277,8 +285,16 @@ fun HomeScreen(
                     }
                     applyPlanResponse(plan)
                 }
+                launch {
+                    pendingRatings = runCatching { api.pendingRatings().items }.getOrNull().orEmpty()
+                    if (tastePrompt == null) {
+                        val t = runCatching { api.taste() }.getOrNull()
+                        if (t?.needs_confirm == true) tastePrompt = t
+                    }
+                }
                 recent = recentDef.await().items.orEmpty()
                 vibe = vibeDef.await().items.orEmpty()
+                fromLikes = likesDef.await().items.orEmpty()
                 fromPlaylists = plDef.await().items.orEmpty()
                 topFolders = listsDef.await().lists.orEmpty()
                     .sortedByDescending { it.count ?: 0 }
@@ -312,6 +328,7 @@ fun HomeScreen(
             recent = recent.filterNot { it.video_id == id }
             vibe = vibe.filterNot { it.video_id == id }
             fromPlaylists = fromPlaylists.filterNot { it.video_id == id }
+            fromLikes = fromLikes.filterNot { it.video_id == id }
             taggedVideos = taggedVideos.filterNot { it.video_id == id }
             nowPicks = nowPicks.filterNot { it.video_id == id }
             nowSuggestions = nowSuggestions.filterNot { it.video_id == id }
@@ -357,6 +374,24 @@ fun HomeScreen(
         MovePickerDialog(api, c, appCache, onDismiss = { moveCard = null }, onChanged = {
             scope.launch { loadHome(initial = false, force = true) }
         })
+    }
+    if (pendingRatings.isNotEmpty() && tastePrompt == null) {
+        PendingRatingsDialog(
+            api = api,
+            items = pendingRatings,
+            onDismiss = { pendingRatings = emptyList() },
+            onRated = { scope.launch { loadHome(initial = false, force = true, silent = true) } },
+        )
+    }
+    tastePrompt?.let { t ->
+        if (pendingRatings.isEmpty()) {
+            TasteConfirmDialog(
+                api = api,
+                taste = t,
+                onDismiss = { tastePrompt = null },
+                onDone = { scope.launch { loadHome(initial = false, force = true, silent = true) } },
+            )
+        }
     }
 
     removeTarget?.let { folder ->
@@ -656,6 +691,12 @@ fun HomeScreen(
                                         )
                                     } else {
                                         VideoSpine(recent.take(12)) { c, a -> actions.handle(c, a) }
+                                    }
+                                }
+                                if (fromLikes.isNotEmpty()) {
+                                    item {
+                                        SectionLabel("Рекомендации по просмотрам", Modifier.padding(horizontal = 12.dp))
+                                        VideoRail(fromLikes) { c, a -> actions.handle(c, a) }
                                     }
                                 }
                                 val recs = if (vibe.isNotEmpty()) vibe else fromPlaylists

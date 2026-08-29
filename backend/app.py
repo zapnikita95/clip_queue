@@ -12,7 +12,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from flask import Flask, g, jsonify, redirect, request, send_from_directory
 
-from backend import auth, db, digest_jobs, google_oauth, llm, metrics, now_plan, organize, purposes, push, reminders_svc, search as cq_search, share_classify, sync_jobs, takeout, themes, yt_sync
+from backend import auth, db, digest_jobs, google_oauth, llm, metrics, now_plan, organize, purposes, push, reminders_svc, search as cq_search, share_classify, sync_jobs, takeout, taste, themes, yt_sync
 from backend import classify_jobs
 from backend import similarity as sim
 from backend import youtube as yt
@@ -92,7 +92,7 @@ def create_app() -> Flask:
             {
                 "ok": True,
                 "service": "clip_queue",
-                "version": "0.4.2",
+                "version": "0.4.3",
                 "db": "postgres" if db.is_postgres() else "sqlite",
                 "google_oauth": google_oauth.configured(),
                 "llm": llm.available(),
@@ -484,6 +484,7 @@ def create_app() -> Flask:
         if not row:
             return json_error("Нет в библиотеке", 404)
         bumped = _apply_interest_and_queue_boost(uid, video_id, level)
+        taste.mark_rating_pending(uid, video_id, False)
         return jsonify({"ok": True, "interest": level, "boosted": bumped})
 
     def _bump_saved_at(uid: int, video_id: str, *, days_delta: int = 0) -> None:
@@ -876,7 +877,8 @@ def create_app() -> Flask:
     def _library_card(uid: int, video_id: str) -> dict | None:
         row = db.fetchone(
             """
-            SELECT v.*, li.status, li.note, li.source, li.saved_at, li.watched_at
+            SELECT v.*, li.status, li.note, li.source, li.saved_at, li.watched_at,
+                   li.interest, li.progress_sec, li.rating_pending
             FROM library_items li
             JOIN videos v ON v.video_id = li.video_id
             WHERE li.user_id = ? AND li.video_id = ?
@@ -902,6 +904,10 @@ def create_app() -> Flask:
                 "source": row.get("source"),
                 "saved_at": str(row.get("saved_at") or ""),
                 "watched_at": str(row.get("watched_at") or "") or None,
+                "interest": int(row.get("interest") or 0),
+                "progress_sec": row.get("progress_sec"),
+                "progress_label": taste.format_progress(row.get("progress_sec")),
+                "rating_pending": bool(row.get("rating_pending")),
                 "user_tags": tags,
                 "in_lists": _lists_for_video(uid, video_id),
             },
@@ -1295,6 +1301,7 @@ def create_app() -> Flask:
                     if db.is_postgres()
                     else "watched_at = datetime('now')"
                 )
+                sets.append("rating_pending = 1")
                 db.execute(
                     "INSERT INTO watch_events (user_id, video_id, event_type) VALUES (?, ?, ?)",
                     (uid, video_id, "mark_watched"),
@@ -1311,13 +1318,47 @@ def create_app() -> Flask:
                     "(SELECT id FROM lists WHERE user_id = ?)",
                     (video_id, uid),
                 )
+        progress_raw = body.get("progress_sec")
+        progress_text = body.get("progress") or body.get("progress_label")
+        if progress_text and progress_raw is None:
+            dur = db.fetchone(
+                "SELECT duration_sec FROM videos WHERE video_id = ?", (video_id,)
+            )
+            progress_raw = taste.parse_progress_input(
+                str(progress_text),
+                duration_sec=(dur or {}).get("duration_sec"),
+            )
+        if progress_raw is not None:
+            try:
+                psec = max(0, int(progress_raw))
+            except (TypeError, ValueError):
+                psec = None
+            if psec is not None:
+                sets.append("progress_sec = ?")
+                params.append(psec)
+                if status not in ("queue", "in_progress", "watched", "archived", "dismissed"):
+                    sets.append("status = ?")
+                    params.append("in_progress")
+                    db.execute(
+                        "INSERT INTO watch_events (user_id, video_id, event_type) VALUES (?, ?, ?)",
+                        (uid, video_id, "mark_progress"),
+                    )
+        if "rating_pending" in body:
+            sets.append("rating_pending = ?")
+            params.append(1 if body.get("rating_pending") else 0)
         if "interest" in body:
             try:
                 interest = max(-1, min(2, int(body.get("interest"))))
             except (TypeError, ValueError):
                 interest = 0
             boosted = _apply_interest_and_queue_boost(uid, video_id, interest)
-            if status not in ("queue", "in_progress", "watched", "archived", "dismissed") and note is None:
+            taste.mark_rating_pending(uid, video_id, False)
+            if (
+                status not in ("queue", "in_progress", "watched", "archived", "dismissed")
+                and note is None
+                and progress_raw is None
+                and "rating_pending" not in body
+            ):
                 return jsonify({
                     "ok": True,
                     "item": _library_card(uid, video_id),
@@ -1760,6 +1801,7 @@ def create_app() -> Flask:
                     {"id": "channels_you_watch", "title": "По каналам"},
                     {"id": "by_duration", "title": "Под сейчас"},
                     {"id": "continue_vibe", "title": "В том же вайбе"},
+                    {"id": "from_likes", "title": "Рекомендации по просмотрам"},
                     {"id": "music_topic", "title": "Музыка (отдельно)"},
                     {"id": "shortform", "title": "До 6 минут (шлак)"},
                     {"id": "marathon", "title": "10+ часов"},
@@ -2028,6 +2070,26 @@ def create_app() -> Flask:
         uid = current_user()["user_id"]
         now_plan.set_prefs(uid, {"inbox_onboarding_done": True})
         return jsonify({"ok": True, **now_plan.inbox_onboarding_status(uid)})
+
+    @app.get("/api/taste")
+    @require_auth
+    def get_taste():
+        uid = current_user()["user_id"]
+        return jsonify(taste.infer_taste(uid))
+
+    @app.post("/api/taste/confirm")
+    @require_auth
+    def post_taste_confirm():
+        uid = current_user()["user_id"]
+        body = request.get_json(silent=True) or {}
+        return jsonify(taste.confirm_taste(uid, body))
+
+    @app.get("/api/library/pending-ratings")
+    @require_auth
+    def library_pending_ratings():
+        uid = current_user()["user_id"]
+        limit = min(24, max(1, int(request.args.get("limit") or 12)))
+        return jsonify({"ok": True, "items": taste.pending_ratings(uid, limit=limit)})
 
     @app.post("/api/metrics/track")
     @require_auth
@@ -2424,6 +2486,69 @@ def create_app() -> Flask:
                         scored[vid] = sc
                         best[vid] = c
             items = sorted(best.values(), key=lambda x: -float(x.get("similarity") or 0))
+            return jsonify({"ok": True, "rail": rail_id, "items": items[:limit]})
+
+        if rail_id == "from_likes":
+            # Anchors: watched videos the user liked (interest>=1) or YT likes
+            anchors = db.fetchall(
+                """
+                SELECT v.* FROM library_items li
+                JOIN videos v ON v.video_id = li.video_id
+                WHERE li.user_id = ?
+                  AND (
+                    (li.status = 'watched' AND COALESCE(li.interest, 0) >= 1)
+                    OR li.source = 'liked'
+                  )
+                ORDER BY COALESCE(li.interest, 0) DESC,
+                         COALESCE(li.watched_at, li.saved_at) DESC
+                LIMIT 8
+                """,
+                (uid,),
+            )
+            if not anchors:
+                anchors = db.fetchall(
+                    """
+                    SELECT v.* FROM library_items li
+                    JOIN videos v ON v.video_id = li.video_id
+                    WHERE li.user_id = ? AND li.status = 'watched'
+                    ORDER BY COALESCE(li.watched_at, li.saved_at) DESC LIMIT 5
+                    """,
+                    (uid,),
+                )
+            pool = db.fetchall(
+                """
+                SELECT v.*, li.status, li.saved_at, li.watched_at, li.interest
+                FROM library_items li JOIN videos v ON v.video_id = li.video_id
+                WHERE li.user_id = ? AND li.status IN ('queue', 'in_progress')
+                """,
+                (uid,),
+            )
+            pool = _clean_lib_rows(pool, allow_music=False, allow_shorts=False)
+            pool_cards = []
+            for r in pool:
+                c = yt.card_from_video_row(
+                    r,
+                    {
+                        "status": r.get("status"),
+                        "interest": int(r.get("interest") or 0),
+                    },
+                )
+                c["tags"] = sim.parse_tags_json(r.get("tags_json"))
+                pool_cards.append(c)
+            scored: dict[str, float] = {}
+            best: dict[str, dict] = {}
+            for a_row in anchors or []:
+                a = yt.card_from_video_row(a_row)
+                a["tags"] = sim.parse_tags_json(a_row.get("tags_json"))
+                for c in sim.rank_similar(a, pool_cards, limit=14):
+                    vid = c["video_id"]
+                    sc = float(c.get("similarity") or 0) + 0.15  # slight boost vs vibe
+                    if sc > scored.get(vid, 0):
+                        scored[vid] = sc
+                        c2 = dict(c)
+                        c2["reason"] = "Похоже на то, что вам зашло"
+                        best[vid] = c2
+            items = sorted(best.values(), key=lambda x: -float(scored.get(x["video_id"], 0)))
             return jsonify({"ok": True, "rail": rail_id, "items": items[:limit]})
 
         if rail_id == "for_this_hour":

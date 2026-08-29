@@ -171,6 +171,9 @@ data class VideoCard(
     val description: String? = null,
     val note: String? = null,
     val reason: String? = null,
+    val progress_sec: Int? = null,
+    val progress_label: String? = null,
+    val rating_pending: Boolean? = null,
     val user_tags: List<TagDto>? = null,
     val in_lists: List<ListRef>? = null,
 )
@@ -252,6 +255,40 @@ data class CreateTagResponse(
 data class OpenResponse(
     val ok: Boolean? = null,
     val watch_url: String? = null,
+    val error: String? = null,
+)
+
+data class TasteOptionDto(
+    val id: String? = null,
+    val label: String? = null,
+    val hint: String? = null,
+)
+
+data class TasteQuestionDto(
+    val id: String? = null,
+    val prompt: String? = null,
+    val inferred: String? = null,
+    val options: List<TasteOptionDto>? = null,
+)
+
+data class TasteCopyDto(
+    val title: String? = null,
+    val subtitle: String? = null,
+)
+
+data class TasteResponse(
+    val ok: Boolean? = null,
+    val needs_confirm: Boolean? = null,
+    val onboarding_done: Boolean? = null,
+    val sample_events: Int? = null,
+    val questions: List<TasteQuestionDto>? = null,
+    val copy: TasteCopyDto? = null,
+    val error: String? = null,
+)
+
+data class PendingRatingsResponse(
+    val ok: Boolean? = null,
+    val items: List<VideoCard>? = null,
     val error: String? = null,
 )
 

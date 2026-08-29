@@ -41,6 +41,7 @@ object PushRegistrar {
             description = context.getString(R.string.notif_channel_classify_desc)
         }
         mgr.createNotificationChannel(ch)
+        WatchSessionNotifier.ensureChannel(context)
     }
 
     fun syncIfLoggedIn(context: Context) {

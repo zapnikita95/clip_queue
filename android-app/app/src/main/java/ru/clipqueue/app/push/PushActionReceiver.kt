@@ -6,11 +6,11 @@ import android.content.Context
 import android.content.Intent
 import android.widget.Toast
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.app.RemoteInput
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
-import ru.clipqueue.app.ClipQueueApp
 import ru.clipqueue.app.MainActivity
 import ru.clipqueue.app.clipQueue
 
@@ -24,6 +24,8 @@ class PushActionReceiver : BroadcastReceiver() {
         ).mapNotNull { it?.trim()?.takeIf { s -> s.isNotBlank() } }.firstOrNull().orEmpty()
         val surface = intent.getStringExtra("surface")?.trim().orEmpty().ifBlank { "morning" }
         val notifId = intent.getIntExtra(EXTRA_NOTIF_ID, 0)
+        val durationSec = intent.getIntExtra(WatchSessionNotifier.EXTRA_DURATION, -1)
+            .takeIf { it >= 0 }
 
         when (intent.action) {
             ACTION_NOT_INTERESTED -> {
@@ -55,11 +57,88 @@ class PushActionReceiver : BroadcastReceiver() {
                     }
                 }
             }
+            ACTION_MARK_WATCHED -> {
+                if (videoId.isBlank()) return
+                WatchSessionNotifier.cancel(context, videoId)
+                if (notifId != 0) {
+                    runCatching { NotificationManagerCompat.from(context).cancel(notifId) }
+                }
+                val pending = goAsync()
+                val app = (context.applicationContext as Application).clipQueue()
+                scope.launch {
+                    try {
+                        if (app.session.isLoggedIn) {
+                            runCatching {
+                                app.api.patchLibrary(videoId, mapOf("status" to "watched"))
+                            }
+                            app.cache.invalidateHome()
+                        }
+                        Toast.makeText(
+                            context.applicationContext,
+                            "Отмечено просмотренным — оцените при входе в Kyro",
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    } finally {
+                        pending.finish()
+                    }
+                }
+            }
+            ACTION_MARK_PROGRESS -> {
+                if (videoId.isBlank()) return
+                val results = RemoteInput.getResultsFromIntent(intent)
+                val text = results?.getCharSequence(WatchSessionNotifier.KEY_PROGRESS)
+                    ?.toString()
+                    ?.trim()
+                    .orEmpty()
+                val sec = ProgressParse.parse(text, durationSec)
+                if (sec == null) {
+                    Toast.makeText(
+                        context.applicationContext,
+                        "Формат: 12:34 или 25 мин",
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                    // Keep notification so they can retry
+                    return
+                }
+                WatchSessionNotifier.cancel(context, videoId)
+                if (notifId != 0) {
+                    runCatching { NotificationManagerCompat.from(context).cancel(notifId) }
+                }
+                val pending = goAsync()
+                val app = (context.applicationContext as Application).clipQueue()
+                val label = ProgressParse.format(sec) ?: text
+                scope.launch {
+                    try {
+                        if (app.session.isLoggedIn) {
+                            runCatching {
+                                app.api.patchLibrary(
+                                    videoId,
+                                    mapOf(
+                                        "status" to "in_progress",
+                                        "progress_sec" to sec,
+                                        "progress" to text,
+                                    ),
+                                )
+                            }
+                            app.cache.invalidateHome()
+                        }
+                        Toast.makeText(
+                            context.applicationContext,
+                            "Остановились на $label",
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    } finally {
+                        pending.finish()
+                    }
+                }
+            }
         }
     }
 
     companion object {
         const val ACTION_NOT_INTERESTED = "ru.clipqueue.app.PUSH_NOT_INTERESTED"
+        const val ACTION_MARK_WATCHED = "ru.clipqueue.app.MARK_WATCHED"
+        const val ACTION_MARK_PROGRESS = "ru.clipqueue.app.MARK_PROGRESS"
         const val EXTRA_NOTIF_ID = "kyro_notif_id"
         private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     }

@@ -21,6 +21,7 @@ class AppCache(private val context: Context) {
         val recent: List<VideoCard> = emptyList(),
         val vibe: List<VideoCard> = emptyList(),
         val fromPlaylists: List<VideoCard> = emptyList(),
+        val fromLikes: List<VideoCard> = emptyList(),
         val topFolders: List<ListCard> = emptyList(),
         val tags: List<TagDto> = emptyList(),
         /** Instant paint for «Сейчас» / plan on tab re-entry (avoid «Подбираем…» flash). */
@@ -93,6 +94,7 @@ class AppCache(private val context: Context) {
                 recent = h.recent.filterNot { it.video_id == videoId },
                 vibe = h.vibe.filterNot { it.video_id == videoId },
                 fromPlaylists = h.fromPlaylists.filterNot { it.video_id == videoId },
+                fromLikes = h.fromLikes.filterNot { it.video_id == videoId },
             )
         }
         schedulePersist()

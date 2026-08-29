@@ -27,6 +27,7 @@ import ru.clipqueue.app.data.MetricsSummaryResponse
 import ru.clipqueue.app.data.NowResponse
 import ru.clipqueue.app.data.OkResponse
 import ru.clipqueue.app.data.OpenResponse
+import ru.clipqueue.app.data.PendingRatingsResponse
 import ru.clipqueue.app.data.PrefsResponse
 import ru.clipqueue.app.data.RailResponse
 import ru.clipqueue.app.data.SaveHistoryResponse
@@ -35,6 +36,7 @@ import ru.clipqueue.app.data.SearchResponse
 import ru.clipqueue.app.data.SimilarResponse
 import ru.clipqueue.app.data.SyncStartResponse
 import ru.clipqueue.app.data.TagsResponse
+import ru.clipqueue.app.data.TasteResponse
 import ru.clipqueue.app.data.TodayResponse
 import ru.clipqueue.app.data.VideoDetailResponse
 
@@ -276,6 +278,14 @@ class ApiClient(private val session: SessionStore) {
 
     suspend fun startClassifyPending(limit: Int = 200): OkResponse =
         post("/api/organize/classify-pending", mapOf("limit" to limit, "use_llm" to true))
+
+    suspend fun taste(): TasteResponse = get("/api/taste")
+
+    suspend fun confirmTaste(body: Map<String, Any?>): OkResponse =
+        post("/api/taste/confirm", body)
+
+    suspend fun pendingRatings(limit: Int = 12): PendingRatingsResponse =
+        get("/api/library/pending-ratings?limit=$limit")
 
     suspend fun uploadTakeout(jsonBody: String): OkResponse {
         return client.post("/api/youtube/takeout") {
