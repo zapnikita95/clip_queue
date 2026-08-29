@@ -1,7 +1,6 @@
-"""Parse progress strings for watch-session notification RemoteInput."""
-
 package ru.clipqueue.app.push
 
+/** Parse progress strings for watch-session notification RemoteInput. */
 object ProgressParse {
     private val hm = Regex("""^\s*(?:(\d{1,2})\s*[:.]\s*)?(\d{1,2})\s*[:.]\s*(\d{1,2})\s*$""")
     private val min = Regex("""^\s*(\d{1,4})\s*(?:м|мин|min|m)?\s*$""", RegexOption.IGNORE_CASE)
