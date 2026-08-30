@@ -103,6 +103,7 @@ fun HomeScreen(
     var vibe by remember { mutableStateOf(cached?.vibe.orEmpty()) }
     var fromPlaylists by remember { mutableStateOf(cached?.fromPlaylists.orEmpty()) }
     var fromLikes by remember { mutableStateOf(cached?.fromLikes.orEmpty()) }
+    var startedRail by remember { mutableStateOf(cached?.started.orEmpty()) }
     var topFolders by remember { mutableStateOf(cached?.topFolders.orEmpty()) }
     var tags by remember { mutableStateOf(cached?.tags.orEmpty()) }
     var selectedTagId by remember { mutableStateOf<Int?>(null) }
@@ -194,6 +195,7 @@ fun HomeScreen(
             vibe = vibe.ifEmpty { prev?.vibe.orEmpty() },
             fromPlaylists = fromPlaylists.ifEmpty { prev?.fromPlaylists.orEmpty() },
             fromLikes = fromLikes.ifEmpty { prev?.fromLikes.orEmpty() },
+            started = startedRail.ifEmpty { prev?.started.orEmpty() },
             topFolders = topFolders.ifEmpty { prev?.topFolders.orEmpty() },
             tags = tags.ifEmpty { prev?.tags.orEmpty() },
             nowPicks = nowPicks,
@@ -266,6 +268,7 @@ fun HomeScreen(
                 val recentDef = async { api.homeRail("queue") }
                 val vibeDef = async { api.homeRail("continue_vibe") }
                 val likesDef = async { api.homeRail("from_likes") }
+                val startedDef = async { api.homeRail("started") }
                 val plDef = async { api.homeRail("from_playlists") }
                 val listsDef = async { api.lists(forHome = true) }
                 val tagsDef = async { runCatching { api.tags(onlyUsed = true) }.getOrNull() }
@@ -295,6 +298,7 @@ fun HomeScreen(
                 recent = recentDef.await().items.orEmpty()
                 vibe = vibeDef.await().items.orEmpty()
                 fromLikes = likesDef.await().items.orEmpty()
+                startedRail = startedDef.await().items.orEmpty()
                 fromPlaylists = plDef.await().items.orEmpty()
                 topFolders = listsDef.await().lists.orEmpty()
                     .sortedByDescending { it.count ?: 0 }
@@ -329,6 +333,7 @@ fun HomeScreen(
             vibe = vibe.filterNot { it.video_id == id }
             fromPlaylists = fromPlaylists.filterNot { it.video_id == id }
             fromLikes = fromLikes.filterNot { it.video_id == id }
+            startedRail = startedRail.filterNot { it.video_id == id }
             taggedVideos = taggedVideos.filterNot { it.video_id == id }
             nowPicks = nowPicks.filterNot { it.video_id == id }
             nowSuggestions = nowSuggestions.filterNot { it.video_id == id }
@@ -656,6 +661,12 @@ fun HomeScreen(
                                     item {
                                         SectionLabel("Можно посмотреть", Modifier.padding(horizontal = 12.dp))
                                         VideoRail(nowSuggestions) { c, a -> actions.handle(c, a) }
+                                    }
+                                }
+                                if (startedRail.isNotEmpty()) {
+                                    item {
+                                        SectionLabel("Начатые", Modifier.padding(horizontal = 12.dp))
+                                        VideoRail(startedRail) { c, a -> actions.handle(c, a) }
                                     }
                                 }
                                 if (!planLoaded || planTonight.isNotEmpty() || planSuggestTonight.isNotEmpty()) {

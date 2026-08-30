@@ -255,6 +255,7 @@ data class CreateTagResponse(
 data class OpenResponse(
     val ok: Boolean? = null,
     val watch_url: String? = null,
+    val progress_sec: Int? = null,
     val error: String? = null,
 )
 

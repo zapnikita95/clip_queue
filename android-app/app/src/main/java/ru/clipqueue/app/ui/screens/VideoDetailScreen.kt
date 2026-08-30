@@ -184,6 +184,7 @@ fun VideoDetailScreen(
                                         url,
                                         title = v.title,
                                         durationSec = v.duration_sec,
+                                        progressSec = v.progress_sec,
                                     )
                                     reload()
                                 }
@@ -287,6 +288,7 @@ fun VideoDetailScreen(
                                         url,
                                         title = v.title,
                                         durationSec = v.duration_sec,
+                                        progressSec = v.progress_sec,
                                     )
                                     reload()
                                 }

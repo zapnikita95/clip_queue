@@ -480,6 +480,64 @@ def _ensure_list(user_id: int, title: str) -> int:
     )
 
 
+STARTED_LIST_TITLE = "Начатые"
+
+
+def ensure_started_list(user_id: int) -> int:
+    """System folder for in_progress videos — pinned near top of library."""
+    list_id = _ensure_list(user_id, STARTED_LIST_TITLE)
+    try:
+        db.execute(
+            "UPDATE lists SET sort_order = 5, hidden_from_home = 0 WHERE id = ?",
+            (list_id,),
+        )
+    except Exception:
+        pass
+    return list_id
+
+
+def sync_started_list_item(user_id: int, video_id: str, status: str | None) -> None:
+    """Keep video in/out of «Начатые» according to library status."""
+    video_id = (video_id or "").strip()
+    if not video_id:
+        return
+    list_id = ensure_started_list(user_id)
+    st = (status or "").strip()
+    if st == "in_progress":
+        _add_list_item(list_id, video_id, position=0)
+    else:
+        db.execute(
+            "DELETE FROM list_items WHERE list_id = ? AND video_id = ?",
+            (list_id, video_id),
+        )
+
+
+def rebuild_started_list(user_id: int) -> dict[str, Any]:
+    """Reconcile folder contents with all in_progress library items."""
+    list_id = ensure_started_list(user_id)
+    rows = db.fetchall(
+        """
+        SELECT video_id FROM library_items
+        WHERE user_id = ? AND status = 'in_progress'
+        """,
+        (user_id,),
+    )
+    wanted = {str(r["video_id"]) for r in (rows or []) if r.get("video_id")}
+    existing = db.fetchall(
+        "SELECT video_id FROM list_items WHERE list_id = ?",
+        (list_id,),
+    )
+    have = {str(r["video_id"]) for r in (existing or []) if r.get("video_id")}
+    for vid in wanted - have:
+        _add_list_item(list_id, vid, position=0)
+    for vid in have - wanted:
+        db.execute(
+            "DELETE FROM list_items WHERE list_id = ? AND video_id = ?",
+            (list_id, vid),
+        )
+    return {"list_id": list_id, "count": len(wanted)}
+
+
 def _add_list_item(list_id: int, video_id: str, position: int = 0) -> None:
     db.execute(
         "INSERT INTO list_items (list_id, video_id, position) VALUES (?, ?, ?) "

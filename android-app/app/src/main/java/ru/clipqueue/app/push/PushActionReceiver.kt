@@ -92,11 +92,11 @@ class PushActionReceiver : BroadcastReceiver() {
                     .orEmpty()
                 val sec = ProgressParse.parse(text, durationSec)
                 if (sec == null) {
-                    Toast.makeText(
-                        context.applicationContext,
-                        "Формат: 12:34 или 25 мин",
-                        Toast.LENGTH_SHORT,
-                    ).show()
+                        Toast.makeText(
+                            context.applicationContext,
+                            "Формат: 2м3с, 12:34, 25мин, 90с…",
+                            Toast.LENGTH_SHORT,
+                        ).show()
                     // Keep notification so they can retry
                     return
                 }

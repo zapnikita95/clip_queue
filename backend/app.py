@@ -92,7 +92,7 @@ def create_app() -> Flask:
             {
                 "ok": True,
                 "service": "clip_queue",
-                "version": "0.4.3",
+                "version": "0.4.4",
                 "db": "postgres" if db.is_postgres() else "sqlite",
                 "google_oauth": google_oauth.configured(),
                 "llm": llm.available(),
@@ -908,6 +908,12 @@ def create_app() -> Flask:
                 "progress_sec": row.get("progress_sec"),
                 "progress_label": taste.format_progress(row.get("progress_sec")),
                 "rating_pending": bool(row.get("rating_pending")),
+                "watch_url": yt.watch_url(
+                    video_id,
+                    t=int(row["progress_sec"])
+                    if row.get("progress_sec") is not None and int(row.get("progress_sec") or 0) > 0
+                    else None,
+                ),
                 "user_tags": tags,
                 "in_lists": _lists_for_video(uid, video_id),
             },
@@ -1374,6 +1380,15 @@ def create_app() -> Flask:
         sql = "UPDATE library_items SET " + ", ".join(sets) + " WHERE user_id = ? AND video_id = ?"
         params.extend([uid, video_id])
         db.execute(sql, params)
+        # Keep system folder «Начатые» in sync
+        final = db.fetchone(
+            "SELECT status FROM library_items WHERE user_id = ? AND video_id = ?",
+            (uid, video_id),
+        )
+        if final:
+            organize.sync_started_list_item(uid, video_id, final.get("status"))
+        elif status:
+            organize.sync_started_list_item(uid, video_id, status)
         return jsonify({"ok": True, "item": _library_card(uid, video_id)})
 
     @app.delete("/api/library/<video_id>")
@@ -1422,7 +1437,7 @@ def create_app() -> Flask:
             metrics.track(uid, et_map.get(surface, "now_open"), video_id=video_id, surface=surface)
             metrics.track(uid, "planned_watch", video_id=video_id, surface=surface)
         row = db.fetchone(
-            "SELECT status FROM library_items WHERE user_id = ? AND video_id = ?",
+            "SELECT status, progress_sec FROM library_items WHERE user_id = ? AND video_id = ?",
             (uid, video_id),
         )
         moved = False
@@ -1437,11 +1452,30 @@ def create_app() -> Flask:
                 (uid, video_id, "mark_started"),
             )
             moved = True
+        status_now = "in_progress" if moved else (row or {}).get("status")
+        if status_now == "in_progress" or moved:
+            organize.sync_started_list_item(uid, video_id, "in_progress")
+        progress_sec = None
+        try:
+            progress_sec = int((row or {}).get("progress_sec") or 0) or None
+        except (TypeError, ValueError):
+            progress_sec = None
+        # After mark progress in same session, re-read
+        if moved or progress_sec is None:
+            again = db.fetchone(
+                "SELECT progress_sec FROM library_items WHERE user_id = ? AND video_id = ?",
+                (uid, video_id),
+            )
+            try:
+                progress_sec = int((again or {}).get("progress_sec") or 0) or None
+            except (TypeError, ValueError):
+                pass
         return jsonify(
             {
                 "ok": True,
-                "watch_url": yt.watch_url(video_id),
-                "status": "in_progress" if moved else (row or {}).get("status"),
+                "watch_url": yt.watch_url(video_id, t=progress_sec),
+                "progress_sec": progress_sec,
+                "status": status_now,
                 "moved_to_started": moved,
             }
         )
@@ -2202,17 +2236,30 @@ def create_app() -> Flask:
         return out[:limit]
 
     def _cards_from_lib_rows(rows: list[dict]) -> list[dict]:
-        return [
-            yt.card_from_video_row(
-                r,
-                {
-                    "status": r.get("status"),
-                    "saved_at": str(r.get("saved_at") or ""),
-                    "watched_at": str(r.get("watched_at") or "") or None,
-                },
+        out = []
+        for r in rows:
+            psec = r.get("progress_sec")
+            try:
+                psec_i = int(psec) if psec is not None else None
+            except (TypeError, ValueError):
+                psec_i = None
+            if psec_i is not None and psec_i <= 0:
+                psec_i = None
+            out.append(
+                yt.card_from_video_row(
+                    r,
+                    {
+                        "status": r.get("status"),
+                        "saved_at": str(r.get("saved_at") or ""),
+                        "watched_at": str(r.get("watched_at") or "") or None,
+                        "interest": int(r.get("interest") or 0) if "interest" in r else None,
+                        "progress_sec": psec_i,
+                        "progress_label": taste.format_progress(psec_i),
+                        "watch_url": yt.watch_url(r["video_id"], t=psec_i),
+                    },
+                )
             )
-            for r in rows
-        ]
+        return out
 
     @app.get("/api/home/rails/<rail_id>")
     @require_auth
@@ -2250,14 +2297,17 @@ def create_app() -> Flask:
         if rail_id == "started":
             rows = db.fetchall(
                 """
-                SELECT v.*, li.status, li.saved_at, li.watched_at, li.source
+                SELECT v.*, li.status, li.saved_at, li.watched_at, li.source,
+                       li.interest, li.progress_sec
                 FROM library_items li JOIN videos v ON v.video_id = li.video_id
                 WHERE li.user_id = ? AND li.status = 'in_progress'
-                ORDER BY li.saved_at DESC LIMIT ? OFFSET ?
+                ORDER BY COALESCE(li.progress_sec, 0) DESC, li.saved_at DESC
+                LIMIT ? OFFSET ?
                 """,
                 (uid, limit, offset),
             )
             rows = _clean_lib_rows(rows, allow_music=True, allow_shorts=True)
+            organize.rebuild_started_list(uid)
             return jsonify({"ok": True, "rail": rail_id, "items": _cards_from_lib_rows(rows)})
 
         if rail_id == "watched":
@@ -2605,6 +2655,7 @@ def create_app() -> Flask:
     @require_auth
     def get_lists():
         uid = current_user()["user_id"]
+        organize.rebuild_started_list(uid)
         for_home = (request.args.get("for_home") or "").strip() in ("1", "true", "yes")
         try:
             tag_id = int(request.args.get("tag_id") or 0)

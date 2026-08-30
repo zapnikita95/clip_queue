@@ -155,6 +155,8 @@ class MainActivity : ComponentActivity() {
                             r.watch_url,
                             title = detail?.title,
                             durationSec = detail?.duration_sec,
+                            progressSec = detail?.progress_sec
+                                ?: r.progress_sec,
                         )
                     }
                 }

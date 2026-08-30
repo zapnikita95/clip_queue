@@ -52,8 +52,27 @@ def thumb_url(video_id: str) -> str:
     return f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg"
 
 
-def watch_url(video_id: str) -> str:
-    return f"https://www.youtube.com/watch?v={video_id}"
+def watch_url(video_id: str, *, t: int | None = None) -> str:
+    """YouTube watch URL; optional start offset in seconds (?t=12)."""
+    base = f"https://www.youtube.com/watch?v={video_id}"
+    try:
+        sec = int(t) if t is not None else 0
+    except (TypeError, ValueError):
+        sec = 0
+    if sec > 0:
+        return f"{base}&t={sec}"
+    return base
+
+
+def youtu_be_url(video_id: str, *, t: int | None = None) -> str:
+    base = f"https://youtu.be/{video_id}"
+    try:
+        sec = int(t) if t is not None else 0
+    except (TypeError, ValueError):
+        sec = 0
+    if sec > 0:
+        return f"{base}?t={sec}"
+    return base
 
 
 def _oembed(video_id: str) -> dict[str, Any]:

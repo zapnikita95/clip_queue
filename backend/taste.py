@@ -24,42 +24,102 @@ _DAYPARTS = (
     ("evening", 18, 24, "Вечером"),
 )
 
-_PROGRESS_HM = re.compile(
-    r"^\s*(?:(\d{1,2})\s*[:.]\s*)?(\d{1,2})\s*[:.]\s*(\d{1,2})\s*$"
-)
-_PROGRESS_MIN = re.compile(
-    r"^\s*(\d{1,4})\s*(?:м|мин|min|m)?\s*$",
-    re.IGNORECASE,
-)
 _PROGRESS_PCT = re.compile(r"^\s*(\d{1,3})\s*%\s*$")
 
 
 def parse_progress_input(raw: str, *, duration_sec: int | None = None) -> int | None:
-    """Parse '12:34', '1:02:03', '25 мин', '45%' → seconds. None if empty/invalid."""
-    s = (raw or "").strip().replace(",", ".")
+    """Parse almost any human progress string → seconds.
+
+    Accepts: 12:34, 1:02:03, 12.34, 12'34, 12′34″, 2м3с, 2m3s, 2 м 3 с,
+    25мин, 90с, 1ч2м, 25, 50%, mixed punctuation/spaces.
+    """
+    if raw is None:
+        return None
+    s = str(raw).strip().lower()
     if not s:
         return None
+    # normalize punctuation / words
+    s = (
+        s.replace(",", ".")
+        .replace("′", "'")
+        .replace("″", '"')
+        .replace("’", "'")
+        .replace("`", "'")
+        .replace("´", "'")
+        .replace("—", "-")
+        .replace("–", "-")
+    )
+    s = re.sub(r"\s+", " ", s)
+
     m = _PROGRESS_PCT.match(s)
     if m:
         pct = max(0, min(100, int(m.group(1))))
         if duration_sec and duration_sec > 0:
             return int(duration_sec * pct / 100)
         return None
-    m = _PROGRESS_HM.match(s)
+
+    # Colon / dot / apostrophe / hyphen separators: h:m:s or m:s
+    # e.g. 1:02:03, 12:34, 12.34, 12'34, 12'34", 12-34
+    m = re.match(
+        r"^\s*(?:(\d{1,3})\s*[:.\'\-]\s*)?(\d{1,3})\s*[:.\'\-]\s*(\d{1,3})\s*\"?\s*$",
+        s,
+    )
     if m:
-        h = int(m.group(1) or 0)
-        mm = int(m.group(2))
-        ss = int(m.group(3))
+        a, b, c = m.group(1), m.group(2), m.group(3)
+        if a is not None:
+            h, mm, ss = int(a), int(b), int(c)
+        else:
+            h, mm, ss = 0, int(b), int(c)
         if mm > 59 or ss > 59:
+            # allow 90:00 style as minutes:seconds if first is large? treat as invalid
+            if h == 0 and mm <= 999 and ss <= 59:
+                return mm * 60 + ss
             return None
         return h * 3600 + mm * 60 + ss
-    m = _PROGRESS_MIN.match(s)
+
+    # Letter units: 1ч2м3с / 2м3с / 25мин / 90сек / 1h2m3s / 2m 3s
+    # Also: 2м3 / 2m3 (seconds optional unit)
+    unit = re.compile(
+        r"(?P<n>\d+(?:[.,]\d+)?)\s*"
+        r"(?P<u>час(?:а|ов)?|ч|hours?|hrs?|h|"
+        r"минут(?:а|ы)?|мин|м|minutes?|mins?|m|"
+        r"секунд(?:а|ы)?|сек|с|seconds?|secs?|s)"
+        r"(?![a-zа-яё])",
+        re.IGNORECASE,
+    )
+    total = 0
+    found = False
+    for um in unit.finditer(s):
+        found = True
+        n = float(um.group("n").replace(",", "."))
+        u = um.group("u").lower()
+        if u[0] in ("h", "ч") or u.startswith("hour") or u.startswith("час"):
+            total += int(n * 3600)
+        elif u[0] in ("m", "м") or u.startswith("min") or u.startswith("мин"):
+            # «м» / m = minutes (not meters…)
+            total += int(n * 60)
+        else:
+            total += int(n)
+    if found:
+        return max(0, total)
+
+    # Pattern like 2м3 or 2m3 without trailing с/s
+    m = re.match(
+        r"^\s*(\d+)\s*(?:м|мин|m|min)\s*(\d+)\s*(?:с|сек|s|sec)?\s*$",
+        s,
+        re.IGNORECASE,
+    )
+    if m:
+        return int(m.group(1)) * 60 + int(m.group(2))
+
+    # Bare number: minutes if small-ish, else seconds
+    m = re.match(r"^\s*(\d{1,5})\s*$", s)
     if m:
         n = int(m.group(1))
-        # bare number: treat as minutes if looks like minutes, else seconds
         if n <= 600 and (duration_sec is None or n * 60 <= (duration_sec + 120)):
             return n * 60
         return n
+
     return None
 
 
