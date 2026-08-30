@@ -30,17 +30,20 @@ _PROGRESS_PCT = re.compile(r"^\s*(\d{1,3})\s*%\s*$")
 def parse_progress_input(raw: str, *, duration_sec: int | None = None) -> int | None:
     """Parse almost any human progress string → seconds.
 
-    Accepts: 12:34, 1:02:03, 12.34, 12'34, 12′34″, 2м3с, 2m3s, 2 м 3 с,
-    25мин, 90с, 1ч2м, 25, 50%, mixed punctuation/spaces.
+    Accepts: 20 сек, 12:34, 1:02:03, 12.34, 12'34, 2м3с, 2m3s,
+    25мин, 90с, 1ч2м, 25, 50%, nbsp / mixed punctuation.
     """
     if raw is None:
         return None
-    s = str(raw).strip().lower()
+    s = str(raw).strip()
     if not s:
         return None
-    # normalize punctuation / words
     s = (
-        s.replace(",", ".")
+        s.replace("\u00a0", " ")
+        .replace("\u202f", " ")
+        .replace("\u2007", " ")
+        .replace("\ufeff", " ")
+        .replace(",", ".")
         .replace("′", "'")
         .replace("″", '"')
         .replace("’", "'")
@@ -49,7 +52,9 @@ def parse_progress_input(raw: str, *, duration_sec: int | None = None) -> int | 
         .replace("—", "-")
         .replace("–", "-")
     )
-    s = re.sub(r"\s+", " ", s)
+    s = re.sub(r"\s+", " ", s).strip().lower()
+    if not s:
+        return None
 
     m = _PROGRESS_PCT.match(s)
     if m:
@@ -58,34 +63,62 @@ def parse_progress_input(raw: str, *, duration_sec: int | None = None) -> int | 
             return int(duration_sec * pct / 100)
         return None
 
-    # Colon / dot / apostrophe / hyphen separators: h:m:s or m:s
-    # e.g. 1:02:03, 12:34, 12.34, 12'34, 12'34", 12-34
     m = re.match(
         r"^\s*(?:(\d{1,3})\s*[:.\'\-]\s*)?(\d{1,3})\s*[:.\'\-]\s*(\d{1,3})\s*\"?\s*$",
         s,
     )
     if m:
         a, b, c = m.group(1), m.group(2), m.group(3)
-        if a is not None:
-            h, mm, ss = int(a), int(b), int(c)
-        else:
-            h, mm, ss = 0, int(b), int(c)
+        h, mm, ss = (int(a), int(b), int(c)) if a is not None else (0, int(b), int(c))
         if mm > 59 or ss > 59:
-            # allow 90:00 style as minutes:seconds if first is large? treat as invalid
             if h == 0 and mm <= 999 and ss <= 59:
                 return mm * 60 + ss
             return None
         return h * 3600 + mm * 60 + ss
 
-    # Letter units: 1ч2м3с / 2м3с / 25мин / 90сек / 1h2m3s / 2m 3s
-    # Also: 2м3 / 2m3 (seconds optional unit)
+    m = re.match(
+        r"^\s*(\d+)\s*(?:час(?:а|ов)?|ч|h|hours?|hrs?)\s*"
+        r"(\d+)\s*(?:минут(?:а|ы)?|мин|м|m|min(?:ute)?s?)\s*"
+        r"(?:(\d+)\s*(?:секунд(?:а|ы)?|сек|с|s|sec(?:ond)?s?)?)?\s*$",
+        s,
+        re.I,
+    )
+    if m:
+        return int(m.group(1)) * 3600 + int(m.group(2)) * 60 + int(m.group(3) or 0)
+
+    m = re.match(
+        r"^\s*(\d+)\s*(?:минут(?:а|ы)?|мин|м|m|min(?:ute)?s?)\s*"
+        r"(\d+)\s*(?:секунд(?:а|ы)?|сек|с|s|sec(?:ond)?s?)?\s*$",
+        s,
+        re.I,
+    )
+    if m:
+        return int(m.group(1)) * 60 + int(m.group(2))
+
+    # Single number + unit — seconds MUST be checked before minutes
+    m = re.match(r"^\s*(\d+(?:[.,]\d+)?)\s*(.*?)\s*$", s)
+    if m:
+        n = float(m.group(1).replace(",", "."))
+        unit = (m.group(2) or "").strip().lower()
+        if not unit:
+            ni = int(n)
+            if ni <= 600 and (duration_sec is None or ni * 60 <= (duration_sec + 120)):
+                return ni * 60
+            return ni
+        if unit in ("с", "c", "s") or unit.startswith("сек") or unit.startswith("sec"):
+            return int(n)
+        if unit in ("м", "m") or unit.startswith("мин") or unit.startswith("min"):
+            return int(n * 60)
+        if unit in ("ч", "h") or unit.startswith("час") or unit.startswith("hour") or unit.startswith("hr"):
+            return int(n * 3600)
+
     unit = re.compile(
         r"(?P<n>\d+(?:[.,]\d+)?)\s*"
         r"(?P<u>час(?:а|ов)?|ч|hours?|hrs?|h|"
-        r"минут(?:а|ы)?|мин|м|minutes?|mins?|m|"
-        r"секунд(?:а|ы)?|сек|с|seconds?|secs?|s)"
+        r"секунд(?:а|ы)?|сек|с|seconds?|secs?|s|"
+        r"минут(?:а|ы)?|мин|м|minutes?|mins?|m)"
         r"(?![a-zа-яё])",
-        re.IGNORECASE,
+        re.I,
     )
     total = 0
     found = False
@@ -95,30 +128,14 @@ def parse_progress_input(raw: str, *, duration_sec: int | None = None) -> int | 
         u = um.group("u").lower()
         if u[0] in ("h", "ч") or u.startswith("hour") or u.startswith("час"):
             total += int(n * 3600)
+        elif u.startswith("сек") or u.startswith("sec") or u in ("с", "s", "c"):
+            total += int(n)
         elif u[0] in ("m", "м") or u.startswith("min") or u.startswith("мин"):
-            # «м» / m = minutes (not meters…)
             total += int(n * 60)
         else:
             total += int(n)
     if found:
         return max(0, total)
-
-    # Pattern like 2м3 or 2m3 without trailing с/s
-    m = re.match(
-        r"^\s*(\d+)\s*(?:м|мин|m|min)\s*(\d+)\s*(?:с|сек|s|sec)?\s*$",
-        s,
-        re.IGNORECASE,
-    )
-    if m:
-        return int(m.group(1)) * 60 + int(m.group(2))
-
-    # Bare number: minutes if small-ish, else seconds
-    m = re.match(r"^\s*(\d{1,5})\s*$", s)
-    if m:
-        n = int(m.group(1))
-        if n <= 600 and (duration_sec is None or n * 60 <= (duration_sec + 120)):
-            return n * 60
-        return n
 
     return None
 

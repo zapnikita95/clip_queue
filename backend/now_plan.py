@@ -565,12 +565,23 @@ def get_light_plan(user_id: int) -> dict[str, Any]:
         # Light path — do NOT call full pick_now (Android already hits /api/home/now
         # in parallel; double ranking + stale-folder scans made Plan crawl).
         pool = fetch_plan_pool(user_id, limit=80)
-        seen: set[str] = set()
-        for src in _suggestions(user_id, pool, exclude=seen, limit=4):
+        # Never suggest videos already started / already in «Сейчас» — diversity.
+        exclude: set[str] = set(tonight_ids) | set(week_ids)
+        for r in pool:
+            if (r.get("status") or "") == "in_progress":
+                vid = str(r.get("video_id") or "")
+                if vid:
+                    exclude.add(vid)
+        for src in _suggestions(user_id, pool, exclude=exclude, limit=6):
             card = dict(src)
             why = (card.get("reason") or "").strip()
+            # Skip continue-watching copy — that belongs to «Сейчас» / Начатые
+            if "начат" in why.lower() or "продолж" in why.lower():
+                continue
             card["reason"] = f"В план · {why}" if why else "Добавить в план на вечер"
             suggest_tonight.append(card)
+            if len(suggest_tonight) >= 4:
+                break
     return {
         "tonight": tonight,
         "week": week,

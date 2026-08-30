@@ -92,7 +92,7 @@ def create_app() -> Flask:
             {
                 "ok": True,
                 "service": "clip_queue",
-                "version": "0.4.4",
+                "version": "0.4.5",
                 "db": "postgres" if db.is_postgres() else "sqlite",
                 "google_oauth": google_oauth.configured(),
                 "llm": llm.available(),
@@ -832,11 +832,20 @@ def create_app() -> Flask:
             FROM list_items x
             JOIN lists l ON l.id = x.list_id
             WHERE x.video_id = ? AND l.user_id = ?
-            ORDER BY l.title
+            ORDER BY l.id ASC
             """,
             (video_id, uid),
         )
-        return [{"id": r["id"], "title": r.get("title") or ""} for r in rows]
+        out: list[dict] = []
+        seen_titles: set[str] = set()
+        for r in rows or []:
+            title = (r.get("title") or "").strip()
+            key = title.casefold()
+            if key in seen_titles:
+                continue
+            seen_titles.add(key)
+            out.append({"id": r["id"], "title": title})
+        return out
 
     def _record_save_event(
         uid: int,

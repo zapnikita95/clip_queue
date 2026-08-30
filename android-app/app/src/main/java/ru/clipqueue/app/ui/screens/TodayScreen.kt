@@ -70,16 +70,53 @@ fun TodayScreen(
     suspend fun load() {
         loading = true
         error = null
+        var lastErr: String? = null
+        repeat(3) { attempt ->
+            try {
+                val r = api.homeToday(limit = 8)
+                now = r.now.orEmpty()
+                evening = r.evening.orEmpty()
+                meta = listOfNotNull(
+                    r.daypart_label?.takeIf { it.isNotBlank() },
+                    r.slot_label?.takeIf { it.isNotBlank() },
+                ).joinToString(" · ")
+                error = null
+                loading = false
+                return
+            } catch (e: Exception) {
+                lastErr = e.message ?: "Не удалось загрузить"
+                if (attempt < 2) kotlinx.coroutines.delay(400L * (attempt + 1))
+            }
+        }
+        // Fallback: собрать экран из /now + /plan (те же данные, что на главной)
         try {
-            val r = api.homeToday(limit = 8)
-            now = r.now.orEmpty()
-            evening = r.evening.orEmpty()
-            meta = listOfNotNull(
-                r.daypart_label?.takeIf { it.isNotBlank() },
-                r.slot_label?.takeIf { it.isNotBlank() },
-            ).joinToString(" · ")
+            val nowR = runCatching { api.homeNow(limit = 8) }.getOrNull()
+            val planR = runCatching { api.homePlan() }.getOrNull()
+            if (nowR != null || planR != null) {
+                val started = nowR?.started.orEmpty()
+                val picks = nowR?.picks.orEmpty()
+                val seen = picks.mapNotNull { it.video_id }.toMutableSet()
+                val merged = started.filter { it.video_id !in seen } + picks
+                merged.forEach { it.video_id?.let(seen::add) }
+                now = merged
+                evening = (
+                    planR?.tonight.orEmpty() + planR?.suggest_tonight.orEmpty()
+                    ).filter { it.video_id !in seen }.distinctBy { it.video_id }
+                meta = listOfNotNull(
+                    nowR?.daypart_label?.takeIf { it.isNotBlank() },
+                    nowR?.slot_label?.takeIf { it.isNotBlank() },
+                ).joinToString(" · ")
+                error = null
+            } else {
+                error = when {
+                    lastErr?.contains("Unable to resolve host", ignoreCase = true) == true ||
+                        lastErr?.contains("Failed to connect", ignoreCase = true) == true ->
+                        "Нет сети до сервера. Проверьте интернет и нажмите «Повторить»."
+                    else -> lastErr ?: "Не удалось загрузить"
+                }
+            }
         } catch (e: Exception) {
-            error = e.message ?: "Не удалось загрузить"
+            error = e.message ?: lastErr ?: "Не удалось загрузить"
         } finally {
             loading = false
         }
@@ -159,7 +196,26 @@ fun TodayScreen(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Text(error.orEmpty(), color = CqAccent)
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.padding(24.dp),
+                    ) {
+                        Text(
+                            error.orEmpty(),
+                            color = CqAccent,
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        Text(
+                            "Повторить",
+                            color = CqText,
+                            modifier = Modifier
+                                .padding(top = 16.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(CqElev)
+                                .clickable { scope.launch { load() } }
+                                .padding(horizontal = 16.dp, vertical = 10.dp),
+                        )
+                    }
                 }
             }
             else -> {

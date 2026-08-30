@@ -14,7 +14,7 @@
     <string name="notif_watch_title">Смотрите на YouTube</string>
     <string name="notif_action_watched">Просмотрено</string>
     <string name="notif_action_progress">Где остановились?</string>
-    <string name="notif_progress_hint">2м3с · 12:34 · 25мин · 90с</string>
+    <string name="notif_progress_hint">20 сек · 2м3с · 12:34 · 25мин</string>
     <string name="notif_morning_title">Рекомендуем посмотреть</string>
     <string name="notif_reminder_title">Напоминание</string>
     <string name="notif_classified_title">Сохранено в Kyro</string>

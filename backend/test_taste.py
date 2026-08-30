@@ -19,6 +19,9 @@ def test_parse_letters():
     assert parse_progress_input("2 м 3 с") == 2 * 60 + 3
     assert parse_progress_input("25мин") == 25 * 60
     assert parse_progress_input("25 мин") == 25 * 60
+    assert parse_progress_input("20 сек") == 20
+    assert parse_progress_input("20сек") == 20
+    assert parse_progress_input("20 с") == 20
     assert parse_progress_input("90с") == 90
     assert parse_progress_input("90 сек") == 90
     assert parse_progress_input("1ч2м") == 3600 + 120

@@ -484,8 +484,25 @@ STARTED_LIST_TITLE = "Начатые"
 
 
 def ensure_started_list(user_id: int) -> int:
-    """System folder for in_progress videos — pinned near top of library."""
-    list_id = _ensure_list(user_id, STARTED_LIST_TITLE)
+    """System folder for in_progress — one list, merge accidental duplicates."""
+    rows = db.fetchall(
+        "SELECT id FROM lists WHERE user_id = ? AND title = ? ORDER BY id ASC",
+        (user_id, STARTED_LIST_TITLE),
+    )
+    if not rows:
+        list_id = _ensure_list(user_id, STARTED_LIST_TITLE)
+    else:
+        list_id = int(rows[0]["id"])
+        for dup in rows[1:]:
+            dup_id = int(dup["id"])
+            items = db.fetchall(
+                "SELECT video_id, position FROM list_items WHERE list_id = ?",
+                (dup_id,),
+            )
+            for it in items or []:
+                _add_list_item(list_id, str(it["video_id"]), int(it.get("position") or 0))
+            db.execute("DELETE FROM list_items WHERE list_id = ?", (dup_id,))
+            db.execute("DELETE FROM lists WHERE id = ? AND user_id = ?", (dup_id, user_id))
     try:
         db.execute(
             "UPDATE lists SET sort_order = 5, hidden_from_home = 0 WHERE id = ?",

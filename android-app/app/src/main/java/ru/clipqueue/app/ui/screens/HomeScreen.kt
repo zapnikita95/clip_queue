@@ -235,12 +235,24 @@ fun HomeScreen(
         val day = now.daypart_label?.takeIf { it.isNotBlank() }
         nowMeta = listOfNotNull(day, now.slot_label?.takeIf { it.isNotBlank() }).joinToString(" · ")
         nowLoaded = true
+        // Re-filter plan after now/started land (parallel loads race).
+        val block = merged.mapNotNull { it.video_id }.toSet() +
+            startedRail.mapNotNull { it.video_id }.toSet()
+        if (block.isNotEmpty()) {
+            planTonight = planTonight.filter { it.video_id !in block }
+            planSuggestTonight = planSuggestTonight.filter { it.video_id !in block }
+        }
         persistHomeSnapshot()
     }
 
     fun applyPlanResponse(plan: LightPlanResponse?) {
-        planTonight = plan?.tonight.orEmpty()
-        planSuggestTonight = plan?.suggest_tonight.orEmpty()
+        val block = (
+            nowPicks.mapNotNull { it.video_id } +
+                startedRail.mapNotNull { it.video_id } +
+                nowSuggestions.mapNotNull { it.video_id }
+            ).toSet()
+        planTonight = plan?.tonight.orEmpty().filter { it.video_id !in block }
+        planSuggestTonight = plan?.suggest_tonight.orEmpty().filter { it.video_id !in block }
         planLoaded = true
         persistHomeSnapshot()
     }
@@ -300,6 +312,16 @@ fun HomeScreen(
                 fromLikes = likesDef.await().items.orEmpty()
                 startedRail = startedDef.await().items.orEmpty()
                 fromPlaylists = plDef.await().items.orEmpty()
+                // Plan must not repeat «Сейчас» / Начатые
+                val blockIds = (
+                    nowPicks.mapNotNull { it.video_id } +
+                        startedRail.mapNotNull { it.video_id } +
+                        nowSuggestions.mapNotNull { it.video_id }
+                    ).toSet()
+                if (blockIds.isNotEmpty()) {
+                    planTonight = planTonight.filter { it.video_id !in blockIds }
+                    planSuggestTonight = planSuggestTonight.filter { it.video_id !in blockIds }
+                }
                 topFolders = listsDef.await().lists.orEmpty()
                     .sortedByDescending { it.count ?: 0 }
                     .take(8)
