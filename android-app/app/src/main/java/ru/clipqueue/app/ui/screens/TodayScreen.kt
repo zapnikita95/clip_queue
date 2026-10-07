@@ -18,7 +18,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -45,6 +44,7 @@ import coil.compose.AsyncImage
 import kotlinx.coroutines.launch
 import ru.clipqueue.app.ApiClient
 import ru.clipqueue.app.data.VideoCard
+import ru.clipqueue.app.ui.components.TodayPageSkeleton
 import ru.clipqueue.app.ui.theme.CqAccent
 import ru.clipqueue.app.ui.theme.CqBg
 import ru.clipqueue.app.ui.theme.CqElev
@@ -183,14 +183,7 @@ fun TodayScreen(
         }
 
         when {
-            loading && now.isEmpty() && evening.isEmpty() -> {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    CircularProgressIndicator(color = CqAccent)
-                }
-            }
+            loading && now.isEmpty() && evening.isEmpty() -> TodayPageSkeleton(Modifier.fillMaxSize())
             error != null && now.isEmpty() -> {
                 Box(
                     modifier = Modifier.fillMaxSize(),

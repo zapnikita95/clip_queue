@@ -1885,7 +1885,8 @@ Curate — идея отбора и создания коллекции. Kyro н
                 ...it,
                 watch_url: it.watch_url || `https://www.youtube.com/watch?v=${it.video_id}`,
               })).join("")
-            : `<div class="empty">Пока нечего предложить — сохраните видео или нажмите «Разобрать»</div>`;
+              : `<div class="empty">Пока нечего предложить — сохраните видео или нажмите «Разобрать»</div>`;
+          picksEl.dataset.loaded = "1";
           wireCardMenus(picksEl);
           enableDragScroll(picksEl.parentElement || document);
           picksEl.querySelectorAll("a.play-btn").forEach((a) => {
@@ -1936,7 +1937,10 @@ Curate — идея отбора и создания коллекции. Kyro н
           }
         }
       } catch (e) {
-        if (picksEl) picksEl.innerHTML = `<div class="empty">${escapeHtml(e.message || "Не удалось подобрать")}</div>`;
+        // Keep the last successful cards visible when a later refresh fails.
+        if (picksEl && !picksEl.dataset.loaded) {
+          picksEl.innerHTML = `<div class="empty">${escapeHtml(e.message || "Не удалось подобрать")}</div>`;
+        }
       }
     };
     paintNow();
@@ -3401,8 +3405,33 @@ Curate — идея отбора и создания коллекции. Kyro н
     transitionIn({ video: isVideoPath(location.pathname) });
   }
 
+  function renderRouteSkeleton(path) {
+    const isHome = path === "/" || path === "/home";
+    const isDetail = /^\/v\//.test(path);
+    const sectionCount = isHome ? 4 : 2;
+    const sections = Array.from({ length: sectionCount }, () => `
+      <section class="route-skeleton-section">
+        <i class="route-skeleton-line route-skeleton-heading"></i>
+        <div class="route-skeleton-rail">
+          ${Array.from({ length: isDetail ? 1 : 3 }, () => `
+            <div class="route-skeleton-card">
+              <i class="route-skeleton-thumb"></i>
+              <i class="route-skeleton-line"></i>
+              <i class="route-skeleton-line short"></i>
+            </div>`).join("")}
+        </div>
+      </section>`).join("");
+    app.innerHTML = `
+      <div class="route-skeleton ${isHome ? "home" : ""}" aria-busy="true" aria-label="Загрузка страницы">
+        <i class="route-skeleton-line route-skeleton-title"></i>
+        <i class="route-skeleton-search"></i>
+        ${sections}
+      </div>`;
+  }
+
   async function route() {
     const path = location.pathname;
+    renderRouteSkeleton(path);
     if (path === "/auth/callback") return renderAuthCallback();
     const needAuth = path !== "/login";
     if (needAuth) {

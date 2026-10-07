@@ -42,7 +42,6 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import android.widget.Toast
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -67,6 +66,7 @@ import ru.clipqueue.app.ui.components.EditableFolderGrid
 import ru.clipqueue.app.ui.components.FolderGrid
 import ru.clipqueue.app.ui.components.FolderRemoveDialog
 import ru.clipqueue.app.ui.components.FolderTrashZone
+import ru.clipqueue.app.ui.components.HomePageSkeleton
 import ru.clipqueue.app.ui.components.SearchBarWithMic
 import ru.clipqueue.app.ui.components.SectionLabel
 import ru.clipqueue.app.ui.components.TagChip
@@ -246,13 +246,19 @@ fun HomeScreen(
     }
 
     fun applyPlanResponse(plan: LightPlanResponse?) {
+        // A failed refresh is not an empty plan; retain the visible snapshot.
+        if (plan == null) {
+            planLoaded = true
+            persistHomeSnapshot()
+            return
+        }
         val block = (
             nowPicks.mapNotNull { it.video_id } +
                 startedRail.mapNotNull { it.video_id } +
                 nowSuggestions.mapNotNull { it.video_id }
             ).toSet()
-        planTonight = plan?.tonight.orEmpty().filter { it.video_id !in block }
-        planSuggestTonight = plan?.suggest_tonight.orEmpty().filter { it.video_id !in block }
+        planTonight = plan.tonight.orEmpty().filter { it.video_id !in block }
+        planSuggestTonight = plan.suggest_tonight.orEmpty().filter { it.video_id !in block }
         planLoaded = true
         persistHomeSnapshot()
     }
@@ -275,15 +281,30 @@ fun HomeScreen(
             }
         }
         error = null
+        suspend fun <T> safeHomeRequest(block: suspend () -> T): T? =
+            withTimeoutOrNull(10_000) { runCatching { block() }.getOrNull() }
         try {
             coroutineScope {
-                val recentDef = async { api.homeRail("queue") }
-                val vibeDef = async { api.homeRail("continue_vibe") }
-                val likesDef = async { api.homeRail("from_likes") }
-                val startedDef = async { api.homeRail("started") }
-                val plDef = async { api.homeRail("from_playlists") }
-                val listsDef = async { api.lists(forHome = true) }
-                val tagsDef = async { runCatching { api.tags(onlyUsed = true) }.getOrNull() }
+                // A slow or failed rail must not hold up or cancel the other sections.
+                val railJobs = listOf(
+                    launch { safeHomeRequest { api.homeRail("queue") }?.let { recent = it.items.orEmpty() } },
+                    launch { safeHomeRequest { api.homeRail("continue_vibe") }?.let { vibe = it.items.orEmpty() } },
+                    launch { safeHomeRequest { api.homeRail("from_likes") }?.let { fromLikes = it.items.orEmpty() } },
+                    launch { safeHomeRequest { api.homeRail("started") }?.let { startedRail = it.items.orEmpty() } },
+                    launch { safeHomeRequest { api.homeRail("from_playlists") }?.let { fromPlaylists = it.items.orEmpty() } },
+                    launch {
+                        safeHomeRequest { api.lists(forHome = true) }?.let { result ->
+                            topFolders = result.lists.orEmpty()
+                                .sortedByDescending { it.count ?: 0 }
+                                .take(8)
+                        }
+                    },
+                    launch {
+                        safeHomeRequest { api.tags(onlyUsed = true) }?.let { result ->
+                            tags = usedTags(result.tags.orEmpty())
+                        }
+                    },
+                )
                 // Paint Now/Plan as soon as each returns — do not wait for other rails.
                 launch {
                     val now = withTimeoutOrNull(12_000) {
@@ -301,17 +322,15 @@ fun HomeScreen(
                     applyPlanResponse(plan)
                 }
                 launch {
-                    pendingRatings = runCatching { api.pendingRatings().items }.getOrNull().orEmpty()
+                    pendingRatings = withTimeoutOrNull(8_000) {
+                        runCatching { api.pendingRatings().items }.getOrNull()
+                    }.orEmpty()
                     if (tastePrompt == null) {
-                        val t = runCatching { api.taste() }.getOrNull()
+                        val t = withTimeoutOrNull(8_000) { runCatching { api.taste() }.getOrNull() }
                         if (t?.needs_confirm == true) tastePrompt = t
                     }
                 }
-                recent = recentDef.await().items.orEmpty()
-                vibe = vibeDef.await().items.orEmpty()
-                fromLikes = likesDef.await().items.orEmpty()
-                startedRail = startedDef.await().items.orEmpty()
-                fromPlaylists = plDef.await().items.orEmpty()
+                railJobs.forEach { it.join() }
                 // Plan must not repeat «Сейчас» / Начатые
                 val blockIds = (
                     nowPicks.mapNotNull { it.video_id } +
@@ -322,10 +341,6 @@ fun HomeScreen(
                     planTonight = planTonight.filter { it.video_id !in blockIds }
                     planSuggestTonight = planSuggestTonight.filter { it.video_id !in blockIds }
                 }
-                topFolders = listsDef.await().lists.orEmpty()
-                    .sortedByDescending { it.count ?: 0 }
-                    .take(8)
-                tags = usedTags(tagsDef.await()?.tags.orEmpty())
                 persistHomeSnapshot()
             }
             val tid = selectedTagId
@@ -562,9 +577,7 @@ fun HomeScreen(
                             }
                         }
                     }
-                    loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator(color = CqAccent)
-                    }
+                    loading -> HomePageSkeleton(Modifier.fillMaxSize())
                     error != null && recent.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         Text(error.orEmpty(), color = CqAccent)
                     }

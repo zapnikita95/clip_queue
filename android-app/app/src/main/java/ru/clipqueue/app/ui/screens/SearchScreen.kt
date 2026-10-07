@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -35,6 +34,7 @@ import ru.clipqueue.app.ApiClient
 import ru.clipqueue.app.data.VideoCard
 import ru.clipqueue.app.ui.components.SearchBarWithMic
 import ru.clipqueue.app.ui.components.SectionLabel
+import ru.clipqueue.app.ui.components.VideoListSkeleton
 import ru.clipqueue.app.ui.components.VideoSpine
 import ru.clipqueue.app.ui.rememberVideoActions
 import ru.clipqueue.app.ui.theme.CqAccent
@@ -146,14 +146,7 @@ fun SearchScreen(
         }
         Box(modifier = Modifier.height(8.dp)) {}
         when {
-            loading && items.isEmpty() -> {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    CircularProgressIndicator(color = CqAccent)
-                }
-            }
+            loading && items.isEmpty() -> VideoListSkeleton(Modifier.fillMaxSize(), rows = 3)
             error != null && items.isEmpty() -> {
                 Text(error.orEmpty(), color = CqAccent)
             }

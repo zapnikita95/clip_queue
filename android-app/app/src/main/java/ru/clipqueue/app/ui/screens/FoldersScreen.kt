@@ -22,7 +22,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.Videocam
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -53,10 +52,12 @@ import ru.clipqueue.app.ui.TagPickerDialog
 import ru.clipqueue.app.ui.components.BottomBar
 import ru.clipqueue.app.ui.components.FilterChip
 import ru.clipqueue.app.ui.components.FolderGrid
+import ru.clipqueue.app.ui.components.FolderGridSkeleton
 import ru.clipqueue.app.ui.components.SearchBarWithMic
 import ru.clipqueue.app.ui.components.TagChip
 import ru.clipqueue.app.ui.components.ToolIconButton
 import ru.clipqueue.app.ui.components.VideoListRow
+import ru.clipqueue.app.ui.components.VideoListSkeleton
 import ru.clipqueue.app.ui.components.VideoRail
 import ru.clipqueue.app.ui.rememberVideoActions
 import ru.clipqueue.app.ui.theme.CqAccent
@@ -272,9 +273,7 @@ fun FoldersScreen(
         }
 
         when {
-            loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(color = CqAccent)
-            }
+            loading -> FolderGridSkeleton(Modifier.fillMaxSize())
             error != null && folders.isEmpty() -> Text(error.orEmpty(), color = CqAccent, modifier = Modifier.padding(12.dp))
             selectedTagId != null -> LazyColumn(
                 modifier = Modifier.weight(1f),
@@ -422,12 +421,10 @@ private fun FolderCarouselBlock(
         Spacer(Modifier.height(8.dp))
         val current = items
         when {
-            isLoadingItems || current == null -> Box(
-                Modifier.fillMaxWidth().height(100.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                CircularProgressIndicator(color = CqAccent, strokeWidth = 2.dp, modifier = Modifier.height(28.dp))
-            }
+            isLoadingItems || current == null -> VideoListSkeleton(
+                modifier = Modifier.fillMaxWidth().height(180.dp),
+                rows = 2,
+            )
             current.isEmpty() -> Text(
                 if ((folder.count ?: 0) > 0) "Превью скоро появится — откройте папку"
                 else "Пусто",
@@ -565,9 +562,7 @@ fun FolderDetailScreen(
             }
         }
         when {
-            loading && items.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(color = CqAccent)
-            }
+            loading && items.isEmpty() -> VideoListSkeleton(Modifier.fillMaxSize())
             else -> PullToRefreshBox(
                 isRefreshing = refreshing,
                 onRefresh = { scope.launch { loadDetail(force = true) } },

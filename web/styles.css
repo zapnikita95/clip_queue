@@ -1905,6 +1905,40 @@ a.btn.ghost:hover {
   pointer-events: none;
 }
 
+/* Route placeholder shown immediately while auth and page data are loading. */
+.route-skeleton {
+  padding: 20px 16px 84px;
+  min-height: 70vh;
+  overflow: hidden;
+}
+.route-skeleton-line,
+.route-skeleton-search,
+.route-skeleton-thumb {
+  display: block;
+  background: linear-gradient(90deg, rgba(255,255,255,.045), rgba(255,255,255,.10), rgba(255,255,255,.045));
+  background-size: 220% 100%;
+  animation: route-skeleton-shimmer 1.35s ease-in-out infinite;
+  border-radius: 10px;
+}
+.route-skeleton-title { width: min(54%, 240px); height: 30px; margin: 0 0 16px; }
+.route-skeleton-search { height: 46px; margin-bottom: 24px; border-radius: 14px; }
+.route-skeleton-section { margin: 0 0 26px; }
+.route-skeleton-heading { width: 128px; height: 18px; margin-bottom: 12px; }
+.route-skeleton-rail { display: flex; gap: 12px; overflow: hidden; }
+.route-skeleton-card { flex: 0 0 min(42vw, 190px); min-width: 132px; }
+.route-skeleton-thumb { width: 100%; aspect-ratio: 16 / 9; margin-bottom: 9px; border-radius: 12px; }
+.route-skeleton-card .route-skeleton-line { width: 92%; height: 12px; margin-bottom: 7px; }
+.route-skeleton-card .route-skeleton-line.short { width: 58%; height: 10px; }
+@keyframes route-skeleton-shimmer {
+  from { background-position: 100% 0; }
+  to { background-position: -120% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .route-skeleton-line,
+  .route-skeleton-search,
+  .route-skeleton-thumb { animation: none; }
+}
+
 
 /* —— FAQ sparkle button (Kyro moths) —— */
 .hero-with-faq {
